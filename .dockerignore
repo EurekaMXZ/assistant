@@ -1,0 +1,16 @@
+.git
+.agents
+.codex
+.DS_Store
+
+bin
+dist
+
+docs
+frontend
+frontend/node_modules
+node_modules
+
+**/.next
+**/out
+
