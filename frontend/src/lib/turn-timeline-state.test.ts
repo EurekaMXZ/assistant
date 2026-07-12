@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createTurnTimelineState,
-  transitionTurnTimelineState,
-} from "./turn-timeline-state";
+import { createTurnTimelineState, transitionTurnTimelineState } from "./turn-timeline-state";
 import type { Turn } from "./types";
 
 const turn = {
@@ -44,9 +41,7 @@ describe("turn timeline state transitions", () => {
       },
     });
 
-    expect(result.state.timelines[turn.id].items.map((item) => item.id)).toEqual([
-      "reasoning-1",
-    ]);
+    expect(result.state.timelines[turn.id].items.map((item) => item.id)).toEqual(["reasoning-1"]);
     expect(result.state.turnsById[turn.id].status).toBe("completed");
     expect(result.state.itemSequences["turn-1:output-1"]).toBe(5);
   });

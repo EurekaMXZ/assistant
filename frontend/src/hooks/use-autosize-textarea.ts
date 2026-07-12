@@ -12,7 +12,7 @@ interface AutosizeTextareaState {
 export function useAutosizeTextarea(
   ref: React.RefObject<HTMLTextAreaElement | null>,
   value: string,
-  maxRows = 3
+  maxRows = 3,
 ) {
   const [state, setState] = useState<AutosizeTextareaState>({
     currentHeight: 24,
@@ -34,8 +34,7 @@ export function useAutosizeTextarea(
     const borderTop = Number.parseFloat(styles.borderTopWidth) || 0;
     const borderBottom = Number.parseFloat(styles.borderBottomWidth) || 0;
     const singleLineHeight = lineHeight + paddingTop + paddingBottom + borderTop + borderBottom;
-    const maxHeight =
-      lineHeight * maxRows + paddingTop + paddingBottom + borderTop + borderBottom;
+    const maxHeight = lineHeight * maxRows + paddingTop + paddingBottom + borderTop + borderBottom;
 
     textarea.style.height = "0px";
 

@@ -54,9 +54,7 @@ export function SidebarSearchDialog({
                 输入标题关键词以搜索会话。
               </div>
             ) : results.length === 0 ? (
-              <div className="py-10 text-center text-muted-foreground">
-                没有找到匹配的会话。
-              </div>
+              <div className="py-10 text-center text-muted-foreground">没有找到匹配的会话。</div>
             ) : (
               <div className="space-y-1">
                 {results.map((conversation) => {
@@ -73,9 +71,7 @@ export function SidebarSearchDialog({
                         <p className="truncate text-foreground">{title}</p>
                       </div>
                       {conversation.archived_at ? (
-                        <span className="ml-3 shrink-0 text-xs text-muted-foreground">
-                          已归档
-                        </span>
+                        <span className="ml-3 shrink-0 text-xs text-muted-foreground">已归档</span>
                       ) : null}
                     </button>
                   );

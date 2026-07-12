@@ -42,7 +42,9 @@ export function AdminWorkspace() {
     setMobileOpen(false);
     window.history.replaceState(null, "", `/admin#${next}`);
   };
-  const current = adminSectionsForRole(user.role).find((item) => item.id === section) || adminSectionsForRole(user.role)[0];
+  const current =
+    adminSectionsForRole(user.role).find((item) => item.id === section) ||
+    adminSectionsForRole(user.role)[0];
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">

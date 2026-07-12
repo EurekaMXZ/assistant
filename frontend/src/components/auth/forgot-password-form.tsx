@@ -39,7 +39,9 @@ export function ForgotPasswordForm({ onBackToLogin }: { onBackToLogin: () => voi
     return (
       <div className="grid gap-4">
         <p className="text-sm text-muted-foreground">重置邮件已发送。</p>
-        <Button type="button" variant="outline" onClick={onBackToLogin}>返回登录</Button>
+        <Button type="button" variant="outline" onClick={onBackToLogin}>
+          返回登录
+        </Button>
       </div>
     );
   }
@@ -56,7 +58,9 @@ export function ForgotPasswordForm({ onBackToLogin }: { onBackToLogin: () => voi
         {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}
         发送重置邮件
       </Button>
-      <Button type="button" variant="ghost" onClick={onBackToLogin}>返回登录</Button>
+      <Button type="button" variant="ghost" onClick={onBackToLogin}>
+        返回登录
+      </Button>
     </form>
   );
 }

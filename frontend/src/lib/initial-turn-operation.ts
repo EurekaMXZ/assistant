@@ -82,14 +82,18 @@ export function operationMatches(
     reasoningEffort: input.reasoning_effort,
     metadata: input.metadata,
   });
-  return operation.owner_user_id === ownerUserId
-    && operation.input_fingerprint === inputFingerprint(descriptor, files);
+  return (
+    operation.owner_user_id === ownerUserId &&
+    operation.input_fingerprint === inputFingerprint(descriptor, files)
+  );
 }
 
 export function loadInitialTurnOperation() {
   if (typeof window === "undefined") return null;
   try {
-    const parsed = operationSchema.safeParse(JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null"));
+    const parsed = operationSchema.safeParse(
+      JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null"),
+    );
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
@@ -140,13 +144,11 @@ export async function runInitialTurnOperation(
 
   const descriptor: TurnRequestDescriptor = {
     ...current.descriptor,
-    attachment_ids: current.files.flatMap((item) => item.attachment_id ? [item.attachment_id] : []),
+    attachment_ids: current.files.flatMap((item) =>
+      item.attachment_id ? [item.attachment_id] : [],
+    ),
   };
-  const result = await dependencies.commit(
-    conversationId,
-    descriptor,
-    current.key,
-  );
+  const result = await dependencies.commit(conversationId, descriptor, current.key);
   clearInitialTurnOperation(current.key);
   return { operation: current, result };
 }

@@ -96,7 +96,13 @@ export function ComposerShell({
   };
 
   return (
-    <div className={cn("relative mx-auto w-full max-w-2xl overflow-hidden rounded-[28px] border bg-background shadow-sm", className)} style={{ height: shellHeight }}>
+    <div
+      className={cn(
+        "relative mx-auto w-full max-w-2xl overflow-hidden rounded-[28px] border bg-background shadow-sm",
+        className,
+      )}
+      style={{ height: shellHeight }}
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -112,10 +118,20 @@ export function ComposerShell({
       {attachments.length > 0 ? (
         <div className="absolute left-3 right-3 top-2 flex min-w-0 gap-1.5 overflow-x-auto">
           {attachments.map((attachment) => (
-            <span key={attachment.key} className="inline-flex max-w-48 shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-1 text-xs text-muted-foreground" title={attachment.name}>
+            <span
+              key={attachment.key}
+              className="inline-flex max-w-48 shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-1 text-xs text-muted-foreground"
+              title={attachment.name}
+            >
               <span className="truncate">{attachment.name}</span>
-              <span className="shrink-0 text-muted-foreground/70">{formatComposerFileSize(attachment.size)}</span>
-              <button type="button" className="ml-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full hover:bg-background hover:text-foreground" onClick={() => onRemoveAttachment?.(attachment.key)}>
+              <span className="shrink-0 text-muted-foreground/70">
+                {formatComposerFileSize(attachment.size)}
+              </span>
+              <button
+                type="button"
+                className="ml-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full hover:bg-background hover:text-foreground"
+                onClick={() => onRemoveAttachment?.(attachment.key)}
+              >
                 <X className="h-3 w-3" />
                 <span className="sr-only">移除文件</span>
               </button>
@@ -148,9 +164,16 @@ export function ComposerShell({
         placeholder={placeholder}
         disabled={inactive}
         className={`absolute min-h-0 resize-none border-0 bg-transparent pl-2 py-0 leading-6 shadow-none [field-sizing:fixed] focus-visible:ring-0 ${isMultiline ? "right-3" : "right-[224px]"}`}
-        style={isMultiline
-          ? { top: 8 + attachmentOffset, left: 52, height: maxHeight }
-          : { top: lowerAreaCenterY, left: 52, height: singleLineHeight, transform: "translateY(-50%)" }}
+        style={
+          isMultiline
+            ? { top: 8 + attachmentOffset, left: 52, height: maxHeight }
+            : {
+                top: lowerAreaCenterY,
+                left: 52,
+                height: singleLineHeight,
+                transform: "translateY(-50%)",
+              }
+        }
         autoFocus={autoFocus}
       />
 
@@ -161,7 +184,11 @@ export function ComposerShell({
         className="absolute rounded-full text-muted-foreground hover:text-foreground"
         disabled={inactive || uploadBusy}
         onClick={() => fileInputRef.current?.click()}
-        style={isMultiline ? { left: 12, bottom: 12 } : { left: 12, top: lowerAreaCenterY, transform: "translateY(-50%)" }}
+        style={
+          isMultiline
+            ? { left: 12, bottom: 12 }
+            : { left: 12, top: lowerAreaCenterY, transform: "translateY(-50%)" }
+        }
       >
         {uploadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
         <span className="sr-only">上传文件</span>
@@ -175,8 +202,12 @@ export function ComposerShell({
         modelId={modelId}
         reasoningEfforts={reasoningEfforts}
         onModelChange={(next) => onModelChange?.(next)}
-        onModelReasoningEffortChange={(targetModelId, effort) => onModelReasoningEffortChange?.(targetModelId, effort)}
-        style={isMultiline ? { bottom: 14 } : { top: lowerAreaCenterY, transform: "translateY(-50%)" }}
+        onModelReasoningEffortChange={(targetModelId, effort) =>
+          onModelReasoningEffortChange?.(targetModelId, effort)
+        }
+        style={
+          isMultiline ? { bottom: 14 } : { top: lowerAreaCenterY, transform: "translateY(-50%)" }
+        }
       />
 
       <Button
@@ -184,9 +215,17 @@ export function ComposerShell({
         onClick={onSubmit}
         disabled={(!value.trim() && attachments.length === 0) || inactive || uploadBusy}
         className="absolute rounded-full"
-        style={isMultiline ? { right: 12, bottom: 12 } : { right: 12, top: lowerAreaCenterY, transform: "translateY(-50%)" }}
+        style={
+          isMultiline
+            ? { right: 12, bottom: 12 }
+            : { right: 12, top: lowerAreaCenterY, transform: "translateY(-50%)" }
+        }
       >
-        {busy || uploadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+        {busy || uploadBusy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <ArrowUp className="h-4 w-4" />
+        )}
         <span className="sr-only">发送</span>
       </Button>
     </div>

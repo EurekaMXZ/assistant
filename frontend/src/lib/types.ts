@@ -203,8 +203,7 @@ export interface Attachment {
   updated_at: string;
 }
 
-type MessageRole =
-  "system" | "developer" | "user" | "assistant" | "tool";
+type MessageRole = "system" | "developer" | "user" | "assistant" | "tool";
 
 export interface Message {
   id: string;
@@ -218,8 +217,7 @@ export interface Message {
   created_at: string;
 }
 
-export type TurnStatus =
-  "accepted" | "context_ready" | "processing" | "completed" | "failed";
+export type TurnStatus = "accepted" | "context_ready" | "processing" | "completed" | "failed";
 
 export interface Turn {
   id: string;

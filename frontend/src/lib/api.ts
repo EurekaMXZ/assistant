@@ -39,11 +39,7 @@ import {
   turnSchema,
   userSchema,
 } from "./api-schemas";
-import {
-  normalizeTurnRequest,
-  requestMetadata,
-  type TurnRequestDescriptor,
-} from "./turn-request";
+import { normalizeTurnRequest, requestMetadata, type TurnRequestDescriptor } from "./turn-request";
 import { openAuthDialog } from "./auth-dialog-events";
 import { emitAuthStateChange } from "./auth-state-events";
 
@@ -107,7 +103,9 @@ export class ApiError extends Error {
 
 export class ApiResponseValidationError extends Error {
   constructor(path: string, issues: z.ZodIssue[]) {
-    super(`Invalid API response from ${path}: ${issues.map((issue) => issue.path.join(".") || issue.message).join(", ")}`);
+    super(
+      `Invalid API response from ${path}: ${issues.map((issue) => issue.path.join(".") || issue.message).join(", ")}`,
+    );
     this.name = "ApiResponseValidationError";
   }
 }
@@ -117,9 +115,11 @@ function isUnauthorizedError(error: unknown): error is ApiError {
 }
 
 export function isEmailVerificationRequiredError(error: unknown): error is ApiError {
-  return error instanceof ApiError
-    && error.status === 403
-    && error.message.trim().toLowerCase() === "email verification required";
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.message.trim().toLowerCase() === "email verification required"
+  );
 }
 
 function isSessionUnauthorizedMessage(message: string) {
@@ -226,69 +226,103 @@ async function listAllCursorItems<T>(path: string, itemSchema: z.ZodType<T>) {
 
 // Auth
 export async function register(email: string, username: string, password: string) {
-  return apiFetch<RegistrationResult>("/auth/register", {
-    method: "POST",
-    handleUnauthorized: false,
-    body: JSON.stringify({ email, username, password }),
-  }, registrationResultSchema);
+  return apiFetch<RegistrationResult>(
+    "/auth/register",
+    {
+      method: "POST",
+      handleUnauthorized: false,
+      body: JSON.stringify({ email, username, password }),
+    },
+    registrationResultSchema,
+  );
 }
 
 export async function login(email: string, password: string) {
-  const { session } = await apiFetch<{ session: Session }>("/auth/login", {
-    method: "POST",
-    handleUnauthorized: false,
-    body: JSON.stringify({ email, password }),
-  }, z.object({ session: sessionSchema }));
+  const { session } = await apiFetch<{ session: Session }>(
+    "/auth/login",
+    {
+      method: "POST",
+      handleUnauthorized: false,
+      body: JSON.stringify({ email, password }),
+    },
+    z.object({ session: sessionSchema }),
+  );
   setToken(session.access_token);
   return session;
 }
 
 export async function me() {
-  return apiFetch<{ user: User }>("/auth/me", {}, z.object({ user: userSchema })).then((r) => r.user);
+  return apiFetch<{ user: User }>("/auth/me", {}, z.object({ user: userSchema })).then(
+    (r) => r.user,
+  );
 }
 
 export async function changePassword(currentPassword: string, newPassword: string) {
-  return apiFetch<{ user: User }>("/auth/change-password", {
-    method: "POST",
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-  }, z.object({ user: userSchema })).then((r) => r.user);
+  return apiFetch<{ user: User }>(
+    "/auth/change-password",
+    {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    },
+    z.object({ user: userSchema }),
+  ).then((r) => r.user);
 }
 
 export async function verifyEmail(token: string) {
-  return apiFetch("/auth/verify-email", {
-    method: "POST",
-    handleUnauthorized: false,
-    body: JSON.stringify({ token }),
-  }, z.object({ verified: z.boolean() })).then(() => undefined);
+  return apiFetch(
+    "/auth/verify-email",
+    {
+      method: "POST",
+      handleUnauthorized: false,
+      body: JSON.stringify({ token }),
+    },
+    z.object({ verified: z.boolean() }),
+  ).then(() => undefined);
 }
 
 export async function resendVerification(email: string) {
-  return apiFetch("/auth/resend-verification", {
-    method: "POST",
-    handleUnauthorized: false,
-    body: JSON.stringify({ email }),
-  }, z.object({ message: z.string() })).then(() => undefined);
+  return apiFetch(
+    "/auth/resend-verification",
+    {
+      method: "POST",
+      handleUnauthorized: false,
+      body: JSON.stringify({ email }),
+    },
+    z.object({ message: z.string() }),
+  ).then(() => undefined);
 }
 
 export async function forgotPassword(email: string) {
-  return apiFetch("/auth/forgot-password", {
-    method: "POST",
-    handleUnauthorized: false,
-    body: JSON.stringify({ email }),
-  }, z.object({ message: z.string() })).then(() => undefined);
+  return apiFetch(
+    "/auth/forgot-password",
+    {
+      method: "POST",
+      handleUnauthorized: false,
+      body: JSON.stringify({ email }),
+    },
+    z.object({ message: z.string() }),
+  ).then(() => undefined);
 }
 
 export async function resetPassword(token: string, newPassword: string) {
-  return apiFetch("/auth/reset-password", {
-    method: "POST",
-    handleUnauthorized: false,
-    body: JSON.stringify({ token, new_password: newPassword }),
-  }, z.object({ password_reset: z.boolean() })).then(() => undefined);
+  return apiFetch(
+    "/auth/reset-password",
+    {
+      method: "POST",
+      handleUnauthorized: false,
+      body: JSON.stringify({ token, new_password: newPassword }),
+    },
+    z.object({ password_reset: z.boolean() }),
+  ).then(() => undefined);
 }
 
 // Billing
 export async function getBillingAccount() {
-  return apiFetch<{ account: BillingAccount }>("/billing/account", {}, z.object({ account: billingAccountSchema })).then((r) => r.account);
+  return apiFetch<{ account: BillingAccount }>(
+    "/billing/account",
+    {},
+    z.object({ account: billingAccountSchema }),
+  ).then((r) => r.account);
 }
 
 export async function listBillingTransactions(cursor?: string) {
@@ -327,15 +361,26 @@ export async function createAdminUser(payload: {
   role: User["role"];
   status: User["status"];
 }) {
-  return apiFetch<{ user: User }>("/users", { method: "POST", body: JSON.stringify(payload) }).then((result) => result.user);
+  return apiFetch<{ user: User }>("/users", { method: "POST", body: JSON.stringify(payload) }).then(
+    (result) => result.user,
+  );
 }
 
-export async function updateAdminUser(userId: string, payload: Partial<Pick<User, "email" | "username" | "role" | "status">>) {
-  return apiFetch<{ user: User }>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(payload) }).then((result) => result.user);
+export async function updateAdminUser(
+  userId: string,
+  payload: Partial<Pick<User, "email" | "username" | "role" | "status">>,
+) {
+  return apiFetch<{ user: User }>(`/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }).then((result) => result.user);
 }
 
 export async function resetAdminUserPassword(userId: string, newPassword: string) {
-  return apiFetch<{ user: User }>(`/users/${userId}/reset-password`, { method: "POST", body: JSON.stringify({ new_password: newPassword }) }).then((result) => result.user);
+  return apiFetch<{ user: User }>(`/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword }),
+  }).then((result) => result.user);
 }
 
 export async function listAdminModels() {
@@ -359,78 +404,166 @@ export type AdminModelCreatePayload = {
   default_parameters: Record<string, unknown>;
 };
 
-export type AdminModelUpdatePayload = Partial<Omit<AdminModelCreatePayload, "provider" | "slug" | "upstream_model">>;
+export type AdminModelUpdatePayload = Partial<
+  Omit<AdminModelCreatePayload, "provider" | "slug" | "upstream_model">
+>;
 
 export async function createAdminModel(payload: AdminModelCreatePayload) {
-  return apiFetch<{ model: Model }>("/admin/models", { method: "POST", body: JSON.stringify(payload) }, z.object({ model: modelSchema })).then((result) => result.model);
+  return apiFetch<{ model: Model }>(
+    "/admin/models",
+    { method: "POST", body: JSON.stringify(payload) },
+    z.object({ model: modelSchema }),
+  ).then((result) => result.model);
 }
 
 export async function updateAdminModel(modelId: string, payload: AdminModelUpdatePayload) {
-  return apiFetch<{ model: Model }>(`/admin/models/${modelId}`, { method: "PATCH", body: JSON.stringify(payload) }, z.object({ model: modelSchema })).then((result) => result.model);
+  return apiFetch<{ model: Model }>(
+    `/admin/models/${modelId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+    z.object({ model: modelSchema }),
+  ).then((result) => result.model);
 }
 
 export async function setAdminModelEnabled(modelId: string, enabled: boolean) {
-  return apiFetch<{ model: Model }>(`/admin/models/${modelId}/${enabled ? "enable" : "disable"}`, { method: "POST" }, z.object({ model: modelSchema })).then((result) => result.model);
+  return apiFetch<{ model: Model }>(
+    `/admin/models/${modelId}/${enabled ? "enable" : "disable"}`,
+    { method: "POST" },
+    z.object({ model: modelSchema }),
+  ).then((result) => result.model);
 }
 
 export async function getAdminModelSettings() {
-  return apiFetch<{ settings: ModelSettings }>("/admin/model-settings", {}, z.object({ settings: modelSettingsSchema })).then((result) => result.settings);
+  return apiFetch<{ settings: ModelSettings }>(
+    "/admin/model-settings",
+    {},
+    z.object({ settings: modelSettingsSchema }),
+  ).then((result) => result.settings);
 }
 
-export async function updateAdminModelSettings(payload: Partial<Pick<ModelSettings, "default_chat_model_id" | "compaction_model_id">>) {
-  return apiFetch<{ settings: ModelSettings }>("/admin/model-settings", { method: "PATCH", body: JSON.stringify(payload) }, z.object({ settings: modelSettingsSchema })).then((result) => result.settings);
+export async function updateAdminModelSettings(
+  payload: Partial<Pick<ModelSettings, "default_chat_model_id" | "compaction_model_id">>,
+) {
+  return apiFetch<{ settings: ModelSettings }>(
+    "/admin/model-settings",
+    { method: "PATCH", body: JSON.stringify(payload) },
+    z.object({ settings: modelSettingsSchema }),
+  ).then((result) => result.settings);
 }
 
 export async function listAdminModelPrices(modelId: string) {
-  return apiFetch<{ prices: ModelPriceVersion[] }>(`/admin/models/${modelId}/prices`, {}, z.object({ prices: z.array(modelPriceVersionSchema) })).then((result) => result.prices);
+  return apiFetch<{ prices: ModelPriceVersion[] }>(
+    `/admin/models/${modelId}/prices`,
+    {},
+    z.object({ prices: z.array(modelPriceVersionSchema) }),
+  ).then((result) => result.prices);
 }
 
-export async function createAdminModelPrice(modelId: string, payload: Omit<ModelPriceVersion, "id" | "model_id" | "version" | "status" | "effective_from" | "created_at">) {
-  return apiFetch<{ price: ModelPriceVersion }>(`/admin/models/${modelId}/prices`, { method: "POST", body: JSON.stringify(payload) }, z.object({ price: modelPriceVersionSchema })).then((result) => result.price);
+export async function createAdminModelPrice(
+  modelId: string,
+  payload: Omit<
+    ModelPriceVersion,
+    "id" | "model_id" | "version" | "status" | "effective_from" | "created_at"
+  >,
+) {
+  return apiFetch<{ price: ModelPriceVersion }>(
+    `/admin/models/${modelId}/prices`,
+    { method: "POST", body: JSON.stringify(payload) },
+    z.object({ price: modelPriceVersionSchema }),
+  ).then((result) => result.price);
 }
 
-export async function setAdminModelPriceStatus(modelId: string, priceId: string, action: "publish" | "archive") {
-  return apiFetch<{ price: ModelPriceVersion }>(`/admin/models/${modelId}/prices/${priceId}/${action}`, { method: "POST", body: action === "publish" ? "{}" : undefined }, z.object({ price: modelPriceVersionSchema })).then((result) => result.price);
+export async function setAdminModelPriceStatus(
+  modelId: string,
+  priceId: string,
+  action: "publish" | "archive",
+) {
+  return apiFetch<{ price: ModelPriceVersion }>(
+    `/admin/models/${modelId}/prices/${priceId}/${action}`,
+    { method: "POST", body: action === "publish" ? "{}" : undefined },
+    z.object({ price: modelPriceVersionSchema }),
+  ).then((result) => result.price);
 }
 
 export async function listAdminCredentials() {
   return listAllCursorItems("/admin/provider-credentials?limit=200", providerCredentialSchema);
 }
 
-export async function createAdminCredential(payload: { provider: string; name: string; base_url: string; api_key: string }) {
-  return apiFetch<{ credential: ProviderCredential }>("/admin/provider-credentials", { method: "POST", body: JSON.stringify(payload) }).then((result) => result.credential);
+export async function createAdminCredential(payload: {
+  provider: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+}) {
+  return apiFetch<{ credential: ProviderCredential }>("/admin/provider-credentials", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }).then((result) => result.credential);
 }
 
-export async function updateAdminCredential(credentialId: string, payload: { name?: string; base_url?: string }) {
-  return apiFetch<{ credential: ProviderCredential }>(`/admin/provider-credentials/${credentialId}`, { method: "PATCH", body: JSON.stringify(payload) }).then((result) => result.credential);
+export async function updateAdminCredential(
+  credentialId: string,
+  payload: { name?: string; base_url?: string },
+) {
+  return apiFetch<{ credential: ProviderCredential }>(
+    `/admin/provider-credentials/${credentialId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  ).then((result) => result.credential);
 }
 
 export async function rotateAdminCredential(credentialId: string, apiKey: string) {
-  return apiFetch<{ credential: ProviderCredential }>(`/admin/provider-credentials/${credentialId}/rotate`, { method: "POST", body: JSON.stringify({ api_key: apiKey }) }).then((result) => result.credential);
+  return apiFetch<{ credential: ProviderCredential }>(
+    `/admin/provider-credentials/${credentialId}/rotate`,
+    { method: "POST", body: JSON.stringify({ api_key: apiKey }) },
+  ).then((result) => result.credential);
 }
 
-export async function runAdminCredentialAction(credentialId: string, action: "validate" | "enable" | "disable") {
-  return apiFetch<{ credential: ProviderCredential }>(`/admin/provider-credentials/${credentialId}/${action}`, { method: "POST" }).then((result) => result.credential);
+export async function runAdminCredentialAction(
+  credentialId: string,
+  action: "validate" | "enable" | "disable",
+) {
+  return apiFetch<{ credential: ProviderCredential }>(
+    `/admin/provider-credentials/${credentialId}/${action}`,
+    { method: "POST" },
+  ).then((result) => result.credential);
 }
 
 export async function revokeAdminCredential(credentialId: string) {
-  return apiFetch<{ credential: ProviderCredential }>(`/admin/provider-credentials/${credentialId}`, { method: "DELETE" }).then((result) => result.credential);
+  return apiFetch<{ credential: ProviderCredential }>(
+    `/admin/provider-credentials/${credentialId}`,
+    { method: "DELETE" },
+  ).then((result) => result.credential);
 }
 
 export async function listAdminBillingAccounts() {
   return listAllCursorItems("/admin/billing/accounts?limit=200", billingAccountSchema);
 }
 
-export async function updateAdminBillingAccount(userId: string, payload: Partial<Pick<BillingAccount, "status">>) {
-  return apiFetch<{ account: BillingAccount }>(`/admin/billing/accounts/${userId}`, { method: "PATCH", body: JSON.stringify(payload) }, z.object({ account: billingAccountSchema })).then((result) => result.account);
+export async function updateAdminBillingAccount(
+  userId: string,
+  payload: Partial<Pick<BillingAccount, "status">>,
+) {
+  return apiFetch<{ account: BillingAccount }>(
+    `/admin/billing/accounts/${userId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+    z.object({ account: billingAccountSchema }),
+  ).then((result) => result.account);
 }
 
-export async function applyAdminBillingAdjustment(userId: string, kind: "topups" | "refunds", payload: { amount: string; currency: string; reason: string; reference: string }, idempotencyKey: string) {
-  return apiFetch<{ transaction: BillingTransaction }>(`/admin/billing/accounts/${userId}/${kind}`, {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify(payload),
-  }, z.object({ transaction: billingTransactionSchema })).then((result) => result.transaction);
+export async function applyAdminBillingAdjustment(
+  userId: string,
+  kind: "topups" | "refunds",
+  payload: { amount: string; currency: string; reason: string; reference: string },
+  idempotencyKey: string,
+) {
+  return apiFetch<{ transaction: BillingTransaction }>(
+    `/admin/billing/accounts/${userId}/${kind}`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(payload),
+    },
+    z.object({ transaction: billingTransactionSchema }),
+  ).then((result) => result.transaction);
 }
 
 export async function listAdminBillingTransactions() {
@@ -446,10 +579,17 @@ export async function listAdminAuditEvents() {
 }
 
 export async function getAdminMailSettings() {
-  return apiFetch<{ settings: MailSettings }>("/admin/mail-settings").then((result) => result.settings);
+  return apiFetch<{ settings: MailSettings }>("/admin/mail-settings").then(
+    (result) => result.settings,
+  );
 }
 
-export async function updateAdminMailSettings(payload: Pick<MailSettings, "enabled" | "host" | "port" | "security" | "username" | "from_email" | "from_name"> & { password?: string }) {
+export async function updateAdminMailSettings(
+  payload: Pick<
+    MailSettings,
+    "enabled" | "host" | "port" | "security" | "username" | "from_email" | "from_name"
+  > & { password?: string },
+) {
   return apiFetch<{ settings: MailSettings }>("/admin/mail-settings", {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -466,29 +606,42 @@ export async function testAdminMailSettings(recipient: string) {
 // Conversations
 export async function listConversations(limit?: number, signal?: AbortSignal) {
   const qs = limit ? `?limit=${limit}` : "";
-  return apiFetch<{ conversations: Conversation[] }>(`/conversations${qs}`, { signal }, z.object({ conversations: z.array(conversationSchema) })).then((r) => r.conversations);
+  return apiFetch<{ conversations: Conversation[] }>(
+    `/conversations${qs}`,
+    { signal },
+    z.object({ conversations: z.array(conversationSchema) }),
+  ).then((r) => r.conversations);
 }
 
-export async function createConversation(payload?: {
-  title?: string;
-  metadata?: Record<string, unknown>;
-}, idempotencyKey?: string) {
-  return apiFetch<{ conversation: Conversation }>("/conversations", {
-    method: "POST",
-    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
-    body: JSON.stringify(payload || {}),
-  }, z.object({ conversation: conversationSchema })).then((r) => r.conversation);
+export async function createConversation(
+  payload?: {
+    title?: string;
+    metadata?: Record<string, unknown>;
+  },
+  idempotencyKey?: string,
+) {
+  return apiFetch<{ conversation: Conversation }>(
+    "/conversations",
+    {
+      method: "POST",
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      body: JSON.stringify(payload || {}),
+    },
+    z.object({ conversation: conversationSchema }),
+  ).then((r) => r.conversation);
 }
 
 export async function getConversation(id: string) {
-  return apiFetch<{ conversation: Conversation }>(`/conversations/${id}`, {}, z.object({ conversation: conversationSchema })).then(
-    (r) => r.conversation
-  );
+  return apiFetch<{ conversation: Conversation }>(
+    `/conversations/${id}`,
+    {},
+    z.object({ conversation: conversationSchema }),
+  ).then((r) => r.conversation);
 }
 
 export async function patchConversation(
   id: string,
-  payload: { title?: string; archived?: boolean }
+  payload: { title?: string; archived?: boolean },
 ) {
   return apiFetch<{ conversation: Conversation }>(`/conversations/${id}`, {
     method: "PATCH",
@@ -497,21 +650,26 @@ export async function patchConversation(
 }
 
 // Attachments
-export async function uploadConversationAttachment(conversationId: string, file: File, idempotencyKey?: string) {
+export async function uploadConversationAttachment(
+  conversationId: string,
+  file: File,
+  idempotencyKey?: string,
+) {
   const body = new FormData();
   body.append("file", file);
 
-  return apiFetch<{ attachment: Attachment }>(`/conversations/${conversationId}/attachments`, {
-    method: "POST",
-    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
-    body,
-  }, z.object({ attachment: attachmentSchema })).then((r) => r.attachment);
+  return apiFetch<{ attachment: Attachment }>(
+    `/conversations/${conversationId}/attachments`,
+    {
+      method: "POST",
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      body,
+    },
+    z.object({ attachment: attachmentSchema }),
+  ).then((r) => r.attachment);
 }
 
-export async function getConversationAttachmentBlob(
-  conversationId: string,
-  attachmentId: string
-) {
+export async function getConversationAttachmentBlob(conversationId: string, attachmentId: string) {
   const token = getToken();
   const headers: Record<string, string> = {
     Accept: "*/*",
@@ -522,7 +680,7 @@ export async function getConversationAttachmentBlob(
 
   const res = await fetch(
     buildUrl(`/conversations/${conversationId}/attachments/${attachmentId}`),
-    { headers }
+    { headers },
   );
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
@@ -560,11 +718,15 @@ export interface InitialTurnResult {
 }
 
 export async function prepareInitialTurn(idempotencyKey: string) {
-  return apiFetch("/conversations/initial-turns", {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ action: "prepare", metadata: { source: "home" } }),
-  }, preparedInitialTurnSchema);
+  return apiFetch(
+    "/conversations/initial-turns",
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ action: "prepare", metadata: { source: "home" } }),
+    },
+    preparedInitialTurnSchema,
+  );
 }
 
 export async function commitInitialTurn(
@@ -572,19 +734,23 @@ export async function commitInitialTurn(
   conversationId: string,
   descriptor: TurnRequestDescriptor,
 ): Promise<InitialTurnResult> {
-  const result = await apiFetch("/conversations/initial-turns", {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({
-      action: "commit",
-      conversation_id: conversationId,
-      content: descriptor.content,
-      attachment_ids: descriptor.attachment_ids,
-      model_id: descriptor.model_id || "",
-      reasoning_effort: descriptor.reasoning_effort || "",
-      metadata: requestMetadata(descriptor),
-    }),
-  }, committedInitialTurnSchema);
+  const result = await apiFetch(
+    "/conversations/initial-turns",
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({
+        action: "commit",
+        conversation_id: conversationId,
+        content: descriptor.content,
+        attachment_ids: descriptor.attachment_ids,
+        model_id: descriptor.model_id || "",
+        reasoning_effort: descriptor.reasoning_effort || "",
+        metadata: requestMetadata(descriptor),
+      }),
+    },
+    committedInitialTurnSchema,
+  );
   return {
     conversation_id: result.conversation.id,
     conversation: result.conversation,
@@ -594,32 +760,42 @@ export async function commitInitialTurn(
   };
 }
 
-export async function createMessage(conversationId: string, input: {
-  content: string;
-  metadata?: Record<string, unknown>;
-  attachmentIds?: string[];
-  modelId?: string;
-  reasoningEffort?: ReasoningEffort;
-} | TurnRequestDescriptor, idempotencyKey?: string) {
-  const descriptor = "attachment_ids" in input
-    ? input
-    : normalizeTurnRequest(input);
-  return apiFetch<InitialTurnResult>(`/conversations/${conversationId}/messages`, {
-    method: "POST",
-    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
-    body: JSON.stringify({
-      content: descriptor.content,
-      attachment_ids: descriptor.attachment_ids,
-      model_id: descriptor.model_id || "",
-      reasoning_effort: descriptor.reasoning_effort || "",
-      metadata: requestMetadata(descriptor),
-    }),
-  }, initialTurnResultSchema);
+export async function createMessage(
+  conversationId: string,
+  input:
+    | {
+        content: string;
+        metadata?: Record<string, unknown>;
+        attachmentIds?: string[];
+        modelId?: string;
+        reasoningEffort?: ReasoningEffort;
+      }
+    | TurnRequestDescriptor,
+  idempotencyKey?: string,
+) {
+  const descriptor = "attachment_ids" in input ? input : normalizeTurnRequest(input);
+  return apiFetch<InitialTurnResult>(
+    `/conversations/${conversationId}/messages`,
+    {
+      method: "POST",
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      body: JSON.stringify({
+        content: descriptor.content,
+        attachment_ids: descriptor.attachment_ids,
+        model_id: descriptor.model_id || "",
+        reasoning_effort: descriptor.reasoning_effort || "",
+        metadata: requestMetadata(descriptor),
+      }),
+    },
+    initialTurnResultSchema,
+  );
 }
 
 // Turns
 export async function getTurn(id: string) {
-  return apiFetch<{ turn: Turn }>(`/turns/${id}`, {}, z.object({ turn: turnSchema })).then((r) => r.turn);
+  return apiFetch<{ turn: Turn }>(`/turns/${id}`, {}, z.object({ turn: turnSchema })).then(
+    (r) => r.turn,
+  );
 }
 
 export function getStreamUrl(streamPath: string): string {

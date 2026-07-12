@@ -64,7 +64,9 @@ export function AccountSettings({ user }: { user: User }) {
           </div>
           <div className="grid gap-1 py-4 sm:grid-cols-[160px_1fr] sm:items-center">
             <dt className="text-sm text-muted-foreground">角色</dt>
-            <dd><Badge variant="outline">{roleLabel(user.role)}</Badge></dd>
+            <dd>
+              <Badge variant="outline">{roleLabel(user.role)}</Badge>
+            </dd>
           </div>
           <div className="grid gap-1 py-4 sm:grid-cols-[160px_1fr] sm:items-center">
             <dt className="text-sm text-muted-foreground">账户 ID</dt>
@@ -72,7 +74,9 @@ export function AccountSettings({ user }: { user: User }) {
               <code className="truncate font-mono text-xs text-muted-foreground">{user.id}</code>
               <Tooltip>
                 <TooltipTrigger
-                  render={<Button type="button" variant="ghost" size="icon-xs" onClick={copyUserID} />}
+                  render={
+                    <Button type="button" variant="ghost" size="icon-xs" onClick={copyUserID} />
+                  }
                 >
                   <Copy />
                   <span className="sr-only">复制账户 ID</span>

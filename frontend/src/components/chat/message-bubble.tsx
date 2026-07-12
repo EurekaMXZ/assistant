@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CircleAlert, Pencil, RotateCcw } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MarkdownRenderer } from "./markdown-renderer";
 import { CopyButton } from "./copy-button";
 import { TurnTimeline } from "./turn-timeline";
@@ -175,30 +171,19 @@ function AttachmentImagePreviews({
   );
 }
 
-function MessageBody({
-  isStreaming,
-  message,
-}: {
-  isStreaming?: boolean;
-  message: Message;
-}) {
+function MessageBody({ isStreaming, message }: { isStreaming?: boolean; message: Message }) {
   const isUser = message.role === "user";
   const metadata = message.metadata || {};
   const isError = metadata.display_kind === "assistant_error";
   const attachments = attachmentsFromMetadata(metadata);
   const imageAttachments = attachments.filter(isImageAttachment);
   const attachmentCount = attachmentCountFromMetadata(metadata);
-  const hiddenAttachmentCount = Math.max(
-    0,
-    attachmentCount - imageAttachments.length,
-  );
+  const hiddenAttachmentCount = Math.max(0, attachmentCount - imageAttachments.length);
 
   return (
     <div
       className="leading-relaxed"
-      style={
-        isUser ? undefined : { paddingLeft: `${assistantActionIconInsetPx}px` }
-      }
+      style={isUser ? undefined : { paddingLeft: `${assistantActionIconInsetPx}px` }}
     >
       {isError ? (
         <div
@@ -220,9 +205,7 @@ function MessageBody({
           />
           <MarkdownRenderer content={message.content_text} />
           {hiddenAttachmentCount > 0 ? (
-            <p className="mt-2 text-muted-foreground">
-              已附加 {hiddenAttachmentCount} 个文件
-            </p>
+            <p className="mt-2 text-muted-foreground">已附加 {hiddenAttachmentCount} 个文件</p>
           ) : null}
         </>
       ) : attachmentCount > 0 ? (
@@ -233,15 +216,11 @@ function MessageBody({
               conversationId={message.conversation_id}
             />
             {hiddenAttachmentCount > 0 ? (
-              <span className="text-muted-foreground">
-                已发送 {hiddenAttachmentCount} 个文件
-              </span>
+              <span className="text-muted-foreground">已发送 {hiddenAttachmentCount} 个文件</span>
             ) : null}
           </>
         ) : (
-          <span className="text-muted-foreground">
-            已发送 {attachmentCount} 个文件
-          </span>
+          <span className="text-muted-foreground">已发送 {attachmentCount} 个文件</span>
         )
       ) : isStreaming ? (
         <span className="inline-block h-4 w-1 animate-pulse bg-current" />
@@ -252,43 +231,24 @@ function MessageBody({
   );
 }
 
-export function MessageBubble({
-  message,
-  onEdit,
-  onRetry,
-  isStreaming,
-}: MessageBubbleProps) {
+export function MessageBubble({ message, onEdit, onRetry, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const displayKind =
-    typeof message.metadata?.display_kind === "string"
-      ? message.metadata.display_kind
-      : null;
+    typeof message.metadata?.display_kind === "string" ? message.metadata.display_kind : null;
   const isThinkingBlock = !isUser && displayKind === "thinking";
 
   return (
-    <div
-      className={cn(
-        "group/message flex w-full",
-        isUser ? "justify-end" : "justify-start"
-      )}
-    >
-      <div
-        className={cn(
-          "flex w-full flex-col",
-          isUser ? "items-end" : "items-start"
-        )}
-      >
+    <div className={cn("group/message flex w-full", isUser ? "justify-end" : "justify-start")}>
+      <div className={cn("flex w-full flex-col", isUser ? "items-end" : "items-start")}>
         <div
           className={cn(
             "relative",
             isUser
               ? "ml-auto max-w-full rounded-2xl bg-muted px-4 py-3 text-foreground"
-              : "w-full text-foreground"
+              : "w-full text-foreground",
           )}
         >
-          {!isThinkingBlock ? (
-            <MessageBody isStreaming={isStreaming} message={message} />
-          ) : null}
+          {!isThinkingBlock ? <MessageBody isStreaming={isStreaming} message={message} /> : null}
         </div>
 
         {isThinkingBlock ? null : isUser ? (
@@ -325,12 +285,7 @@ export function MessageBubble({
           <div className="mt-1 flex w-full items-center justify-start gap-1">
             <Tooltip>
               <TooltipTrigger
-                render={
-                  <CopyButton
-                    text={message.content_text || ""}
-                    className="h-7 w-7"
-                  />
-                }
+                render={<CopyButton text={message.content_text || ""} className="h-7 w-7" />}
               />
               <TooltipContent>
                 <p>复制</p>
@@ -404,13 +359,8 @@ export function AssistantTurnBubble({
                 <div key={message.id}>{timelineControl}</div>
               ) : (
                 <div key={message.id} className="space-y-4">
-                  {!hasThinkingMarker && message.id === lastOutput?.id
-                    ? timelineControl
-                    : null}
-                  <MessageBody
-                    isStreaming={isStreaming}
-                    message={message}
-                  />
+                  {!hasThinkingMarker && message.id === lastOutput?.id ? timelineControl : null}
+                  <MessageBody isStreaming={isStreaming} message={message} />
                 </div>
               ),
             )}
@@ -420,11 +370,7 @@ export function AssistantTurnBubble({
         {lastOutput ? (
           <div className="mt-1 flex w-full items-center justify-start gap-1">
             <Tooltip>
-              <TooltipTrigger
-                render={
-                  <CopyButton text={copyText} className="h-7 w-7" />
-                }
-              />
+              <TooltipTrigger render={<CopyButton text={copyText} className="h-7 w-7" />} />
               <TooltipContent>
                 <p>复制</p>
               </TooltipContent>

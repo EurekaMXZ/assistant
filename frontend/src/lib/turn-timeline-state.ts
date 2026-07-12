@@ -72,17 +72,15 @@ function recordSequence(
   };
 }
 
-function currentTimeline(
-  state: TurnTimelineState,
-  turnId: string,
-  conversationId: string,
-) {
-  return state.timelines[turnId] || {
-    turn_id: turnId,
-    conversation_id: conversationId,
-    status: "processing" as const,
-    items: [],
-  };
+function currentTimeline(state: TurnTimelineState, turnId: string, conversationId: string) {
+  return (
+    state.timelines[turnId] || {
+      turn_id: turnId,
+      conversation_id: conversationId,
+      status: "processing" as const,
+      items: [],
+    }
+  );
 }
 
 function updateItem(
@@ -211,9 +209,10 @@ export function transitionTurnTimelineState(
   }
 
   const itemId = action.type === "item-delta" ? action.delta.item_id : action.item.id;
-  const sequence = action.type === "item-delta"
-    ? action.delta.sequence_number
-    : action.item.metadata?.sequence_number;
+  const sequence =
+    action.type === "item-delta"
+      ? action.delta.sequence_number
+      : action.item.metadata?.sequence_number;
   const recorded = recordSequence(state, action.turnId, itemId, sequence);
   if (!recorded.accepted) return { accepted: false, state };
 
@@ -224,11 +223,7 @@ export function transitionTurnTimelineState(
         state: { ...state, itemSequences: recorded.itemSequences },
       };
     }
-    const timeline = currentTimeline(
-      state,
-      action.turnId,
-      action.conversationId,
-    );
+    const timeline = currentTimeline(state, action.turnId, action.conversationId);
     return {
       accepted: true,
       state: {
@@ -250,12 +245,7 @@ export function transitionTurnTimelineState(
     state: {
       ...state,
       itemSequences: recorded.itemSequences,
-      timelines: updateItem(
-        state,
-        action.turnId,
-        action.conversationId,
-        action.item,
-      ),
+      timelines: updateItem(state, action.turnId, action.conversationId, action.item),
     },
   };
 }

@@ -38,22 +38,14 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           const isInline = !className;
           const text = String(children).replace(/\n$/, "");
           if (isInline) {
-            return (
-              <code className="rounded bg-muted px-1 py-0.5 font-mono">
-                {children}
-              </code>
-            );
+            return <code className="rounded bg-muted px-1 py-0.5 font-mono">{children}</code>;
           }
           return (
             <div className="relative">
               <div className="absolute right-2 top-2">
                 <CopyButton text={text} />
               </div>
-              <code
-                className={`${className} block whitespace-pre font-mono`}
-              >
-                {children}
-              </code>
+              <code className={`${className} block whitespace-pre font-mono`}>{children}</code>
             </div>
           );
         },
@@ -64,9 +56,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           return <ul className="mb-3 list-disc space-y-1 pl-5">{children}</ul>;
         },
         ol({ children }) {
-          return (
-            <ol className="mb-3 list-decimal space-y-1 pl-5">{children}</ol>
-          );
+          return <ol className="mb-3 list-decimal space-y-1 pl-5">{children}</ol>;
         },
         li({ children }) {
           return <li className="leading-7">{children}</li>;
@@ -102,9 +92,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
         table({ children }) {
           return (
             <div className="my-3 overflow-auto">
-              <table className="w-full border-collapse">
-                {children}
-              </table>
+              <table className="w-full border-collapse">{children}</table>
             </div>
           );
         },
@@ -116,9 +104,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           );
         },
         td({ children }) {
-          return (
-            <td className="border border-border px-3 py-2">{children}</td>
-          );
+          return <td className="border border-border px-3 py-2">{children}</td>;
         },
       }}
     >

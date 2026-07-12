@@ -22,7 +22,7 @@ type MessageListEntry =
 
 function groupMessageEntries(messages: Message[]) {
   const entries: MessageListEntry[] = [];
-  for (let index = 0; index < messages.length; ) {
+  for (let index = 0; index < messages.length;) {
     const message = messages[index];
     if (message.role !== "assistant" || !message.turn_id) {
       entries.push({ kind: "message", message });
@@ -71,7 +71,7 @@ export function MessageList({
 
   useEffect(() => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
-      '[data-slot="scroll-area-viewport"]'
+      '[data-slot="scroll-area-viewport"]',
     );
     if (!viewport || !shouldFollowRef.current) return;
 
@@ -91,30 +91,30 @@ export function MessageList({
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               发送第一条消息开始对话
             </div>
-        ) : (
-          entries.map((entry) =>
-            entry.kind === "assistant-turn" ? (
-              <AssistantTurnBubble
-                key={`assistant-turn-${entry.turnId}-${entry.messages[0].id}`}
-                activityLabel={activityLabels?.[entry.turnId]}
-                messages={entry.messages}
-                onOpenTimeline={onOpenTimeline}
-                onRetry={onRetryMessage}
-                isStreaming={streamingTurnId === entry.turnId}
-                turn={turnsById[entry.turnId] || null}
-                turnId={entry.turnId}
-              />
-            ) : (
-              <MessageBubble
-                key={entry.message.id}
-                message={entry.message}
-                onEdit={onEditMessage}
-                onRetry={onRetryMessage}
-                isStreaming={streamingTurnId === entry.message.turn_id}
-              />
-            ),
-          )
-        )}
+          ) : (
+            entries.map((entry) =>
+              entry.kind === "assistant-turn" ? (
+                <AssistantTurnBubble
+                  key={`assistant-turn-${entry.turnId}-${entry.messages[0].id}`}
+                  activityLabel={activityLabels?.[entry.turnId]}
+                  messages={entry.messages}
+                  onOpenTimeline={onOpenTimeline}
+                  onRetry={onRetryMessage}
+                  isStreaming={streamingTurnId === entry.turnId}
+                  turn={turnsById[entry.turnId] || null}
+                  turnId={entry.turnId}
+                />
+              ) : (
+                <MessageBubble
+                  key={entry.message.id}
+                  message={entry.message}
+                  onEdit={onEditMessage}
+                  onRetry={onRetryMessage}
+                  isStreaming={streamingTurnId === entry.message.turn_id}
+                />
+              ),
+            )
+          )}
         </div>
       </ScrollArea>
     </div>

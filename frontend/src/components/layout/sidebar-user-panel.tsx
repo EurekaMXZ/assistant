@@ -74,7 +74,9 @@ export function SidebarUserPanel({
   return (
     <div className="mt-auto shrink-0 px-2 py-2">
       {authLoading ? (
-        <Skeleton className={cn(collapsed ? "mx-auto h-8 w-8 rounded-lg" : "h-20 w-full rounded-xl")} />
+        <Skeleton
+          className={cn(collapsed ? "mx-auto h-8 w-8 rounded-lg" : "h-20 w-full rounded-xl")}
+        />
       ) : user ? (
         <DropdownMenu onOpenChange={(open) => open && void refreshBalance()}>
           <DropdownMenuTrigger
@@ -84,7 +86,7 @@ export function SidebarUserPanel({
                 size={collapsed ? "icon-sm" : "sm"}
                 className={cn(
                   "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground",
-                  collapsed ? "mx-auto" : "min-h-12 w-full justify-start px-2 py-2"
+                  collapsed ? "mx-auto" : "min-h-12 w-full justify-start px-2 py-2",
                 )}
               />
             }
@@ -93,12 +95,18 @@ export function SidebarUserPanel({
             {!collapsed ? (
               <span className="min-w-0 text-left leading-tight">
                 <span className="block truncate text-sm">{user.username}</span>
-                <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">{balanceLabel}</span>
+                <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
+                  {balanceLabel}
+                </span>
               </span>
             ) : null}
             {collapsed ? <span className="sr-only">用户菜单</span> : null}
           </DropdownMenuTrigger>
-          <DropdownMenuContent align={collapsed ? "start" : "end"} side={collapsed ? "right" : undefined} className="w-56">
+          <DropdownMenuContent
+            align={collapsed ? "start" : "end"}
+            side={collapsed ? "right" : undefined}
+            className="w-56"
+          >
             <DropdownMenuItem disabled>
               <span className="text-xs text-muted-foreground">{user.email}</span>
             </DropdownMenuItem>
@@ -138,7 +146,12 @@ export function SidebarUserPanel({
             <Button size="sm" className="min-h-9 flex-1 py-2" onClick={onOpenLogin}>
               登录
             </Button>
-            <Button variant="outline" size="sm" className="min-h-9 flex-1 py-2" onClick={onOpenRegister}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-9 flex-1 py-2"
+              onClick={onOpenRegister}
+            >
               注册
             </Button>
           </div>

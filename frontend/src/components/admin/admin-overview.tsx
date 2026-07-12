@@ -2,7 +2,12 @@
 
 import { useEffect, useEffectEvent, useState } from "react";
 import { ArrowRight } from "lucide-react";
-import { AdminError, AdminLoading, AdminPageHeader, formatAdminDate } from "@/components/admin/admin-shared";
+import {
+  AdminError,
+  AdminLoading,
+  AdminPageHeader,
+  formatAdminDate,
+} from "@/components/admin/admin-shared";
 import type { AdminSection } from "@/components/admin/admin-sections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +29,13 @@ type OverviewData = {
   audit: AuditEvent[];
 };
 
-export function AdminOverview({ actor, onNavigate }: { actor: User; onNavigate: (section: AdminSection) => void }) {
+export function AdminOverview({
+  actor,
+  onNavigate,
+}: {
+  actor: User;
+  onNavigate: (section: AdminSection) => void;
+}) {
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState("");
 
@@ -47,10 +58,7 @@ export function AdminOverview({ actor, onNavigate }: { actor: User; onNavigate: 
         return;
       }
 
-      const [models, credentials] = await Promise.all([
-        listAdminModels(),
-        listAdminCredentials(),
-      ]);
+      const [models, credentials] = await Promise.all([listAdminModels(), listAdminCredentials()]);
       setData({
         users: users.length,
         enabledModels: models.filter((item) => item.status === "enabled").length,
@@ -65,17 +73,23 @@ export function AdminOverview({ actor, onNavigate }: { actor: User; onNavigate: 
   };
 
   const loadOverview = useEffectEvent(load);
-  useEffect(() => { void loadOverview(); }, [actor.role]);
+  useEffect(() => {
+    void loadOverview();
+  }, [actor.role]);
 
-  const stats = data ? [
-    { label: "用户", value: data.users },
-    ...(actor.role === "system" ? [
-      { label: "启用模型", value: data.enabledModels ?? 0 },
-      { label: "有效凭据", value: data.credentials ?? 0 },
-    ] : []),
-    { label: "活跃账户", value: data.activeAccounts },
-    { label: "审计记录", value: data.auditEvents },
-  ] : [];
+  const stats = data
+    ? [
+        { label: "用户", value: data.users },
+        ...(actor.role === "system"
+          ? [
+              { label: "启用模型", value: data.enabledModels ?? 0 },
+              { label: "有效凭据", value: data.credentials ?? 0 },
+            ]
+          : []),
+        { label: "活跃账户", value: data.activeAccounts },
+        { label: "审计记录", value: data.auditEvents },
+      ]
+    : [];
 
   return (
     <div>
@@ -85,9 +99,14 @@ export function AdminOverview({ actor, onNavigate }: { actor: User; onNavigate: 
       {error && !data ? <AdminError message={error} onRetry={load} /> : null}
       {data ? (
         <>
-          <section className={`mt-7 grid border-y sm:grid-cols-2 ${actor.role === "system" ? "xl:grid-cols-5" : "xl:grid-cols-3"}`}>
+          <section
+            className={`mt-7 grid border-y sm:grid-cols-2 ${actor.role === "system" ? "xl:grid-cols-5" : "xl:grid-cols-3"}`}
+          >
             {stats.map((item, index) => (
-              <div key={item.label} className={`px-1 py-5 sm:px-5 ${index > 0 ? "sm:border-l" : ""} ${index > 1 ? "border-t sm:border-t-0" : index === 1 ? "border-t sm:border-t-0" : ""}`}>
+              <div
+                key={item.label}
+                className={`px-1 py-5 sm:px-5 ${index > 0 ? "sm:border-l" : ""} ${index > 1 ? "border-t sm:border-t-0" : index === 1 ? "border-t sm:border-t-0" : ""}`}
+              >
                 <p className="text-xs text-muted-foreground">{item.label}</p>
                 <p className="mt-2 font-mono text-3xl font-semibold tabular-nums">{item.value}</p>
               </div>
@@ -98,7 +117,9 @@ export function AdminOverview({ actor, onNavigate }: { actor: User; onNavigate: 
             <section>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold">最近管理操作</h2>
-                <Button variant="ghost" size="sm" onClick={() => onNavigate("audit")}>查看全部 <ArrowRight /></Button>
+                <Button variant="ghost" size="sm" onClick={() => onNavigate("audit")}>
+                  查看全部 <ArrowRight />
+                </Button>
               </div>
               <div className="overflow-x-auto border-y">
                 <table className="w-full min-w-[620px] text-left text-sm">
@@ -113,10 +134,20 @@ export function AdminOverview({ actor, onNavigate }: { actor: User; onNavigate: 
                   <tbody className="divide-y">
                     {data.audit.map((item) => (
                       <tr key={item.id}>
-                        <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">{formatAdminDate(item.created_at)}</td>
+                        <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
+                          {formatAdminDate(item.created_at)}
+                        </td>
                         <td className="px-4 py-3 font-medium">{item.action}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{item.resource_type || "-"}</td>
-                        <td className="py-3 pl-4 text-right"><Badge variant={item.outcome === "succeeded" ? "secondary" : "destructive"}>{item.outcome}</Badge></td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {item.resource_type || "-"}
+                        </td>
+                        <td className="py-3 pl-4 text-right">
+                          <Badge
+                            variant={item.outcome === "succeeded" ? "secondary" : "destructive"}
+                          >
+                            {item.outcome}
+                          </Badge>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

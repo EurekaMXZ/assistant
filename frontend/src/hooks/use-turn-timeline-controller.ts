@@ -56,11 +56,7 @@ export interface TurnTimelineController {
   closeTimeline: () => void;
   dispatchActiveFrame: (frame: SseFrame, turnId: string) => void;
   finishActiveTurn: (turnId: string) => void;
-  hydrateTurn: (
-    turnId: string,
-    mode: "panel" | "restore",
-    fallbackTurn?: Turn,
-  ) => Promise<void>;
+  hydrateTurn: (turnId: string, mode: "panel" | "restore", fallbackTurn?: Turn) => Promise<void>;
   initializeTurns: (turns: Turn[]) => void;
   openTimeline: (turnId: string, activeTurnId: string | null) => void;
   registerTurn: (turn: Turn) => void;
@@ -146,32 +142,26 @@ export function useTurnTimelineController({
           if (phase) {
             pendingDoneTextMessageIdRef.current = null;
             if (phase === "commentary") {
-              setMessages((previous) =>
-                moveThinkingAfter(previous, turnId, pendingMessageId),
-              );
+              setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
             }
             return;
           }
         }
-        const hasContinuation = frame.data.items
-          .slice(pendingIndex + 1)
-          .some((value) => {
-            if (
-              typeof value !== "object" ||
-              value === null ||
-              !("id" in value) ||
-              !("type" in value)
-            ) {
-              return false;
-            }
-            const item = value as TimelineItem;
-            return isAssistantOutputItem(item) || isTimelineItem(item);
-          });
+        const hasContinuation = frame.data.items.slice(pendingIndex + 1).some((value) => {
+          if (
+            typeof value !== "object" ||
+            value === null ||
+            !("id" in value) ||
+            !("type" in value)
+          ) {
+            return false;
+          }
+          const item = value as TimelineItem;
+          return isAssistantOutputItem(item) || isTimelineItem(item);
+        });
         if (!hasContinuation) return;
         pendingDoneTextMessageIdRef.current = null;
-        setMessages((previous) =>
-          moveThinkingAfter(previous, turnId, pendingMessageId),
-        );
+        setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
         return;
       }
       if (frame.event === "conversation.updated") return;
@@ -189,9 +179,7 @@ export function useTurnTimelineController({
           if (!phase) return;
           pendingDoneTextMessageIdRef.current = null;
           if (phase === "commentary") {
-            setMessages((previous) =>
-              moveThinkingAfter(previous, turnId, pendingMessageId),
-            );
+            setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
           }
           return;
         }
@@ -199,9 +187,7 @@ export function useTurnTimelineController({
 
       pendingDoneTextMessageIdRef.current = null;
       if (frame.event !== "turn.done") {
-        setMessages((previous) =>
-          moveThinkingAfter(previous, turnId, pendingMessageId),
-        );
+        setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
       }
     },
     [setMessages],
@@ -215,12 +201,7 @@ export function useTurnTimelineController({
           applyAction({ type: "snapshot", turnId, snapshot });
           if (mirrorMessages) {
             setMessages((previous) =>
-              applyAssistantTimelineSnapshot(
-                previous,
-                turnId,
-                conversationId,
-                snapshot.items,
-              ),
+              applyAssistantTimelineSnapshot(previous, turnId, conversationId, snapshot.items),
             );
           }
           if (mode === "active") {
@@ -299,9 +280,7 @@ export function useTurnTimelineController({
               const phase = assistantOutputPhase(item);
               pendingDoneTextMessageIdRef.current = phase ? null : messageId;
               if (phase === "commentary") {
-                setMessages((previous) =>
-                  moveThinkingAfter(previous, turnId, messageId),
-                );
+                setMessages((previous) => moveThinkingAfter(previous, turnId, messageId));
               }
               setStatusText(null);
             }
@@ -337,10 +316,7 @@ export function useTurnTimelineController({
 
   const dispatchActiveFrame = useCallback(
     (frame: SseFrame, turnId: string) => {
-      if (
-        !mountedRef.current ||
-        activeConversationIdRef.current !== conversationId
-      ) {
+      if (!mountedRef.current || activeConversationIdRef.current !== conversationId) {
         return;
       }
       settlePendingThinking(frame, turnId);
@@ -364,11 +340,7 @@ export function useTurnTimelineController({
           turnId,
           signal: controller.signal,
           openStream: (signal) =>
-            streamEvents(
-              getStreamUrl(`/turns/${turnId}/stream`),
-              getToken(),
-              signal,
-            ),
+            streamEvents(getStreamUrl(`/turns/${turnId}/stream`), getToken(), signal),
           getTurn,
           onEvent: (event) => {
             if (activeConversationIdRef.current === requestedConversationId) {
@@ -379,19 +351,14 @@ export function useTurnTimelineController({
         });
         if (result.kind === "retryable") throw result.error;
       } catch (error) {
-        if (
-          (error as Error).name !== "AbortError" &&
-          !isSessionUnauthorizedError(error)
-        ) {
+        if ((error as Error).name !== "AbortError" && !isSessionUnauthorizedError(error)) {
           applyAction({
             type: "set-error",
             turnId,
             error: error instanceof Error ? error.message : "加载失败",
           });
           if (mode === "restore" && fallbackTurn?.status === "failed") {
-            setMessages((previous) =>
-              upsertTurnFailureMessage(previous, turnId, conversationId),
-            );
+            setMessages((previous) => upsertTurnFailureMessage(previous, turnId, conversationId));
           }
         }
       } finally {

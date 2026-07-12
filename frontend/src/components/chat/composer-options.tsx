@@ -51,7 +51,8 @@ export function ComposerOptions({
   style,
 }: ComposerOptionsProps) {
   const defaultModel = models.find((item) => item.is_default) || null;
-  const selectedModel = (modelId ? models.find((item) => item.id === modelId) : defaultModel) || null;
+  const selectedModel =
+    (modelId ? models.find((item) => item.id === modelId) : defaultModel) || null;
   const selectedEffort = selectedModel ? reasoningEfforts[selectedModel.id] || "" : "";
   const buttonLabel = selectedModel
     ? `${selectedModel.upstream_model}${selectedEffort ? ` ${selectedEffort}` : ""}`
@@ -84,56 +85,70 @@ export function ComposerOptions({
               {modelsLoading ? <Loader2 className="size-3 animate-spin" /> : null}
             </DropdownMenuLabel>
             {models.map((model) => {
-            const isDefault = model.id === defaultModel?.id;
-            const preferenceValue = isDefault ? "" : model.id;
-            const selected = model.id === selectedModel?.id;
-            const supportedEfforts = supportedReasoningEfforts(model);
-            const configuredEffort = reasoningEfforts[model.id];
-            const effort = configuredEffort && supportedEfforts.includes(configuredEffort) ? configuredEffort : "";
+              const isDefault = model.id === defaultModel?.id;
+              const preferenceValue = isDefault ? "" : model.id;
+              const selected = model.id === selectedModel?.id;
+              const supportedEfforts = supportedReasoningEfforts(model);
+              const configuredEffort = reasoningEfforts[model.id];
+              const effort =
+                configuredEffort && supportedEfforts.includes(configuredEffort)
+                  ? configuredEffort
+                  : "";
 
-            return (
-              <div key={model.id} className="flex min-w-0 items-stretch" role="none">
-                <DropdownMenuItem
-                  className="min-w-0 flex-1 py-2"
-                  onClick={() => onModelChange(preferenceValue)}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">{model.upstream_model}</span>
-                      {isDefault ? <span className="text-xs text-muted-foreground">默认</span> : null}
+              return (
+                <div key={model.id} className="flex min-w-0 items-stretch" role="none">
+                  <DropdownMenuItem
+                    className="min-w-0 flex-1 py-2"
+                    onClick={() => onModelChange(preferenceValue)}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium">{model.upstream_model}</span>
+                        {isDefault ? (
+                          <span className="text-xs text-muted-foreground">默认</span>
+                        ) : null}
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {effort ? `推理强度 ${effort}` : model.display_name}
+                      </p>
                     </div>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {effort ? `推理强度 ${effort}` : model.display_name}
-                    </p>
-                  </div>
-                  {selected ? <Check className="size-4 shrink-0" /> : null}
-                </DropdownMenuItem>
+                    {selected ? <Check className="size-4 shrink-0" /> : null}
+                  </DropdownMenuItem>
 
-                {supportedEfforts.length > 0 ? (
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger
-                      aria-label={`设置 ${model.upstream_model} 推理强度`}
-                      className="my-0.5 w-8 justify-center px-0 text-muted-foreground [&>svg:last-child]:hidden"
-                    >
-                      <Settings2 className="size-4" />
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-40">
-                      <DropdownMenuRadioGroup
-                        value={effort}
-                        onValueChange={(value) => onModelReasoningEffortChange(model.id, value as ReasoningEffort | "")}
+                  {supportedEfforts.length > 0 ? (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger
+                        aria-label={`设置 ${model.upstream_model} 推理强度`}
+                        className="my-0.5 w-8 justify-center px-0 text-muted-foreground [&>svg:last-child]:hidden"
                       >
-                        <DropdownMenuLabel>推理强度</DropdownMenuLabel>
-                        {reasoningOptions.filter((option) => !option.value || supportedEfforts.includes(option.value)).map((option) => (
-                          <DropdownMenuRadioItem key={option.value || "default"} value={option.value}>
-                            {option.label}
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                ) : null}
-              </div>
-            );
+                        <Settings2 className="size-4" />
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-40">
+                        <DropdownMenuRadioGroup
+                          value={effort}
+                          onValueChange={(value) =>
+                            onModelReasoningEffortChange(model.id, value as ReasoningEffort | "")
+                          }
+                        >
+                          <DropdownMenuLabel>推理强度</DropdownMenuLabel>
+                          {reasoningOptions
+                            .filter(
+                              (option) => !option.value || supportedEfforts.includes(option.value),
+                            )
+                            .map((option) => (
+                              <DropdownMenuRadioItem
+                                key={option.value || "default"}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </DropdownMenuRadioItem>
+                            ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  ) : null}
+                </div>
+              );
             })}
             {!modelsLoading && models.length === 0 ? (
               <p className="px-2 py-3 text-sm text-muted-foreground">暂无可用模型</p>

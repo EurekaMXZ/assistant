@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applyAssistantTimelineSnapshot, ensureStreamingThinkingMessage, upsertAssistantTextContent } from "./chat-state";
+import {
+  applyAssistantTimelineSnapshot,
+  ensureStreamingThinkingMessage,
+  upsertAssistantTextContent,
+} from "./chat-state";
 import type { Message, TimelineItem } from "./types";
 
 const userMessage = {
@@ -21,13 +25,22 @@ describe("chat state transformations", () => {
   });
 
   it("appends and then authoritatively replaces assistant output", () => {
-    const appended = upsertAssistantTextContent([userMessage], "turn-1", "conversation-1", "output-1", "Hel", "append");
-    const snapshot: TimelineItem[] = [{
-      id: "output-1",
-      type: "output_text",
-      content_text: "Hello",
-      created_at: "2026-01-01T00:00:01Z",
-    }];
+    const appended = upsertAssistantTextContent(
+      [userMessage],
+      "turn-1",
+      "conversation-1",
+      "output-1",
+      "Hel",
+      "append",
+    );
+    const snapshot: TimelineItem[] = [
+      {
+        id: "output-1",
+        type: "output_text",
+        content_text: "Hello",
+        created_at: "2026-01-01T00:00:01Z",
+      },
+    ];
     const replaced = applyAssistantTimelineSnapshot(appended, "turn-1", "conversation-1", snapshot);
     expect(replaced.at(-1)?.content_text).toBe("Hello");
   });

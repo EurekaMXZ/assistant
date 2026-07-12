@@ -35,12 +35,9 @@ function buildAssistantMessage(
 }
 
 export function buildThinkingMessage(turnId: string, conversationId: string) {
-  return buildAssistantMessage(
-    turnId,
-    conversationId,
-    thinkingMessageId(turnId),
-    { display_kind: "thinking" },
-  );
+  return buildAssistantMessage(turnId, conversationId, thinkingMessageId(turnId), {
+    display_kind: "thinking",
+  });
 }
 
 export function upsertTurnFailureMessage(
@@ -128,9 +125,8 @@ export function upsertAssistantTextContent(
       messageIndex === index
         ? {
             ...message,
-            content_text: mode === "append"
-              ? `${message.content_text || ""}${nextContent}`
-              : nextContent,
+            content_text:
+              mode === "append" ? `${message.content_text || ""}${nextContent}` : nextContent,
           }
         : message,
     );

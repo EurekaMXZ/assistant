@@ -55,9 +55,7 @@ export function RegisterForm({ onSwitchToLogin, onVerificationPending }: Registe
           autoComplete="email"
           {...register("email")}
         />
-        {errors.email && (
-          <p className="text-destructive">{errors.email.message}</p>
-        )}
+        {errors.email && <p className="text-destructive">{errors.email.message}</p>}
       </div>
       <div className="grid gap-2">
         <Label htmlFor="username">用户名</Label>
@@ -68,9 +66,7 @@ export function RegisterForm({ onSwitchToLogin, onVerificationPending }: Registe
           autoComplete="username"
           {...register("username")}
         />
-        {errors.username && (
-          <p className="text-destructive">{errors.username.message}</p>
-        )}
+        {errors.username && <p className="text-destructive">{errors.username.message}</p>}
       </div>
       <div className="grid gap-2">
         <Label htmlFor="password">密码</Label>
@@ -81,9 +77,7 @@ export function RegisterForm({ onSwitchToLogin, onVerificationPending }: Registe
           autoComplete="new-password"
           {...register("password")}
         />
-        {errors.password && (
-          <p className="text-destructive">{errors.password.message}</p>
-        )}
+        {errors.password && <p className="text-destructive">{errors.password.message}</p>}
       </div>
       {error && <p className="text-destructive">{error}</p>}
       <Button type="submit" disabled={isSubmitting} className="w-full">

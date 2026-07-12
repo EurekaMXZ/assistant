@@ -4,9 +4,7 @@ interface ConversationUpdatedEvent {
   archived_at?: string | null;
 }
 
-const conversationUpdatedListeners = new Set<
-  (event: ConversationUpdatedEvent) => void
->();
+const conversationUpdatedListeners = new Set<(event: ConversationUpdatedEvent) => void>();
 
 export function emitConversationUpdated(event: ConversationUpdatedEvent) {
   for (const listener of conversationUpdatedListeners) {
@@ -14,9 +12,7 @@ export function emitConversationUpdated(event: ConversationUpdatedEvent) {
   }
 }
 
-export function subscribeConversationUpdated(
-  listener: (event: ConversationUpdatedEvent) => void
-) {
+export function subscribeConversationUpdated(listener: (event: ConversationUpdatedEvent) => void) {
   conversationUpdatedListeners.add(listener);
   return () => {
     conversationUpdatedListeners.delete(listener);

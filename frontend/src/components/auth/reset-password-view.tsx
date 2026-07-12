@@ -13,13 +13,15 @@ import { Label } from "@/components/ui/label";
 import { resetPassword } from "@/lib/api";
 import { openAuthDialog } from "@/lib/auth-dialog-events";
 
-const schema = z.object({
-  password: z.string().min(8, "密码至少 8 个字符"),
-  confirmPassword: z.string().min(8, "密码至少 8 个字符"),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "两次输入的密码不一致",
-  path: ["confirmPassword"],
-});
+const schema = z
+  .object({
+    password: z.string().min(8, "密码至少 8 个字符"),
+    confirmPassword: z.string().min(8, "密码至少 8 个字符"),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "两次输入的密码不一致",
+    path: ["confirmPassword"],
+  });
 
 type FormData = z.infer<typeof schema>;
 
@@ -60,13 +62,31 @@ export function ResetPasswordView({ token }: { token: string }) {
         <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="reset-password">新密码</Label>
-            <Input id="reset-password" type="password" minLength={8} autoComplete="new-password" disabled={!token} {...register("password")} />
-            {errors.password ? <p className="text-sm text-destructive">{errors.password.message}</p> : null}
+            <Input
+              id="reset-password"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+              disabled={!token}
+              {...register("password")}
+            />
+            {errors.password ? (
+              <p className="text-sm text-destructive">{errors.password.message}</p>
+            ) : null}
           </div>
           <div className="grid gap-2">
             <Label htmlFor="reset-password-confirm">确认新密码</Label>
-            <Input id="reset-password-confirm" type="password" minLength={8} autoComplete="new-password" disabled={!token} {...register("confirmPassword")} />
-            {errors.confirmPassword ? <p className="text-sm text-destructive">{errors.confirmPassword.message}</p> : null}
+            <Input
+              id="reset-password-confirm"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+              disabled={!token}
+              {...register("confirmPassword")}
+            />
+            {errors.confirmPassword ? (
+              <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
+            ) : null}
           </div>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <Button type="submit" disabled={isSubmitting || !token}>

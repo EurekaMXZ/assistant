@@ -121,7 +121,9 @@ export function ExpensesSettings() {
         <Skeleton className="h-28 w-full rounded-lg" />
         <Skeleton className="h-9 w-52 rounded-md" />
         <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-12 w-full" />)}
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="h-12 w-full" />
+          ))}
         </div>
       </div>
     );
@@ -206,51 +208,81 @@ export function ExpensesSettings() {
                   <div key={item.id} className="flex items-center justify-between gap-4 py-3">
                     <div className="min-w-0">
                       <p className="flex items-center gap-2 truncate text-sm font-medium">
-                        {item.direction === "credit" ? <ArrowDownLeft className="size-3.5 shrink-0 text-emerald-600" /> : <ArrowUpRight className="size-3.5 shrink-0 text-amber-600" />}
+                        {item.direction === "credit" ? (
+                          <ArrowDownLeft className="size-3.5 shrink-0 text-emerald-600" />
+                        ) : (
+                          <ArrowUpRight className="size-3.5 shrink-0 text-amber-600" />
+                        )}
                         {transactionLabel(item.kind)}
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground">{formatDate(item.created_at)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatDate(item.created_at)}
+                      </p>
                     </div>
                     <div className="shrink-0 text-right">
-                      <p className={cn("whitespace-nowrap font-mono text-sm", item.direction === "credit" ? "text-emerald-700" : "text-foreground")}>
-                        {item.direction === "credit" ? "+" : "-"}{item.currency} {item.amount}
+                      <p
+                        className={cn(
+                          "whitespace-nowrap font-mono text-sm",
+                          item.direction === "credit" ? "text-emerald-700" : "text-foreground",
+                        )}
+                      >
+                        {item.direction === "credit" ? "+" : "-"}
+                        {item.currency} {item.amount}
                       </p>
-                      <p className="mt-1 whitespace-nowrap font-mono text-xs text-muted-foreground">余额 {item.balance_after}</p>
+                      <p className="mt-1 whitespace-nowrap font-mono text-xs text-muted-foreground">
+                        余额 {item.balance_after}
+                      </p>
                     </div>
                   </div>
                 ))}
               </div>
               <div className="hidden overflow-x-auto border-y sm:block">
-              <table className="w-full min-w-[560px] text-left text-sm">
-                <thead className="text-xs text-muted-foreground">
-                  <tr className="border-b">
-                    <th className="py-3 pr-4 font-medium">时间</th>
-                    <th className="px-4 py-3 font-medium">类型</th>
-                    <th className="px-4 py-3 text-right font-medium">金额</th>
-                    <th className="py-3 pl-4 text-right font-medium">余额</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {transactions.map((item) => (
-                    <tr key={item.id}>
-                      <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">{formatDate(item.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-2 font-medium">
-                          {item.direction === "credit" ? <ArrowDownLeft className="size-3.5 text-emerald-600" /> : <ArrowUpRight className="size-3.5 text-amber-600" />}
-                          {transactionLabel(item.kind)}
-                        </span>
-                      </td>
-                      <td className={cn("whitespace-nowrap px-4 py-3 text-right font-mono", item.direction === "credit" ? "text-emerald-700" : "text-foreground")}>
-                        {item.direction === "credit" ? "+" : "-"}{item.currency} {item.amount}
-                      </td>
-                      <td className="whitespace-nowrap py-3 pl-4 text-right font-mono text-muted-foreground">{item.currency} {item.balance_after}</td>
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead className="text-xs text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="py-3 pr-4 font-medium">时间</th>
+                      <th className="px-4 py-3 font-medium">类型</th>
+                      <th className="px-4 py-3 text-right font-medium">金额</th>
+                      <th className="py-3 pl-4 text-right font-medium">余额</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y">
+                    {transactions.map((item) => (
+                      <tr key={item.id}>
+                        <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
+                          {formatDate(item.created_at)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center gap-2 font-medium">
+                            {item.direction === "credit" ? (
+                              <ArrowDownLeft className="size-3.5 text-emerald-600" />
+                            ) : (
+                              <ArrowUpRight className="size-3.5 text-amber-600" />
+                            )}
+                            {transactionLabel(item.kind)}
+                          </span>
+                        </td>
+                        <td
+                          className={cn(
+                            "whitespace-nowrap px-4 py-3 text-right font-mono",
+                            item.direction === "credit" ? "text-emerald-700" : "text-foreground",
+                          )}
+                        >
+                          {item.direction === "credit" ? "+" : "-"}
+                          {item.currency} {item.amount}
+                        </td>
+                        <td className="whitespace-nowrap py-3 pl-4 text-right font-mono text-muted-foreground">
+                          {item.currency} {item.balance_after}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </>
-          ) : <EmptyExpenses icon={ReceiptText} label="暂无资金流水" />
+          ) : (
+            <EmptyExpenses icon={ReceiptText} label="暂无资金流水" />
+          )
         ) : usageEvents.length ? (
           <>
             <div className="divide-y border-y sm:hidden">
@@ -263,47 +295,68 @@ export function ExpensesSettings() {
                         {item.status === "completed" ? "已计费" : "失败"}
                       </Badge>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{formatDate(item.created_at)} · {item.total_tokens.toLocaleString("zh-CN")} tokens</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatDate(item.created_at)} · {item.total_tokens.toLocaleString("zh-CN")}{" "}
+                      tokens
+                    </p>
                   </div>
-                  <p className="shrink-0 whitespace-nowrap font-mono text-sm">{usageAmount(item)}</p>
+                  <p className="shrink-0 whitespace-nowrap font-mono text-sm">
+                    {usageAmount(item)}
+                  </p>
                 </div>
               ))}
             </div>
             <div className="hidden overflow-x-auto border-y sm:block">
-            <table className="w-full min-w-[600px] text-left text-sm">
-              <thead className="text-xs text-muted-foreground">
-                <tr className="border-b">
-                  <th className="py-3 pr-4 font-medium">时间</th>
-                  <th className="px-4 py-3 font-medium">模型</th>
-                  <th className="px-4 py-3 text-right font-medium">Tokens</th>
-                  <th className="px-4 py-3 text-right font-medium">费用</th>
-                  <th className="py-3 pl-4 text-right font-medium">状态</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {usageEvents.map((item) => (
-                  <tr key={item.id}>
-                    <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">{formatDate(item.created_at)}</td>
-                    <td className="max-w-48 truncate px-4 py-3 font-medium">{item.upstream_model}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">{item.total_tokens.toLocaleString("zh-CN")}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{usageAmount(item)}</td>
-                    <td className="py-3 pl-4 text-right">
-                      <Badge variant={item.status === "failed" ? "destructive" : "secondary"}>
-                        {item.status === "completed" ? "已计费" : "失败"}
-                      </Badge>
-                    </td>
+              <table className="w-full min-w-[600px] text-left text-sm">
+                <thead className="text-xs text-muted-foreground">
+                  <tr className="border-b">
+                    <th className="py-3 pr-4 font-medium">时间</th>
+                    <th className="px-4 py-3 font-medium">模型</th>
+                    <th className="px-4 py-3 text-right font-medium">Tokens</th>
+                    <th className="px-4 py-3 text-right font-medium">费用</th>
+                    <th className="py-3 pl-4 text-right font-medium">状态</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y">
+                  {usageEvents.map((item) => (
+                    <tr key={item.id}>
+                      <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
+                        {formatDate(item.created_at)}
+                      </td>
+                      <td className="max-w-48 truncate px-4 py-3 font-medium">
+                        {item.upstream_model}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
+                        {item.total_tokens.toLocaleString("zh-CN")}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
+                        {usageAmount(item)}
+                      </td>
+                      <td className="py-3 pl-4 text-right">
+                        <Badge variant={item.status === "failed" ? "destructive" : "secondary"}>
+                          {item.status === "completed" ? "已计费" : "失败"}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </>
-        ) : <EmptyExpenses icon={Activity} label="暂无模型用量" />}
+        ) : (
+          <EmptyExpenses icon={Activity} label="暂无模型用量" />
+        )}
 
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
         {page.has_more ? (
           <div className="mt-4 flex justify-center">
-            <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={loadMore}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLoadingMore}
+              onClick={loadMore}
+            >
               {isLoadingMore ? <Loader2 className="animate-spin" /> : null}
               加载更多
             </Button>

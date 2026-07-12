@@ -36,7 +36,7 @@ export function parseSseFrame(frame: string): SseFrame | null {
 export async function* streamEvents(
   url: string,
   token: string | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): AsyncGenerator<SseFrame, void, unknown> {
   const headers: Record<string, string> = {
     Accept: "text/event-stream",

@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { clearToken, getToken, isSessionUnauthorizedError, login as apiLogin, me, register as apiRegister } from "@/lib/api";
+import {
+  clearToken,
+  getToken,
+  isSessionUnauthorizedError,
+  login as apiLogin,
+  me,
+  register as apiRegister,
+} from "@/lib/api";
 import { emitAuthStateChange, subscribeAuthStateChange } from "@/lib/auth-state-events";
 import type { RegistrationResult, Session, User } from "@/lib/types";
 
@@ -90,7 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         : "unauthenticated";
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, error, status, login, register, logout, refresh }}>
+    <AuthContext.Provider
+      value={{ user, isLoading, error, status, login, register, logout, refresh }}
+    >
       {children}
     </AuthContext.Provider>
   );

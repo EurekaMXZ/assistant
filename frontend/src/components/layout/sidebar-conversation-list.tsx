@@ -154,7 +154,7 @@ export function SidebarConversationList({
                       "group/conversation flex min-h-9 w-full items-center rounded-lg py-1.5 pl-2.5 pr-2 transition-colors",
                       active
                         ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                     )}
                   >
                     <Link
@@ -178,7 +178,7 @@ export function SidebarConversationList({
                       title={pinned ? "取消置顶" : "置顶"}
                       className={cn(
                         "shrink-0 rounded-lg text-sidebar-foreground/70 opacity-0 transition-opacity hover:bg-sidebar-accent hover:text-sidebar-accent-foreground group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100",
-                        pinned && "text-sidebar-accent-foreground"
+                        pinned && "text-sidebar-accent-foreground",
                       )}
                       disabled={authLoading}
                       onClick={() => togglePinned(conversation.id)}

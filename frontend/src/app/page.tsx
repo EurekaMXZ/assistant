@@ -54,21 +54,19 @@ export default function HomePage() {
         metadata: { source: "home" },
       };
       const stored = loadInitialTurnOperation();
-      const operation = stored && operationMatches(stored, input, files, user.id)
-        ? stored
-        : createInitialTurnOperation(input, files, user.id);
+      const operation =
+        stored && operationMatches(stored, input, files, user.id)
+          ? stored
+          : createInitialTurnOperation(input, files, user.id);
       saveInitialTurnOperation(operation);
-      const { operation: completedOperation, result: messageResult } = await runInitialTurnOperation(
-        operation,
-        files,
-        {
+      const { operation: completedOperation, result: messageResult } =
+        await runInitialTurnOperation(operation, files, {
           prepare: prepareInitialTurn,
           uploadAttachment: (conversationId, file, key) =>
             uploadConversationAttachment(conversationId, file, key),
           commit: (conversationId, descriptor, key) =>
             commitInitialTurn(key, conversationId, descriptor),
-        },
-      );
+        });
       stashPendingHomeTurn({
         conversation_id: messageResult.conversation_id,
         message: messageResult.message,

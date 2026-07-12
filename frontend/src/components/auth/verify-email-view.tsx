@@ -36,7 +36,8 @@ export function VerifyEmailView({ token }: { token: string }) {
     <PublicAuthShell title="验证邮箱">
       {state === "verifying" ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />验证中
+          <Loader2 className="size-4 animate-spin" />
+          验证中
         </div>
       ) : state === "verified" ? (
         <div className="grid gap-5">
@@ -46,7 +47,9 @@ export function VerifyEmailView({ token }: { token: string }) {
       ) : (
         <div className="grid gap-5">
           <p className="text-sm text-destructive">{error}</p>
-          <Button variant="outline" onClick={openLogin}>返回登录</Button>
+          <Button variant="outline" onClick={openLogin}>
+            返回登录
+          </Button>
         </div>
       )}
     </PublicAuthShell>

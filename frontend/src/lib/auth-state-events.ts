@@ -4,9 +4,7 @@ interface AuthStateChangeEvent {
   reason: AuthStateChangeReason;
 }
 
-const authStateChangeListeners = new Set<(
-  event: AuthStateChangeEvent
-) => void>();
+const authStateChangeListeners = new Set<(event: AuthStateChangeEvent) => void>();
 
 export function emitAuthStateChange(event: AuthStateChangeEvent) {
   for (const listener of authStateChangeListeners) {
@@ -14,9 +12,7 @@ export function emitAuthStateChange(event: AuthStateChangeEvent) {
   }
 }
 
-export function subscribeAuthStateChange(
-  listener: (event: AuthStateChangeEvent) => void
-) {
+export function subscribeAuthStateChange(listener: (event: AuthStateChangeEvent) => void) {
   authStateChangeListeners.add(listener);
   return () => {
     authStateChangeListeners.delete(listener);

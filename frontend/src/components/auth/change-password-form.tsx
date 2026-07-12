@@ -63,19 +63,19 @@ export function ChangePasswordForm() {
           {...register("currentPassword")}
         />
         {errors.currentPassword && (
-          <p className="text-destructive">
-            {errors.currentPassword.message}
-          </p>
+          <p className="text-destructive">{errors.currentPassword.message}</p>
         )}
       </div>
       <div className="grid gap-2">
         <Label htmlFor="newPassword">新密码</Label>
-        <Input id="newPassword" type="password" minLength={8} autoComplete="new-password" {...register("newPassword")} />
-        {errors.newPassword && (
-          <p className="text-destructive">
-            {errors.newPassword.message}
-          </p>
-        )}
+        <Input
+          id="newPassword"
+          type="password"
+          minLength={8}
+          autoComplete="new-password"
+          {...register("newPassword")}
+        />
+        {errors.newPassword && <p className="text-destructive">{errors.newPassword.message}</p>}
       </div>
       <div className="grid gap-2">
         <Label htmlFor="confirmPassword">确认新密码</Label>
@@ -87,9 +87,7 @@ export function ChangePasswordForm() {
           {...register("confirmPassword")}
         />
         {errors.confirmPassword && (
-          <p className="text-destructive">
-            {errors.confirmPassword.message}
-          </p>
+          <p className="text-destructive">{errors.confirmPassword.message}</p>
         )}
       </div>
       <Button type="submit" className="w-fit" disabled={isSubmitting}>

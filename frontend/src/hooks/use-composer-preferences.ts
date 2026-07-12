@@ -14,8 +14,8 @@ function storedReasoningEfforts(value: string | null): Record<string, ReasoningE
     const parsed = JSON.parse(value) as Record<string, unknown>;
     return Object.fromEntries(
       Object.entries(parsed).filter((entry): entry is [string, ReasoningEffort] =>
-        ["low", "medium", "high", "xhigh"].includes(String(entry[1]))
-      )
+        ["low", "medium", "high", "xhigh"].includes(String(entry[1])),
+      ),
     );
   } catch {
     return {};
@@ -72,19 +72,20 @@ export function useComposerPreferences(enabled: boolean) {
       const next = { ...current };
       if (value) next[targetModelId] = value;
       else delete next[targetModelId];
-      if (Object.keys(next).length > 0) localStorage.setItem(REASONING_STORAGE_KEY, JSON.stringify(next));
+      if (Object.keys(next).length > 0)
+        localStorage.setItem(REASONING_STORAGE_KEY, JSON.stringify(next));
       else localStorage.removeItem(REASONING_STORAGE_KEY);
       return next;
     });
   };
 
   const defaultModel = models.find((item) => item.is_default) || null;
-  const selectedModel = (modelId ? models.find((item) => item.id === modelId) : defaultModel) || null;
+  const selectedModel =
+    (modelId ? models.find((item) => item.id === modelId) : defaultModel) || null;
   const supportedEfforts = supportedReasoningEfforts(selectedModel);
   const storedEffort = selectedModel ? reasoningEfforts[selectedModel.id] : undefined;
-  const reasoningEffort: ReasoningEffort | "" = storedEffort && supportedEfforts.includes(storedEffort)
-    ? storedEffort
-    : "";
+  const reasoningEffort: ReasoningEffort | "" =
+    storedEffort && supportedEfforts.includes(storedEffort) ? storedEffort : "";
 
   return {
     models,

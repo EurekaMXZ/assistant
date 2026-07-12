@@ -42,7 +42,9 @@ describe("admin model payloads", () => {
   });
 
   it("rejects invalid token fields", () => {
-    expect(() => buildAdminModelUpdatePayload({ ...form, contextWindow: "1.5" }, {} as Model)).toThrow("正整数");
+    expect(() =>
+      buildAdminModelUpdatePayload({ ...form, contextWindow: "1.5" }, {} as Model),
+    ).toThrow("正整数");
   });
 });
 

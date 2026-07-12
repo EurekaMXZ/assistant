@@ -1,12 +1,7 @@
 import type { SseFrame, Turn, TurnStreamDone } from "./types";
 
 export type TurnStreamConnectionState =
-  | "connecting"
-  | "streaming"
-  | "reconnecting"
-  | "settling"
-  | "completed"
-  | "failed";
+  "connecting" | "streaming" | "reconnecting" | "settling" | "completed" | "failed";
 
 export interface TurnStreamControllerOptions {
   turnId: string;
@@ -22,8 +17,7 @@ export interface TurnStreamControllerOptions {
 }
 
 export type TurnStreamControllerResult =
-  | { kind: "terminal"; done: TurnStreamDone }
-  | { kind: "retryable"; error: Error };
+  { kind: "terminal"; done: TurnStreamDone } | { kind: "retryable"; error: Error };
 
 export function reconnectDelay(attempt: number, baseDelayMs = 500, maxDelayMs = 4_000) {
   return Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);

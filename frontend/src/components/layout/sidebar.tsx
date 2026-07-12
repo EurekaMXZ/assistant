@@ -3,15 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  isSessionUnauthorizedError,
-  listConversations,
-  patchConversation,
-} from "@/lib/api";
-import {
-  emitConversationUpdated,
-  subscribeConversationUpdated,
-} from "@/lib/conversation-events";
+import { isSessionUnauthorizedError, listConversations, patchConversation } from "@/lib/api";
+import { emitConversationUpdated, subscribeConversationUpdated } from "@/lib/conversation-events";
 import type { Conversation, User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -72,7 +65,7 @@ export function Sidebar({
 
   const visibleConversations = useMemo(
     () => conversations.filter((conversation) => !conversation.archived_at),
-    [conversations]
+    [conversations],
   );
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const searchResults = useMemo(() => {
@@ -109,7 +102,8 @@ export function Sidebar({
         controller.signal.aborted ||
         listRequestRef.current?.generation !== generation ||
         user.id !== requestedUserId
-      ) return;
+      )
+        return;
       setConversations(data);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -217,9 +211,7 @@ export function Sidebar({
         title: newTitle,
       });
       setConversations((prev) =>
-        prev.map((conversation) =>
-          conversation.id === updated.id ? updated : conversation
-        )
+        prev.map((conversation) => (conversation.id === updated.id ? updated : conversation)),
       );
       emitConversationUpdated({ id: updated.id, title: updated.title });
       setRenameConversation(null);
@@ -241,9 +233,7 @@ export function Sidebar({
         archived: true,
       });
       setConversations((prev) =>
-        prev.map((conversation) =>
-          conversation.id === updated.id ? updated : conversation
-        )
+        prev.map((conversation) => (conversation.id === updated.id ? updated : conversation)),
       );
       emitConversationUpdated({
         id: updated.id,
@@ -261,7 +251,12 @@ export function Sidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className={cn("flex h-14 shrink-0 items-center px-2 py-2", collapsed ? "justify-center" : "gap-1")}>
+      <div
+        className={cn(
+          "flex h-14 shrink-0 items-center px-2 py-2",
+          collapsed ? "justify-center" : "gap-1",
+        )}
+      >
         {collapsed && onToggleCollapse ? (
           <Button
             variant="ghost"
@@ -283,7 +278,7 @@ export function Sidebar({
             onClick={() => onNavigate?.()}
             className={cn(
               "flex h-full items-center gap-2 px-2 text-base font-semibold text-sidebar-foreground transition-colors hover:text-sidebar-foreground/80",
-              onToggleCollapse ? "min-w-0 flex-1" : "w-full"
+              onToggleCollapse ? "min-w-0 flex-1" : "w-full",
             )}
           >
             <AssistantLogo className="h-5 w-5" />
@@ -314,7 +309,7 @@ export function Sidebar({
           size={collapsed ? "icon-sm" : "sm"}
           className={cn(
             "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground",
-            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2"
+            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
           )}
           disabled={authLoading}
           onClick={handleCreate}
@@ -328,7 +323,7 @@ export function Sidebar({
           size={collapsed ? "icon-sm" : "sm"}
           className={cn(
             "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground",
-            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2"
+            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
           )}
           disabled={authLoading}
           onClick={handleSearch}
@@ -353,7 +348,6 @@ export function Sidebar({
               setNewTitle(conversation.title || "");
             }}
           />
-
         </>
       ) : null}
 
@@ -372,7 +366,10 @@ export function Sidebar({
         onOpenSettings={() => onOpenSettings("user/profile")}
       />
 
-      <Dialog open={!!renameConversation} onOpenChange={(open) => !open && setRenameConversation(null)}>
+      <Dialog
+        open={!!renameConversation}
+        onOpenChange={(open) => !open && setRenameConversation(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>重命名会话</DialogTitle>

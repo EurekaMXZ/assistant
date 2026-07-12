@@ -12,7 +12,7 @@ interface CopyButtonProps {
 
 export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(function CopyButton(
   { text, className },
-  ref
+  ref,
 ) {
   const [copied, setCopied] = useState(false);
 
@@ -34,12 +34,8 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(functio
       className={cn("h-7 w-7", className)}
       onClick={handleCopy}
     >
-      {copied ? (
-        <Check className="h-4 w-4" />
-      ) : (
-        <Copy className="h-4 w-4" />
-      )}
+      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
       <span className="sr-only">复制</span>
     </Button>
   );
-})
+});

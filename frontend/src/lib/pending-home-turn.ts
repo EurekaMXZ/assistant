@@ -43,7 +43,7 @@ export function stashPendingHomeTurn(input: Omit<PendingHomeTurn, "created_at">)
     JSON.stringify({
       ...input,
       created_at: new Date().toISOString(),
-    })
+    }),
   );
 }
 

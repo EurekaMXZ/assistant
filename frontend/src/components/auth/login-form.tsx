@@ -24,7 +24,11 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>;
 
-export function LoginForm({ onSwitchToRegister, onForgotPassword, onVerificationRequired }: LoginFormProps) {
+export function LoginForm({
+  onSwitchToRegister,
+  onForgotPassword,
+  onVerificationRequired,
+}: LoginFormProps) {
   const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const {
@@ -59,14 +63,16 @@ export function LoginForm({ onSwitchToRegister, onForgotPassword, onVerification
           autoComplete="email"
           {...register("email")}
         />
-        {errors.email && (
-          <p className="text-destructive">{errors.email.message}</p>
-        )}
+        {errors.email && <p className="text-destructive">{errors.email.message}</p>}
       </div>
       <div className="grid gap-2">
         <div className="flex items-center justify-between">
           <Label htmlFor="password">密码</Label>
-          <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={onForgotPassword}>
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground"
+            onClick={onForgotPassword}
+          >
             忘记密码
           </button>
         </div>
@@ -77,9 +83,7 @@ export function LoginForm({ onSwitchToRegister, onForgotPassword, onVerification
           autoComplete="current-password"
           {...register("password")}
         />
-        {errors.password && (
-          <p className="text-destructive">{errors.password.message}</p>
-        )}
+        {errors.password && <p className="text-destructive">{errors.password.message}</p>}
       </div>
       {error && <p className="text-destructive">{error}</p>}
       <Button type="submit" disabled={isSubmitting} className="w-full">

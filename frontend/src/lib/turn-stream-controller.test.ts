@@ -21,7 +21,11 @@ describe("turn stream reconnect", () => {
       signal: new AbortController().signal,
       openStream: () => {
         attempt += 1;
-        return frames(attempt === 1 ? [] : [{ event: "turn.done", data: { turn_id: "turn-1", status: "completed" } }]);
+        return frames(
+          attempt === 1
+            ? []
+            : [{ event: "turn.done", data: { turn_id: "turn-1", status: "completed" } }],
+        );
       },
       getTurn: async () => processingTurn,
       onEvent: () => undefined,
@@ -37,7 +41,11 @@ describe("turn stream reconnect", () => {
       turnId: "turn-1",
       signal: new AbortController().signal,
       openStream: () => frames([]),
-      getTurn: async () => ({ ...processingTurn, status: "failed", error_message: "upstream failed" }),
+      getTurn: async () => ({
+        ...processingTurn,
+        status: "failed",
+        error_message: "upstream failed",
+      }),
       onEvent: (event) => events.push(event),
       wait: async () => undefined,
       maxReconnects: 1,

@@ -15,19 +15,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useComposerPreferences } from "@/hooks/use-composer-preferences";
 import { useTurnStream } from "@/hooks/use-turn-stream";
 import { useTurnTimelineController } from "@/hooks/use-turn-timeline-controller";
-import {
-  emitConversationUpdated,
-  subscribeConversationUpdated,
-} from "@/lib/conversation-events";
-import {
-  takePendingHomeTurn,
-} from "@/lib/pending-home-turn";
-import type {
-  Conversation,
-  Attachment,
-  Message,
-  Turn,
-} from "@/lib/types";
+import { emitConversationUpdated, subscribeConversationUpdated } from "@/lib/conversation-events";
+import { takePendingHomeTurn } from "@/lib/pending-home-turn";
+import type { Conversation, Attachment, Message, Turn } from "@/lib/types";
 import {
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
@@ -55,16 +45,15 @@ interface ChatContainerProps {
   conversationId: string;
 }
 
-async function inspectUnresolvedTurns(
-  messages: Message[],
-  conversationId: string,
-) {
+async function inspectUnresolvedTurns(messages: Message[], conversationId: string) {
   const assistantTurnIds = new Set(
     messages
       .filter((message) => message.role === "assistant" && message.turn_id)
       .map((message) => message.turn_id as string),
   );
-  const turnIds = Array.from(new Set(messages.flatMap((message) => message.turn_id ? [message.turn_id] : [])));
+  const turnIds = Array.from(
+    new Set(messages.flatMap((message) => (message.turn_id ? [message.turn_id] : []))),
+  );
 
   const turns = await Promise.all(
     turnIds.map(async (turnId) => {
@@ -83,11 +72,7 @@ async function inspectUnresolvedTurns(
     if (!turn) continue;
     const unresolved = !assistantTurnIds.has(turn.id);
     if (["accepted", "context_ready", "processing"].includes(turn.status)) {
-      nextMessages = ensureStreamingThinkingMessage(
-        nextMessages,
-        turn.id,
-        conversationId,
-      );
+      nextMessages = ensureStreamingThinkingMessage(nextMessages, turn.id, conversationId);
       if (unresolved) activeTurnId = turn.id;
       continue;
     }
@@ -103,12 +88,9 @@ async function inspectUnresolvedTurns(
   };
 }
 
-
 export function ChatContainer({ conversationId }: ChatContainerProps) {
   const { user, isLoading: authLoading } = useAuth();
-  const composerPreferences = useComposerPreferences(
-    Boolean(user) && !authLoading,
-  );
+  const composerPreferences = useComposerPreferences(Boolean(user) && !authLoading);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [draft, setDraft] = useState("");
@@ -133,9 +115,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     (update: { conversation_id: string; title?: string | null }) => {
       if (typeof update.title !== "undefined") {
         setConversation((previous) =>
-          previous
-            ? { ...previous, title: update.title ?? undefined }
-            : previous,
+          previous ? { ...previous, title: update.title ?? undefined } : previous,
         );
         setNewTitle(update.title || "");
       }
@@ -173,10 +153,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     const requestedConversationId = conversationId;
     try {
       const nextMessages = await listMessages(conversationId);
-      if (
-        !mountedRef.current ||
-        activeConversationIdRef.current !== requestedConversationId
-      ) {
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
         return;
       }
       setMessages(nextMessages);
@@ -187,12 +164,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     }
   }, [conversationId]);
 
-  const {
-    isStreaming,
-    streamingTurnId,
-    streamConnectionState,
-    streamTurn,
-  } = useTurnStream({
+  const { isStreaming, streamingTurnId, streamConnectionState, streamTurn } = useTurnStream({
     conversationId,
     onCompleted: refreshMessages,
     onEvent: dispatchActiveFrame,
@@ -216,30 +188,19 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
         getConversation(conversationId),
         listMessages(conversationId),
       ]);
-      if (
-        !mountedRef.current ||
-        activeConversationIdRef.current !== requestedConversationId
-      )
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
         return;
       const pending = takePendingHomeTurn(conversationId);
-      const loadedMessages = pending
-        ? ensurePendingHomeTurnMessages(msgs, pending)
-        : msgs;
-      const restored = await inspectUnresolvedTurns(
-        loadedMessages,
-        conversationId,
-      );
+      const loadedMessages = pending ? ensurePendingHomeTurnMessages(msgs, pending) : msgs;
+      const restored = await inspectUnresolvedTurns(loadedMessages, conversationId);
       if (activeConversationIdRef.current !== requestedConversationId) return;
       setConversation(conv);
       setMessages(restored.messages);
       initializeTurns(restored.turns);
       resumeConversationIdRef.current =
-        pending?.turn.id || restored.activeTurnId
-          ? requestedConversationId
-          : null;
-      restoreConversationIdRef.current = restored.terminalTurns.length > 0
-        ? requestedConversationId
-        : null;
+        pending?.turn.id || restored.activeTurnId ? requestedConversationId : null;
+      restoreConversationIdRef.current =
+        restored.terminalTurns.length > 0 ? requestedConversationId : null;
       setResumeTurnId(pending?.turn.id || restored.activeTurnId);
       setRestoreTurns(restored.terminalTurns);
       setNewTitle(conv.title || "");
@@ -281,7 +242,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
           ...prev,
           ...(typeof event.title !== "undefined" ? { title: event.title ?? undefined } : {}),
           ...(typeof event.archived_at !== "undefined"
-              ? { archived_at: event.archived_at ?? undefined }
+            ? { archived_at: event.archived_at ?? undefined }
             : {}),
         };
       });
@@ -318,17 +279,10 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
       const uploaded = await Promise.all(
         files.map((file) => uploadConversationAttachment(conversationId, file)),
       );
-      if (
-        !mountedRef.current ||
-        activeConversationIdRef.current !== requestedConversationId
-      )
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
         return;
       setAttachments((prev) => [...prev, ...uploaded]);
-      toast.success(
-        uploaded.length === 1
-          ? "文件已上传"
-          : `${uploaded.length} 个文件已上传`,
-      );
+      toast.success(uploaded.length === 1 ? "文件已上传" : `${uploaded.length} 个文件已上传`);
     } catch (err) {
       if (activeConversationIdRef.current !== requestedConversationId) return;
       if (isSessionUnauthorizedError(err)) {
@@ -355,15 +309,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     resumeConversationIdRef.current = null;
     setResumeTurnId(null);
     void streamTurn(turnId);
-  }, [
-    authLoading,
-    conversationId,
-    isLoading,
-    isStreaming,
-    resumeTurnId,
-    streamTurn,
-    user,
-  ]);
+  }, [authLoading, conversationId, isLoading, isStreaming, resumeTurnId, streamTurn, user]);
 
   useEffect(() => {
     if (restoreTurns.length === 0) return;
@@ -414,10 +360,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
         modelId: composerPreferences.modelId,
         reasoningEffort: composerPreferences.reasoningEffort || undefined,
       });
-      if (
-        !mountedRef.current ||
-        activeConversationIdRef.current !== requestedConversationId
-      )
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
         return;
       turnId = res.turn.id;
       streamPath = res.stream_path;
@@ -481,9 +424,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
       return;
     }
 
-    const messageIndex = messages.findIndex(
-      (candidate) => candidate.id === message.id,
-    );
+    const messageIndex = messages.findIndex((candidate) => candidate.id === message.id);
     if (messageIndex === -1) {
       toast.error("未找到可重试的消息");
       return;
@@ -498,9 +439,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
             requestDescriptorFromMessage(candidate)?.attachment_ids.length),
       );
 
-    const descriptor = retrySource
-      ? requestDescriptorFromMessage(retrySource)
-      : null;
+    const descriptor = retrySource ? requestDescriptorFromMessage(retrySource) : null;
     if (!descriptor) {
       toast.error("未找到可重试的用户消息");
       return;
@@ -532,8 +471,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   );
 
   const displayMessages = useMemo(
-    () =>
-      ensureStreamingThinkingMessage(messages, streamingTurnId, conversationId),
+    () => ensureStreamingThinkingMessage(messages, streamingTurnId, conversationId),
     [conversationId, messages, streamingTurnId],
   );
   if (authLoading || isLoading || !conversation) {
@@ -554,9 +492,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
             <div className="flex min-w-0 items-center gap-2">
-              <h2 className="truncate text-base font-semibold">
-                {conversation.title || "新会话"}
-              </h2>
+              <h2 className="truncate text-base font-semibold">{conversation.title || "新会话"}</h2>
               <Button
                 variant="ghost"
                 size="icon"

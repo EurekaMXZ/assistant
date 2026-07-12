@@ -59,7 +59,12 @@ export function Composer({
         onModelChange={onModelChange}
         onModelReasoningEffortChange={onModelReasoningEffortChange}
         onRemoveAttachment={onRemoveAttachment}
-        onSubmit={() => onSend(value.trim(), attachments.map((attachment) => attachment.id))}
+        onSubmit={() =>
+          onSend(
+            value.trim(),
+            attachments.map((attachment) => attachment.id),
+          )
+        }
         placeholder={placeholder}
         reasoningEfforts={reasoningEfforts}
         uploadBusy={uploadingAttachments}

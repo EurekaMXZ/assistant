@@ -57,9 +57,15 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[min(720px,calc(100dvh-2rem))] overflow-hidden p-0 sm:max-w-[900px]" initialFocus={titleRef} showCloseButton>
+      <DialogContent
+        className="h-[min(720px,calc(100dvh-2rem))] overflow-hidden p-0 sm:max-w-[900px]"
+        initialFocus={titleRef}
+        showCloseButton
+      >
         <DialogHeader className="sr-only">
-          <DialogTitle ref={titleRef} tabIndex={-1}>个人设置</DialogTitle>
+          <DialogTitle ref={titleRef} tabIndex={-1}>
+            个人设置
+          </DialogTitle>
           <DialogDescription>管理账户、安全和费用信息</DialogDescription>
         </DialogHeader>
 

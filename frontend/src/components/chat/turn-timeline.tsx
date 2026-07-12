@@ -7,16 +7,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "./markdown-renderer";
 import {
-	AlertCircle,
-	Bot,
-	Brain,
-	Check,
-	ImageIcon,
-	Info,
-	Loader2,
-	Sparkles,
-	Wrench,
-	X,
+  AlertCircle,
+  Bot,
+  Brain,
+  Check,
+  ImageIcon,
+  Info,
+  Loader2,
+  Sparkles,
+  Wrench,
+  X,
 } from "lucide-react";
 
 interface TurnTimelineProps {
@@ -147,9 +147,9 @@ function useThoughtTimer(turn: Turn | null, isStreaming?: boolean) {
 function isTurnActive(turn: Turn | null, isStreaming?: boolean) {
   return Boolean(
     isStreaming ||
-      turn?.status === "accepted" ||
-      turn?.status === "context_ready" ||
-      turn?.status === "processing",
+    turn?.status === "accepted" ||
+    turn?.status === "context_ready" ||
+    turn?.status === "processing",
   );
 }
 
@@ -191,13 +191,7 @@ function TimelineToolPayload({ item }: { item: TimelineItem }) {
           {links.map((link) => (
             <Button
               key={link.url}
-              render={
-                <a
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                />
-              }
+              render={<a href={link.url} target="_blank" rel="noreferrer" />}
               nativeButton={false}
               variant="secondary"
               size="xs"
@@ -309,12 +303,7 @@ export function TurnTimeline({
 }: TurnTimelineProps) {
   const active = isTurnActive(turn, isStreaming);
   const durationLabel = useThoughtTimer(turn, isStreaming);
-  const buttonLabel = thoughtButtonLabel(
-    turn,
-    isStreaming,
-    activityLabel,
-    durationLabel,
-  );
+  const buttonLabel = thoughtButtonLabel(turn, isStreaming, activityLabel, durationLabel);
 
   return (
     <Button
@@ -328,9 +317,7 @@ export function TurnTimeline({
       }}
     >
       <Sparkles className={cn("h-3.5 w-3.5", active && "animate-pulse")} />
-      <span className={cn("px-1 py-0.5", active && "animate-pulse")}>
-        {buttonLabel}
-      </span>
+      <span className={cn("px-1 py-0.5", active && "animate-pulse")}>{buttonLabel}</span>
     </Button>
   );
 }
@@ -345,22 +332,13 @@ export function TurnTimelinePanel({
 }: TurnTimelinePanelProps) {
   const steps = useMemo(() => timeline?.items ?? [], [timeline]);
   const isCompleted = turn?.status === "completed";
-  const panelActivityLabel = steps.length
-    ? getTimelineTitle(steps[steps.length - 1])
-    : null;
+  const panelActivityLabel = steps.length ? getTimelineTitle(steps[steps.length - 1]) : null;
   const durationLabel = useThoughtTimer(turn, isStreaming);
-  const panelTitle = thoughtButtonLabel(
-    turn,
-    isStreaming,
-    panelActivityLabel,
-    durationLabel,
-  );
+  const panelTitle = thoughtButtonLabel(turn, isStreaming, panelActivityLabel, durationLabel);
   const finalAssistantIndex = useMemo(
     () =>
-      steps.findLastIndex(
-        (item) => item.type === "output_text" || item.type === "final_answer"
-      ),
-    [steps]
+      steps.findLastIndex((item) => item.type === "output_text" || item.type === "final_answer"),
+    [steps],
   );
 
   return (
@@ -369,9 +347,7 @@ export function TurnTimelinePanel({
         <div className="min-w-0">
           <h3 className="truncate font-medium text-foreground">{panelTitle}</h3>
           {isTurnActive(turn, isStreaming) && durationLabel ? (
-            <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-              {durationLabel}
-            </p>
+            <p className="mt-1 text-xs tabular-nums text-muted-foreground">{durationLabel}</p>
           ) : null}
         </div>
         <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={onClose}>

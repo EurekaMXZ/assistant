@@ -9,16 +9,8 @@ import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
-import {
-  openAuthDialog,
-  subscribeAuthDialog,
-  type AuthDialogMode,
-} from "@/lib/auth-dialog-events";
-import {
-  buildSettingsUrl,
-  parseSettingsHash,
-  type SettingsSection,
-} from "@/lib/settings-hash";
+import { openAuthDialog, subscribeAuthDialog, type AuthDialogMode } from "@/lib/auth-dialog-events";
+import { buildSettingsUrl, parseSettingsHash, type SettingsSection } from "@/lib/settings-hash";
 import { cn } from "@/lib/utils";
 
 function extractConversationId(pathname: string) {
@@ -116,7 +108,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex h-dvh items-center justify-center px-6">
         <div className="max-w-sm text-center">
           <p className="font-medium">账户状态暂时无法加载</p>
-          <p className="mt-2 text-sm text-muted-foreground">{authError || "请检查网络连接后重试。"}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {authError || "请检查网络连接后重试。"}
+          </p>
           <Button className="mt-4" variant="outline" onClick={() => void refresh()}>
             <RefreshCw className="size-4" />
             重试
@@ -148,7 +142,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside
         className={cn(
           "hidden h-full shrink-0 border-r bg-sidebar transition-[width] duration-200 ease-in-out md:block",
-          desktopSidebarCollapsed ? "w-[52px]" : "w-[260px]"
+          desktopSidebarCollapsed ? "w-[52px]" : "w-[260px]",
         )}
       >
         <Sidebar

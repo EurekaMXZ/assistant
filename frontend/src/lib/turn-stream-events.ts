@@ -21,10 +21,7 @@ export interface TurnStreamDispatchContext {
   onTurnDone(done: TurnStreamDone): void;
 }
 
-type TurnStreamEventHandler = (
-  context: TurnStreamDispatchContext,
-  data: unknown,
-) => void;
+type TurnStreamEventHandler = (context: TurnStreamDispatchContext, data: unknown) => void;
 
 class TurnStreamEventRegistry {
   private readonly handlers = new Map<string, TurnStreamEventHandler>();
@@ -45,11 +42,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function timelineItem(value: unknown): TimelineItem | null {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    typeof value.type !== "string"
-  ) {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.type !== "string") {
     return null;
   }
   return value as unknown as TimelineItem;
@@ -57,11 +50,7 @@ function timelineItem(value: unknown): TimelineItem | null {
 
 const turnStreamEvents = new TurnStreamEventRegistry()
   .register("turn.snapshot", (context, data) => {
-    if (
-      !isRecord(data) ||
-      typeof data.turn_id !== "string" ||
-      !Array.isArray(data.items)
-    ) {
+    if (!isRecord(data) || typeof data.turn_id !== "string" || !Array.isArray(data.items)) {
       return;
     }
     context.onSnapshot(data as unknown as TurnStreamSnapshot);
@@ -76,8 +65,7 @@ const turnStreamEvents = new TurnStreamEventRegistry()
       typeof data.item_id !== "string" ||
       typeof data.item_type !== "string" ||
       typeof data.delta !== "string" ||
-      (typeof data.sequence_number !== "undefined" &&
-        typeof data.sequence_number !== "number")
+      (typeof data.sequence_number !== "undefined" && typeof data.sequence_number !== "number")
     ) {
       return;
     }
@@ -88,11 +76,7 @@ const turnStreamEvents = new TurnStreamEventRegistry()
     if (item) context.onItemDone(item);
   })
   .register("turn.done", (context, data) => {
-    if (
-      !isRecord(data) ||
-      typeof data.turn_id !== "string" ||
-      typeof data.status !== "string"
-    ) {
+    if (!isRecord(data) || typeof data.turn_id !== "string" || typeof data.status !== "string") {
       return;
     }
     context.onTurnDone(data as unknown as TurnStreamDone);
@@ -101,15 +85,10 @@ const turnStreamEvents = new TurnStreamEventRegistry()
     if (!isRecord(data) || typeof data.conversation_id !== "string") {
       return;
     }
-    context.onConversationUpdated(
-      data as unknown as ConversationPresentationUpdate,
-    );
+    context.onConversationUpdated(data as unknown as ConversationPresentationUpdate);
   });
 
-export function dispatchTurnStreamEvent(
-  context: TurnStreamDispatchContext,
-  frame: SseFrame,
-) {
+export function dispatchTurnStreamEvent(context: TurnStreamDispatchContext, frame: SseFrame) {
   turnStreamEvents.dispatch(context, frame);
 }
 
@@ -123,10 +102,7 @@ export function isAssistantOutputItem(item: TimelineItem) {
 
 export function isTimelineItem(item: TimelineItem) {
   if (isAssistantOutputItem(item)) return false;
-  return !(
-    item.type === "tool_call" &&
-    item.title?.trim() === "conversation.rename_title"
-  );
+  return !(item.type === "tool_call" && item.title?.trim() === "conversation.rename_title");
 }
 
 export function upsertTimelineItem(items: TimelineItem[], item: TimelineItem) {
@@ -137,10 +113,7 @@ export function upsertTimelineItem(items: TimelineItem[], item: TimelineItem) {
   return next;
 }
 
-export function appendTimelineDelta(
-  items: TimelineItem[],
-  delta: TurnStreamItemDelta,
-) {
+export function appendTimelineDelta(items: TimelineItem[], delta: TurnStreamItemDelta) {
   const index = items.findIndex((candidate) => candidate.id === delta.item_id);
   if (index === -1) {
     return [

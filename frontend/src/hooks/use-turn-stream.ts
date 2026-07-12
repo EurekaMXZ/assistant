@@ -1,12 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  getStreamUrl,
-  getToken,
-  getTurn,
-  isSessionUnauthorizedError,
-} from "@/lib/api";
+import { getStreamUrl, getToken, getTurn, isSessionUnauthorizedError } from "@/lib/api";
 import { streamEvents } from "@/lib/sse";
 import {
   runTurnStreamController,
@@ -79,11 +74,7 @@ export function useTurnStream({
           turnId,
           signal: controller.signal,
           openStream: (signal) =>
-            streamEvents(
-              getStreamUrl(streamPath || `/turns/${turnId}/stream`),
-              getToken(),
-              signal,
-            ),
+            streamEvents(getStreamUrl(streamPath || `/turns/${turnId}/stream`), getToken(), signal),
           getTurn,
           onEvent: (event) => onEvent(event, turnId),
           onStateChange: setStreamConnectionState,
@@ -95,18 +86,12 @@ export function useTurnStream({
           toast.error(result.error.message);
         }
       } catch (error) {
-        if (
-          (error as Error).name !== "AbortError" &&
-          !isSessionUnauthorizedError(error)
-        ) {
+        if ((error as Error).name !== "AbortError" && !isSessionUnauthorizedError(error)) {
           toast.error(error instanceof Error ? error.message : "流式输出失败");
         }
       } finally {
         if (abortRef.current !== controller) return;
-        if (
-          completed &&
-          activeConversationIdRef.current === requestedConversationId
-        ) {
+        if (completed && activeConversationIdRef.current === requestedConversationId) {
           await onCompleted();
         }
         if (

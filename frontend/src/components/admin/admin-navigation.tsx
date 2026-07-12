@@ -40,7 +40,7 @@ export function AdminNavigation({
               data-active={active}
               className={cn(
                 "h-9 w-full justify-start rounded-md px-2.5 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground"
+                "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
               )}
               onClick={() => onSelect(item.id)}
             >
@@ -56,7 +56,13 @@ export function AdminNavigation({
           <p className="truncate text-sm font-medium">{user.username}</p>
           <p className="truncate text-xs text-muted-foreground">{user.email}</p>
         </div>
-        <Button nativeButton={false} render={<Link href="/" />} variant="ghost" size="sm" className="w-full justify-start px-2.5 text-muted-foreground">
+        <Button
+          nativeButton={false}
+          render={<Link href="/" />}
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start px-2.5 text-muted-foreground"
+        >
           <ArrowLeft className="size-4" />
           返回 Assistant
         </Button>

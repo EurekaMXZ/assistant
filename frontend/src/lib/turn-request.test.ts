@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTurnRequest, requestDescriptorFromMessage, requestMetadata } from "./turn-request";
+import {
+  normalizeTurnRequest,
+  requestDescriptorFromMessage,
+  requestMetadata,
+} from "./turn-request";
 import type { Message } from "./types";
 
 describe("turn request descriptors", () => {

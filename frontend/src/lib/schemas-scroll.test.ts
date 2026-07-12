@@ -17,15 +17,23 @@ describe("runtime schemas", () => {
   });
 
   it("validates known stream events and ignores unknown events", () => {
-    expect(parseTurnStreamFrame("turn.done", { turn_id: "turn-1", status: "completed" })).not.toBeNull();
+    expect(
+      parseTurnStreamFrame("turn.done", { turn_id: "turn-1", status: "completed" }),
+    ).not.toBeNull();
     expect(parseTurnStreamFrame("internal.event", {})).toBeNull();
-    expect(() => parseSseFrame("event: turn.done\ndata: {\"status\":\"completed\"}\n\n")).toThrow(SseValidationError);
+    expect(() => parseSseFrame('event: turn.done\ndata: {"status":"completed"}\n\n')).toThrow(
+      SseValidationError,
+    );
   });
 });
 
 describe("scroll following", () => {
   it("follows only while the viewport is near the bottom", () => {
-    expect(isViewportNearBottom({ scrollHeight: 1000, scrollTop: 810, clientHeight: 100 })).toBe(true);
-    expect(isViewportNearBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 100 })).toBe(false);
+    expect(isViewportNearBottom({ scrollHeight: 1000, scrollTop: 810, clientHeight: 100 })).toBe(
+      true,
+    );
+    expect(isViewportNearBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 100 })).toBe(
+      false,
+    );
   });
 });

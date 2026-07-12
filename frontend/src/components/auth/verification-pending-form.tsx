@@ -34,14 +34,17 @@ export function VerificationPendingForm({
   return (
     <div className="grid gap-4">
       <p className="break-all text-sm text-muted-foreground">
-        {sent ? "验证邮件已发送至" : "等待发送验证邮件至"} <span className="text-foreground">{email}</span>
+        {sent ? "验证邮件已发送至" : "等待发送验证邮件至"}{" "}
+        <span className="text-foreground">{email}</span>
       </p>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="button" disabled={sending} onClick={() => void resend()}>
         {sending ? <Loader2 className="size-4 animate-spin" /> : null}
         重新发送
       </Button>
-      <Button type="button" variant="ghost" onClick={onBackToLogin}>返回登录</Button>
+      <Button type="button" variant="ghost" onClick={onBackToLogin}>
+        返回登录
+      </Button>
     </div>
   );
 }

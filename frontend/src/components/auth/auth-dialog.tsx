@@ -5,12 +5,7 @@ import { ForgotPasswordForm } from "@/components/auth/forgot-password-form";
 import { LoginForm } from "@/components/auth/login-form";
 import { RegisterForm } from "@/components/auth/register-form";
 import { VerificationPendingForm } from "@/components/auth/verification-pending-form";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { AuthDialogMode } from "@/lib/auth-dialog-events";
 
 interface AuthDialogProps {
@@ -56,7 +51,9 @@ export function AuthDialog({ mode, onModeChange }: AuthDialogProps) {
           </>
         ) : mode === "verification-pending" ? (
           <>
-            <DialogHeader><DialogTitle>验证邮箱</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>验证邮箱</DialogTitle>
+            </DialogHeader>
             <VerificationPendingForm
               email={pendingEmail}
               emailSent={verificationEmailSent}
@@ -65,7 +62,9 @@ export function AuthDialog({ mode, onModeChange }: AuthDialogProps) {
           </>
         ) : mode === "forgot-password" ? (
           <>
-            <DialogHeader><DialogTitle>重置密码</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>重置密码</DialogTitle>
+            </DialogHeader>
             <ForgotPasswordForm onBackToLogin={() => onModeChange("login")} />
           </>
         ) : null}
