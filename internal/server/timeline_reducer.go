@@ -272,8 +272,10 @@ func (r *timelineReducer) reduceOutputText(event stream.Event, createdAt time.Ti
 	text := payload.Text
 	if delta {
 		text = payload.Delta
-	}
-	if strings.TrimSpace(text) == "" {
+		if text == "" {
+			return nil, nil
+		}
+	} else if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
 	responseID := r.responseID(payload.ResponseID)

@@ -58,6 +58,64 @@ func TestPresentationItemRegistryFiltersToolFields(t *testing.T) {
 	}
 }
 
+func TestPresentationOutputDeclarationDoesNotConsumeDeltaSequence(t *testing.T) {
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		newPresentationItemRegistry(),
+		nil,
+	)
+	frames, err := newPresentationEventRegistry().Filter(state, stream.Event{
+		Type:    responseEventOutputTextDelta,
+		Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":7,"delta":"#"}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("filter first output delta: %v", err)
+	}
+	if len(frames) != 2 || frames[0].Event != streamUIEventItemUpsert || frames[1].Event != streamUIEventItemDelta {
+		t.Fatalf("first output delta frames = %#v", frames)
+	}
+
+	declaration, ok := frames[0].Payload.(TurnTimelineItem)
+	if !ok {
+		t.Fatalf("item.upsert payload has type %T", frames[0].Payload)
+	}
+	if _, exists := metadataInt(declaration.Metadata, "sequence_number"); exists {
+		t.Fatalf("output declaration consumed delta sequence: %#v", declaration.Metadata)
+	}
+	delta, ok := frames[1].Payload.(TurnStreamItemDelta)
+	if !ok || delta.SequenceNumber == nil || *delta.SequenceNumber != 7 {
+		t.Fatalf("item.delta lost sequence: %#v", frames[1].Payload)
+	}
+
+	frames, err = newPresentationEventRegistry().Filter(state, stream.Event{
+		Type:    responseEventOutputTextDelta,
+		Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":8,"delta":"\n\n"}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("filter whitespace output delta: %v", err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemDelta {
+		t.Fatalf("whitespace output delta frames = %#v", frames)
+	}
+	whitespace, ok := frames[0].Payload.(TurnStreamItemDelta)
+	if !ok || whitespace.Delta != "\n\n" {
+		t.Fatalf("whitespace output delta was not preserved: %#v", frames[0].Payload)
+	}
+
+	reasoning, ok := newPresentationItemRegistry().Filter(TurnTimelineItem{
+		ID:       "reasoning-1",
+		Type:     turnTimelineItemReasoning,
+		Status:   "streaming",
+		Metadata: map[string]any{"sequence_number": 8},
+	})
+	if !ok {
+		t.Fatal("reasoning declaration was dropped")
+	}
+	if _, exists := metadataInt(reasoning.Metadata, "sequence_number"); exists {
+		t.Fatalf("reasoning declaration consumed delta sequence: %#v", reasoning.Metadata)
+	}
+}
+
 func TestPresentationStreamDropsEventsAlreadyIncludedInSnapshot(t *testing.T) {
 	const responseID = "response-1"
 	const itemID = "item-1"

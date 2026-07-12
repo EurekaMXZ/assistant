@@ -203,7 +203,7 @@ function MessageBody({ isStreaming, message }: { isStreaming?: boolean; message:
             attachments={imageAttachments}
             conversationId={message.conversation_id}
           />
-          <MarkdownRenderer content={message.content_text} />
+          <MarkdownRenderer content={message.content_text} isStreaming={isStreaming} />
           {hiddenAttachmentCount > 0 ? (
             <p className="mt-2 text-muted-foreground">已附加 {hiddenAttachmentCount} 个文件</p>
           ) : null}

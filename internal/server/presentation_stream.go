@@ -91,7 +91,7 @@ func filterOutputTextPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 	metadata := map[string]any{
 		"phase": metadataString(item.Metadata, "phase"),
 	}
-	if sequence, ok := metadataInt(item.Metadata, "sequence_number"); ok {
+	if sequence, ok := metadataInt(item.Metadata, "sequence_number"); ok && item.ContentText != "" {
 		metadata["sequence_number"] = sequence
 	}
 	return TurnTimelineItem{
@@ -107,7 +107,7 @@ func filterOutputTextPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 
 func filterReasoningPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 	metadata := map[string]any{}
-	if sequence, ok := metadataInt(item.Metadata, "sequence_number"); ok {
+	if sequence, ok := metadataInt(item.Metadata, "sequence_number"); ok && item.ContentText != "" {
 		metadata["sequence_number"] = sequence
 	}
 	return TurnTimelineItem{

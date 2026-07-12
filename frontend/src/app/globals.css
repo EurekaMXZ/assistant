@@ -2,6 +2,12 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "katex/dist/katex.min.css";
+@import "streamdown/styles.css";
+
+@source "../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/@streamdown/cjk/dist/*.js";
+@source "../../node_modules/@streamdown/code/dist/*.js";
+@source "../../node_modules/@streamdown/math/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -128,79 +134,4 @@
   html {
     @apply h-full overflow-hidden font-sans;
   }
-}
-
-.hljs {
-  color: #24292f;
-  background: transparent;
-}
-
-pre code.hljs {
-  display: block;
-  overflow-x: auto;
-  padding: 0;
-}
-
-code.hljs {
-  padding: 0;
-}
-
-.hljs-comment,
-.hljs-quote {
-  color: #6e7781;
-  font-style: italic;
-}
-
-.hljs-keyword,
-.hljs-doctag,
-.hljs-meta .hljs-keyword,
-.hljs-template-tag,
-.hljs-selector-tag,
-.hljs-selector-pseudo,
-.hljs-name,
-.hljs-section,
-.hljs-title.function_ {
-  color: #cf222e;
-}
-
-.hljs-title,
-.hljs-title.class_,
-.hljs-title.class_.inherited__,
-.hljs-attr,
-.hljs-attribute {
-  color: #8250df;
-}
-
-.hljs-string,
-.hljs-regexp,
-.hljs-meta .hljs-string {
-  color: #0a3069;
-}
-
-.hljs-number,
-.hljs-literal,
-.hljs-variable,
-.hljs-template-variable,
-.hljs-selector-attr,
-.hljs-selector-class,
-.hljs-selector-id,
-.hljs-built_in,
-.hljs-symbol,
-.hljs-type,
-.hljs-bullet {
-  color: #0550ae;
-}
-
-.hljs-subst {
-  color: #24292f;
-}
-
-.hljs-addition {
-  color: #116329;
-  background: #dafbe1;
-}
-
-.hljs-deletion {
-  color: #82071e;
-  background: #ffebe9;
 }

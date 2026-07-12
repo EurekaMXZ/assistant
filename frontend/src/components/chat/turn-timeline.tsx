@@ -214,7 +214,13 @@ function TimelineToolPayload({ item }: { item: TimelineItem }) {
   );
 }
 
-function TimelineReasoningPayload({ item }: { item: TimelineItem }) {
+function TimelineReasoningPayload({
+  item,
+  isStreaming,
+}: {
+  item: TimelineItem;
+  isStreaming?: boolean;
+}) {
   const summary = reasoningSummary(item);
   if (!summary) {
     return <p className="leading-6 text-muted-foreground">暂无可展示的思考摘要。</p>;
@@ -227,7 +233,7 @@ function TimelineReasoningPayload({ item }: { item: TimelineItem }) {
   const body = section.body || summary;
   return (
     <div className="text-sm text-muted-foreground">
-      <MarkdownRenderer content={body} />
+      <MarkdownRenderer content={body} isStreaming={isStreaming} />
     </div>
   );
 }
@@ -236,10 +242,12 @@ function TimelineStep({
   item,
   isFinalAssistant,
   isLast,
+  isStreaming,
 }: {
   item: TimelineItem;
   isFinalAssistant: boolean;
   isLast: boolean;
+  isStreaming?: boolean;
 }) {
   const Icon = timelineIcons[item.type as keyof typeof timelineIcons] ?? Sparkles;
 
@@ -258,13 +266,13 @@ function TimelineStep({
         </div>
 
         {item.type === "reasoning" || item.type === "reasoning_summary" ? (
-          <TimelineReasoningPayload item={item} />
+          <TimelineReasoningPayload item={item} isStreaming={isStreaming} />
         ) : item.type === "tool_call" ? (
           <TimelineToolPayload item={item} />
         ) : item.type === "output_text" || item.type === "final_answer" ? (
           item.content_text ? (
             <div className="text-sm text-foreground">
-              <MarkdownRenderer content={item.content_text} />
+              <MarkdownRenderer content={item.content_text} isStreaming={isStreaming} />
             </div>
           ) : null
         ) : item.content_text ? (
@@ -376,6 +384,7 @@ export function TurnTimelinePanel({
                   item={item}
                   isFinalAssistant={index === finalAssistantIndex}
                   isLast={!isCompleted && index === steps.length - 1}
+                  isStreaming={isStreaming && item.status === "streaming"}
                 />
               ))}
               {isCompleted ? <TimelineCompletionStep /> : null}

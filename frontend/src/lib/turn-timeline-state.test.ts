@@ -77,6 +77,50 @@ describe("turn timeline state transitions", () => {
     expect(first.state.timelines[turn.id].items[0].content_text).toBe("first");
   });
 
+  it("accepts the first output delta after its item declaration", () => {
+    const declaration = transitionTurnTimelineState(createTurnTimelineState(), {
+      type: "item-upsert",
+      turnId: turn.id,
+      conversationId: turn.conversation_id,
+      item: {
+        id: "output-1",
+        type: "output_text",
+        status: "streaming",
+        content_text: "",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const first = transitionTurnTimelineState(declaration.state, {
+      type: "item-delta",
+      turnId: turn.id,
+      conversationId: turn.conversation_id,
+      delta: {
+        item_id: "output-1",
+        item_type: "output_text",
+        delta: "#",
+        sequence_number: 7,
+        created_at: "2026-01-01T00:00:01Z",
+      },
+    });
+    const duplicate = transitionTurnTimelineState(first.state, {
+      type: "item-delta",
+      turnId: turn.id,
+      conversationId: turn.conversation_id,
+      delta: {
+        item_id: "output-1",
+        item_type: "output_text",
+        delta: "#",
+        sequence_number: 7,
+        created_at: "2026-01-01T00:00:02Z",
+      },
+    });
+
+    expect(declaration.accepted).toBe(true);
+    expect(first.accepted).toBe(true);
+    expect(first.state.itemSequences["turn-1:output-1"]).toBe(7);
+    expect(duplicate.accepted).toBe(false);
+  });
+
   it("keeps the turn record as the single terminal status owner", () => {
     const initialized = transitionTurnTimelineState(createTurnTimelineState(), {
       type: "register-turn",

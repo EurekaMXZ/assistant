@@ -457,7 +457,7 @@ func decodeResponseStreamPayload(event stream.Event) (responseStreamPayload, boo
 			if strings.TrimSpace(payload.ResponseID) == "" {
 				payload.ResponseID = strings.TrimSpace(event.ResponseID)
 			}
-			if strings.TrimSpace(payload.Delta) == "" {
+			if payload.Delta == "" {
 				payload.Delta = event.Delta
 			}
 			if strings.TrimSpace(payload.Text) == "" {
