@@ -2,221 +2,6 @@
 
 Agentic AI 对话助手，基于 OpenAI Responses API，支持网络搜索、文件理解、图片生成，以及基于 Firecracker microVM 沙箱的安全执行。
 
-## 技术栈
-
-### 后端
-
-| 组件 | 技术 |
-|------|------|
-| 语言 | Go 1.26 |
-| HTTP 框架 | Gin |
-| 数据库 | PostgreSQL 18 |
-| 消息队列 | Apache Kafka 3.9 (Kraft) |
-| 实时推送 | Redis Pub/Sub |
-| 对象存储 | MinIO (S3 API) |
-| 容器化 | Docker + Docker Compose |
-| 沙箱执行 | Firecracker microVM |
-| VM 通信 | vsock (AF_VSOCK) + HTTP bridge |
-| VM 网络 | TAP 设备 + Linux bridge + iptables NAT |
-
-### 前端
-
-| 组件 | 技术 |
-|------|------|
-| 框架 | Next.js 16 (App Router) |
-| UI | React 19 + Tailwind CSS 4 |
-| 组件库 | shadcn/ui + Base UI |
-| Markdown | react-markdown + KaTeX + rehype-highlight |
-| 表单 | react-hook-form + zod |
-
-## 架构
-
-```
-                         ┌──────────┐
-                         │ Frontend │
-                         │ Next.js  │
-                         └─┬───┬────┘
-                    HTTP   │   │  SSE
-                    REST   │   │
-           ┌───────────────┘   └─────────────────┐
-           ▼                                     ▼
-┌──────────────────────┐            ┌───────────────────────┐
-│     API (Gin) :8080  │            │    Redis 7 Pub/Sub    │
-│                      │◀───────────│      (流式事件扇出)     │
-│  auth / conversations│            └───────────────────────┘
-│  /messages /turns    │
-└──────────┬───────────┘
-           │  turn.accepted / turn.context_ready
-           │  context.compaction.requested
-           ▼
-┌──────────────────────────────────────────────────┐
-│              Kafka (Kraft, 16 partitions)        │
-│              durable workflow event bus          │
-└──────────────────────┬───────────────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                 Worker (conversation affinity, 4 request slots)     │
-│                                                                      │
-│  ┌──────────────────────┐   ┌───────────────────────────────────┐    │
-│  │   Context Cache      │   │         WorkflowEngine            │    │
-│  │   (ring buffer)      │   │                                   │    │
-│  │                      │   │  OutboxRelay │ StaleTurnRequeuer  │    │
-│  │   anchor + tail      │   │  ContextCompactor                 │    │
-│  └──────────┬───────────┘   └──────────────┬────────────────────┘    │
-│             │                              │                         │
-│             └──────────┬───────────────────┘                         │
-│                        ▼                                             │
-│  ┌──────────────────────────────────────────────────────────────┐    │
-│  │                      TurnRunner                               │    │
-│  │                                                              │    │
-│  │  HandleAccepted ──▶ HandleContextReady ─▶ turn_run.requested  │    │
-│  │       │                    │                                 │    │
-│  │       ▼                    ▼                                 │    │
-│  │  ContextLoader     ToolOrchestrator (one request per event)   │    │
-│  │                         │                                    │    │
-│  │               ┌─────────┼─────────┐                          │    │
-│  │               ▼         ▼         ▼                          │    │
-│  │         List Tools   LLM 请求  Execute Tools                 │    │
-│  │         (catalog)        │          │                        │    │
-│  └──────────────────────────┼──────────┼────────────────────────┘    │
-│                             │          │                             │
-└─────────────────────────────┼──────────┼─────────────────────────────┘
-                              │          │
-                    ┌─────────┘          └─────────────────────────┐
-                    ▼                                               │
-┌──────────────────────────────┐                                    │
-│    OpenAI Responses API      │                                    │
-│    (streaming)               │                                    │
-└──────────────────────────────┘      ┌─────────────────────────────┼──────────────────────────┐
-                                      ▼                             ▼                          ▼
-                         ┌────────────────────┐  ┌──────────────────────┐  ┌──────────────────────────────┐
-                         │   Tavily Search    │  │    Conversation      │  │          Sandbox             │
-                         │   search/extract   │  │       rename         │  │                              │
-                         │                    │  │                      │  │  ┌──────────┐ ┌────────────┐ │
-                         └────────────────────┘  └──────────────────────┘  │  │  HTTP    │ │ Firecracker│ │
-                                                                          │  │  Client  │ │  Bridge    │ │
-                                                                          │  │          │ │            │ │
-                                                                          │  │ app side │ │  HTTP REST │ │
-                                                                          │  │          │ │ :8787      │ │
-                                                                          │  └──────────┘ └─────┬──────┘ │
-                                                                          └─────────────────────┼────────┘
-                                                                                                │
-                                                                        ┌───────────────────────┘
-                                                                        ▼
-                                                         ┌──────────────────────────────┐
-                                                         │    firecracker-bridge        │
-                                                         │    宿主机守护进程              │
-                                                         │    监听 127.0.0.1:8787        │
-                                                         │                              │
-                                                         │  POST   /sandboxes            │
-                                                         │  DELETE /sandboxes/{id}       │
-                                                         │  POST   /sandboxes/{id}/exec  │
-                                                         │                              │
-                                                         │  VM 生命周期:                  │
-                                                         │  分配 CID → 启动 VMM          │
-                                                         │  配置 boot/drive/vsock        │
-                                                         │  InstanceStart → 等待 agent   │
-                                                         │                              │
-                                                         │  可选网络:                     │
-                                                         │  fcbr0 bridge + iptables NAT  │
-                                                         │  每 VM: TAP + guest IP        │
-                                                         └──────────────┬───────────────┘
-                                                                        │
-                                                    ┌───────────────────┼───────────────────┐
-                                                    │ vsock             │                   │
-                                                    │ CONNECT 52\n      │  TAP / iptables   │
-                                                    ▼                   │  (可选出站网络)    │
-                                          ┌──────────────────┐          │                   │
-                                          │  Firecracker VMM │          │                   │
-                                          │  (microVM)       │◀─────────┘                   │
-                                          │                  │                              │
-                                          │  vCPU: 1         │                              │
-                                          │  mem: 512 MiB    │                              │
-                                          │  rootfs: rw ext4 │                              │
-                                          │                  │                              │
-                                          │  ┌────────────┐  │                              │
-                                          │  │sandbox-    │  │                              │
-                                          │  │agent :52   │  │                              │
-                                          │  │            │  │                              │
-                                          │  │ /health    │  │                              │
-                                          │  │ /exec      │  │                              │
-                                          │  │ /network/  │  │                              │
-                                          │  │  configure │  │                              │
-                                          │  └────────────┘  │                              │
-                                          └──────────────────┘                              │
-                                                                                            │
-┌──────────────────────────────────────────────────────────────────────────────────────────┘
-│
-│   ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐
-│   │    PostgreSQL 18    │   │      Redis 7        │   │    MinIO (S3)       │
-│   │                     │   │                     │   │                     │
-│   │  users              │   │  Pub/Sub 扇出        │   │  请求/响应 Blob      │
-│   │  conversations      │   │  (流式 token 增量)    │   │  上下文锚点           │
-│   │  turns              │   │                     │   │  附件文件             │
-│   │  messages           │   │                     │   │                     │
-│   │  outbox_events      │   │                     │   │                     │
-│   │  turn_runs          │   │                     │   │                     │
-│   │  tool_calls         │   │                     │   │                     │
-│   │  attachments        │   │                     │   │                     │
-│   │  sandboxes          │   │                     │   │                     │
-│   │  turn_stream_events │   │                     │   │                     │
-│   └─────────────────────┘   └─────────────────────┘   └─────────────────────┘
-│
-│   沙箱工具条件展示（internal/tool/catalog.go）:
-│   • sandbox.create  ── 会话无活跃沙箱
-│   • sandbox.destroy ── 会话有活跃沙箱
-│   • sandbox.exec    ── 有活跃沙箱 且 SANDBOX_EXEC_ENABLED=true
-│
-│   每会话最多一个活跃沙箱。rootfs 可读写，命令间文件状态持久保留。
-│   统一通过 HTTPRuntime 访问 Firecracker bridge。
-└───────────────────────────────────────────────────────────────────────────────
-
-```
-
-## 项目结构
-
-```
-├── cmd/                      # 入口（7 个二进制）
-│   ├── api/                  # API 服务器
-│   ├── worker/               # Kafka 消费者 + 工作流引擎
-│   ├── backend/              # 合并 API + Worker（单进程）
-│   ├── migrate/              # 数据库迁移
-│   ├── password-hash/        # 密码哈希 CLI
-│   ├── firecracker-bridge/   # Firecracker HTTP 桥接守护进程
-│   └── sandbox-agent/        # Firecracker VM 内 vsock 代理
-├── internal/                 # 核心应用逻辑（22 个包）
-│   ├── bootstrap/            # 依赖注入 / 运行时组装
-│   ├── config/               # 环境变量配置
-│   ├── domain/               # 领域模型和常量
-│   ├── server/               # HTTP 路由、SSE 流
-│   ├── auth/                 # JWT 认证
-│   ├── llm/                  # 模型客户端接口
-│   ├── openai/               # OpenAI Responses API 客户端
-│   ├── tool/                 # 工具目录、执行器、处理器
-│   ├── workflow/             # 工作流引擎（Turn runner、Compactor、Outbox）
-│   ├── postgres/             # 数据库仓库
-│   ├── kafka/                # Kafka 生产者/消费者
-│   ├── redis/                # Redis Pub/Sub
-│   ├── minio/                # MinIO 客户端
-│   ├── sandbox/              # Firecracker bridge HTTP 客户端
-│   ├── firecrackerbridge/    # Firecracker VM 生命周期管理
-│   ├── sandboxagent/         # VM 内代理（vsock 监听 + 命令执行）
-│   ├── cache/                # 上下文环形缓冲缓存
-│   ├── tavily/               # Tavily 网页搜索 API 客户端
-│   ├── billing/              # 模型用量计费
-│   ├── stream/               # 流事件类型定义
-│   └── attachment/           # 文件附件服务
-├── frontend/                 # Next.js 前端
-├── db/migrations/            # PostgreSQL 首发基线迁移
-├── docs/                     # 文档
-│   └── API.md                # HTTP API 参考
-├── docker-compose.yml
-├── Dockerfile
-├── .env.example
-└── LICENSE
-```
-
 ## 部署
 
 ### 环境准备
@@ -235,10 +20,10 @@ cp .env.example .env
 # 启动基础设施
 docker compose up -d postgres redis kafka minio
 
-# 启动 Firecracker bridge（后端仅保留 Firecracker 沙箱）
+# 启动 Firecracker bridge
 go run ./cmd/firecracker-bridge
 
-# 执行迁移
+# 执行数据库迁移
 go run ./cmd/migrate up
 
 # 启动后端（API + Worker 合并模式）
@@ -283,9 +68,7 @@ SANDBOX_BRIDGE_TOKEN=your-secret-token
 SANDBOX_EXEC_ENABLED=true
 ```
 
-### 迁移命令
-
-`000001_initial_schema` 是首发基线迁移，部署时从全新空数据库开始。
+### 数据库迁移
 
 ```bash
 go run ./cmd/migrate up       # 执行所有未应用迁移
