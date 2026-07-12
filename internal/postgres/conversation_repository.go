@@ -99,7 +99,7 @@ func (r *ConversationRepository) ListConversationsByOwner(ctx context.Context, o
 	}
 	defer rows.Close()
 
-	var conversations []domain.Conversation
+	conversations := make([]domain.Conversation, 0)
 	for rows.Next() {
 		conversation, err := scanConversation(rows)
 		if err != nil {

@@ -49,3 +49,32 @@ func TestHandleInitialTurnRequiresIdempotencyKey(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestListConversationResourcesEncodeEmptyArrays(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{
+			ListConversations: func(context.Context, string, int) ([]domain.Conversation, error) {
+				return nil, nil
+			},
+			ListMessages: func(context.Context, string, string, int) ([]domain.Message, error) {
+				return nil, nil
+			},
+		},
+	})
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{path: "/api/v1/conversations?limit=200", want: `"conversations":[]`},
+		{path: "/api/v1/conversations/conversation-1/messages", want: `"messages":[]`},
+	} {
+		req := httptest.NewRequest(http.MethodGet, test.path, nil)
+		req.Header.Set("Authorization", "Bearer token")
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), test.want) {
+			t.Fatalf("GET %s status=%d body=%s, want %s", test.path, rec.Code, rec.Body.String(), test.want)
+		}
+	}
+}

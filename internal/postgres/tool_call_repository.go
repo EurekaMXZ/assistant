@@ -214,7 +214,7 @@ func (r *ToolCallRepository) ListToolCallsByTurn(ctx context.Context, turnID str
 	}
 	defer rows.Close()
 
-	var records []domain.ToolCallRecord
+	records := make([]domain.ToolCallRecord, 0)
 	for rows.Next() {
 		record, scanErr := scanToolCall(rows)
 		if scanErr != nil {

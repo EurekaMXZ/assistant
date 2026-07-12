@@ -221,6 +221,30 @@ func TestGetTurnExecutionTraceIgnoresMissingOutputItemsArtifact(t *testing.T) {
 	if len(trace.Runs[0].OutputItems) != 0 {
 		t.Fatalf("expected empty output items when artifact missing, got %s", trace.Runs[0].OutputItems)
 	}
+	if trace.Runs[0].ToolCalls == nil {
+		t.Fatal("expected empty tool_calls array, got nil")
+	}
+	encoded, err := json.Marshal(trace)
+	if err != nil {
+		t.Fatalf("marshal trace: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"tool_calls":[]`) {
+		t.Fatalf("empty tool calls encoded as null: %s", encoded)
+	}
+}
+
+func TestGetTurnExecutionTraceRejectsNullOutputItems(t *testing.T) {
+	uc := GetTurnExecutionTrace{
+		Turns:     &stubTraceTurnGetter{turn: &domain.Turn{ID: "turn-null", ConversationID: "conv-null"}},
+		Runs:      &stubTurnRunLister{runs: []domain.TurnRun{{ID: "run-null", TurnID: "turn-null", StepIndex: 1}}},
+		ToolCalls: &stubToolCallLister{},
+		Artifacts: &stubTurnRunArtifactReader{data: map[string][]byte{
+			"run-output-items/conv-null/turn-null/step-001.json": []byte(`null`),
+		}},
+	}
+	if _, err := uc.Execute(t.Context(), "turn-null"); err == nil || !strings.Contains(err.Error(), "must be a json array") {
+		t.Fatalf("error = %v, want output items array validation", err)
+	}
 }
 
 func TestGetTurnExecutionTraceReturnsArtifactReadError(t *testing.T) {

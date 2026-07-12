@@ -103,7 +103,7 @@ func (a *API) handleListConversations(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"conversations": conversations})
+	c.JSON(http.StatusOK, gin.H{"conversations": nonNilSlice(conversations)})
 }
 
 func (a *API) handleGetConversation(c *gin.Context) {
@@ -153,7 +153,7 @@ func (a *API) handleListMessages(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"messages": messages})
+	c.JSON(http.StatusOK, gin.H{"messages": nonNilSlice(messages)})
 }
 
 func (a *API) handleCreateMessage(c *gin.Context) {

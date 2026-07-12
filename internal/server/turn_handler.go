@@ -204,6 +204,7 @@ func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, tu
 		TurnID:         turn.ID,
 		ConversationID: turn.ConversationID,
 		Status:         turn.Status,
+		Items:          []TurnTimelineItem{},
 	}
 	if len(snapshot.Items) == 0 {
 		if item := fallbackStatusItem(turn); item != nil {

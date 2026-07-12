@@ -43,7 +43,7 @@ func (r *MessageRepository) ListMessages(ctx context.Context, conversationID str
 	}
 	defer rows.Close()
 
-	var messages []domain.Message
+	messages := make([]domain.Message, 0)
 	for rows.Next() {
 		message, err := scanMessage(rows)
 		if err != nil {
@@ -81,7 +81,7 @@ func (r *MessageRepository) ListAssistantMessagesByTurn(ctx context.Context, tur
 	}
 	defer rows.Close()
 
-	var messages []domain.Message
+	messages := make([]domain.Message, 0)
 	for rows.Next() {
 		message, scanErr := scanMessage(rows)
 		if scanErr != nil {

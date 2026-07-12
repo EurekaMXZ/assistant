@@ -14,7 +14,7 @@ func (a *API) handleListManagedUsers(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"users": users})
+	c.JSON(http.StatusOK, gin.H{"users": nonNilSlice(users)})
 }
 
 func (a *API) handleGetManagedUser(c *gin.Context) {

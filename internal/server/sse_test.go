@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +170,30 @@ func TestHandleStreamTurnClosesWhenSnapshotBecomesTerminal(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"completed"`) || !strings.Contains(rec.Body.String(), "event: turn.done") {
 		t.Fatalf("expected terminal snapshot stream, got %q", rec.Body.String())
+	}
+}
+
+func TestFallbackTurnStreamSnapshotUsesEmptyItemsArray(t *testing.T) {
+	api := &API{useCases: UseCases{Turns: TurnUseCases{
+		GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
+			return nil, domain.ErrNotFound
+		},
+	}}}
+	snapshot, _, _, err := api.loadTurnStreamSnapshot(
+		t.Context(),
+		"user-1",
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing},
+		newPresentationItemRegistry(),
+	)
+	if err != nil {
+		t.Fatalf("load fallback snapshot: %v", err)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"items":[]`) {
+		t.Fatalf("empty snapshot items encoded as null: %s", encoded)
 	}
 }
 

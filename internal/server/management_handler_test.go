@@ -163,4 +163,7 @@ func TestOwnBillingTransactionsAreScopedToAuthenticatedUser(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
+	if body := rec.Body.String(); !strings.Contains(body, `"data":[]`) {
+		t.Fatalf("empty page encoded as null: %s", body)
+	}
 }

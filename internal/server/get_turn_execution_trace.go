@@ -126,6 +126,7 @@ func (uc GetTurnExecutionTrace) Execute(ctx context.Context, turnID string) (*Tu
 		trace.StreamEvents = streamEvents
 	}
 	for _, run := range runs {
+		toolCalls := callsByRun[run.ID]
 		item := TurnRunTrace{
 			ID:                       run.ID,
 			TurnID:                   run.TurnID,
@@ -150,7 +151,7 @@ func (uc GetTurnExecutionTrace) Execute(ctx context.Context, turnID string) (*Tu
 			FailedAt:                 run.FailedAt,
 			CreatedAt:                run.CreatedAt,
 			UpdatedAt:                run.UpdatedAt,
-			ToolCalls:                callsByRun[run.ID],
+			ToolCalls:                nonNilSlice(toolCalls),
 		}
 		if uc.Artifacts != nil {
 			item.OutputItemsBlobKey = uc.Artifacts.TurnRunOutputItemsKey(turn.ConversationID, turn.ID, run.StepIndex)
@@ -163,6 +164,10 @@ func (uc GetTurnExecutionTrace) Execute(ctx context.Context, turnID string) (*Tu
 				}
 				if !json.Valid(data) {
 					return nil, fmt.Errorf("turn run output items %q is not valid json", item.OutputItemsBlobKey)
+				}
+				var outputItems []json.RawMessage
+				if err := json.Unmarshal(data, &outputItems); err != nil || outputItems == nil {
+					return nil, fmt.Errorf("turn run output items %q must be a json array", item.OutputItemsBlobKey)
 				}
 				redacted, err := redactEncryptedContentJSON(data)
 				if err != nil {

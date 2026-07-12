@@ -10,8 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func pagePayload(items any, nextCursor string) gin.H {
-	return gin.H{"data": items, "page": domain.CursorPage{NextCursor: nextCursor, HasMore: nextCursor != ""}}
+func nonNilSlice[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
+}
+
+func pagePayload[T any](items []T, nextCursor string) gin.H {
+	return gin.H{"data": nonNilSlice(items), "page": domain.CursorPage{NextCursor: nextCursor, HasMore: nextCursor != ""}}
 }
 
 func (a *API) handleListModels(c *gin.Context) {
@@ -140,7 +147,7 @@ func (a *API) handleListModelPrices(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"prices": items})
+	c.JSON(http.StatusOK, gin.H{"prices": nonNilSlice(items)})
 }
 
 func (a *API) handleCreateModelPrice(c *gin.Context) {
