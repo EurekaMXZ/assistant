@@ -247,7 +247,7 @@ func internetSearchDefinition() llm.ModelTool {
 				},
 				"exact_match":{
 					"type":"boolean",
-					"description":"Prefer exact query matches when appropriate."
+					"description":"Require results to contain a phrase verbatim. Set this only when query contains a non-empty ASCII double-quoted phrase, for example '\"John Smith\" CEO'; otherwise omit it or set false."
 				}
 			},
 			"required":["query"],

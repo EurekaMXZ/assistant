@@ -123,7 +123,7 @@ func (uc TavilyTools) Search(ctx context.Context, input SearchWebInput) (*tavily
 		ExcludeDomains:           compactSearchValues(input.ExcludeDomains),
 		Country:                  strings.ToLower(strings.TrimSpace(input.Country)),
 		AutoParameters:           input.AutoParameters,
-		ExactMatch:               input.ExactMatch,
+		ExactMatch:               input.ExactMatch && tavily.CanUseExactMatch(query),
 	})
 }
 

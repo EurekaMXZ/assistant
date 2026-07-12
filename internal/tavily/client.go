@@ -63,7 +63,7 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (*SearchResp
 		ExcludeDomains:           compactStrings(request.ExcludeDomains),
 		Country:                  strings.TrimSpace(request.Country),
 		AutoParameters:           request.AutoParameters,
-		ExactMatch:               request.ExactMatch,
+		ExactMatch:               request.ExactMatch && CanUseExactMatch(query),
 	}
 
 	body, err := c.postRaw(ctx, "search", "/search", payload)
@@ -93,6 +93,27 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (*SearchResp
 		RequestID:    envelope.RequestID,
 		Usage:        envelope.Usage,
 	}, nil
+}
+
+func CanUseExactMatch(query string) bool {
+	query = strings.TrimSpace(query)
+	for offset := 0; offset < len(query); {
+		start := strings.IndexByte(query[offset:], '"')
+		if start < 0 {
+			return false
+		}
+		start += offset
+		end := strings.IndexByte(query[start+1:], '"')
+		if end < 0 {
+			return false
+		}
+		end += start + 1
+		if strings.TrimSpace(query[start+1:end]) != "" {
+			return true
+		}
+		offset = end + 1
+	}
+	return false
 }
 
 func (c *Client) Extract(ctx context.Context, request ExtractRequest) (json.RawMessage, error) {

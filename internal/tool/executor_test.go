@@ -478,6 +478,7 @@ func TestLocalExecutorSearchWeb(t *testing.T) {
 			"query":" latest openai docs ",
 			"search_depth":"advanced",
 			"max_results":12,
+			"exact_match":true,
 			"include_answer":"advanced",
 			"include_raw_content":"markdown",
 			"include_domains":[" developers.openai.com "]
@@ -489,6 +490,9 @@ func TestLocalExecutorSearchWeb(t *testing.T) {
 
 	if searcher.searchRequest.Query != "latest openai docs" || searcher.searchRequest.SearchDepth != "advanced" || searcher.searchRequest.MaxResults != 12 {
 		t.Fatalf("unexpected search request: %#v", searcher.searchRequest)
+	}
+	if searcher.searchRequest.ExactMatch {
+		t.Fatalf("unquoted query retained exact_match: %#v", searcher.searchRequest)
 	}
 	if searcher.searchRequest.IncludeAnswer != "advanced" || searcher.searchRequest.IncludeRawContent != "markdown" {
 		t.Fatalf("unexpected include options: %#v", searcher.searchRequest)

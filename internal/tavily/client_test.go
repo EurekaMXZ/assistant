@@ -69,6 +69,7 @@ func TestClientSearch(t *testing.T) {
 		Query:          " latest openai docs ",
 		SearchDepth:    "basic",
 		MaxResults:     3,
+		ExactMatch:     true,
 		IncludeDomains: []string{" developers.openai.com ", ""},
 	})
 	if err != nil {
@@ -84,6 +85,9 @@ func TestClientSearch(t *testing.T) {
 	if len(requestBody.IncludeDomains) != 1 || requestBody.IncludeDomains[0] != "developers.openai.com" {
 		t.Fatalf("unexpected include domains: %#v", requestBody.IncludeDomains)
 	}
+	if requestBody.ExactMatch {
+		t.Fatalf("unquoted query retained exact_match: %#v", requestBody)
+	}
 	if response.Query != "latest openai docs" || response.Answer != "Current answer" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
@@ -92,6 +96,45 @@ func TestClientSearch(t *testing.T) {
 	}
 	if len(response.Results) != 1 || response.Results[0].Title != "OpenAI" {
 		t.Fatalf("unexpected results: %#v", response.Results)
+	}
+}
+
+func TestClientSearchPreservesExactMatchForQuotedPhrase(t *testing.T) {
+	var requestBody SearchRequest
+	client := New(Settings{BaseURL: "https://search.example.test", APIKey: "test-key"})
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"query":"quoted","results":[]}`)),
+		}, nil
+	})}
+
+	if _, err := client.Search(t.Context(), SearchRequest{Query: `"John Smith" CEO`, ExactMatch: true}); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if !requestBody.ExactMatch {
+		t.Fatalf("quoted query lost exact_match: %#v", requestBody)
+	}
+}
+
+func TestCanUseExactMatchRequiresNonEmptyQuotedPhrase(t *testing.T) {
+	for _, test := range []struct {
+		query string
+		want  bool
+	}{
+		{query: "John Smith CEO", want: false},
+		{query: `"John Smith" CEO`, want: true},
+		{query: `"" CEO`, want: false},
+		{query: `"   " CEO`, want: false},
+		{query: `unclosed "John Smith`, want: false},
+	} {
+		if got := CanUseExactMatch(test.query); got != test.want {
+			t.Fatalf("CanUseExactMatch(%q) = %t, want %t", test.query, got, test.want)
+		}
 	}
 }
 
