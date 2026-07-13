@@ -1,15 +1,31 @@
 "use client";
 
-import { useRef } from "react";
-import { ArrowUp, Loader2, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Archive,
+  ArrowUp,
+  FileIcon,
+  FileSpreadsheet,
+  FileText,
+  ImageIcon,
+  Loader2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useAutosizeTextarea } from "@/hooks/use-autosize-textarea";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { getConversationAttachmentBlob } from "@/lib/api";
 import { ComposerOptions } from "./composer-options";
 import type { Model, ReasoningEffort } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export interface ComposerShellAttachment {
+  attachmentId?: string;
+  contentType?: string;
+  conversationId?: string;
+  file?: File;
   key: string;
   name: string;
   size: number;
@@ -49,6 +65,188 @@ export function formatComposerFileSize(size: number) {
   return `${value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
+function attachmentExtension(name: string) {
+  return name.split(".").pop()?.toLowerCase() || "";
+}
+
+function isImageAttachment(attachment: ComposerShellAttachment) {
+  return (
+    attachment.contentType?.startsWith("image/") ||
+    ["avif", "bmp", "gif", "heic", "jpeg", "jpg", "png", "svg", "webp"].includes(
+      attachmentExtension(attachment.name),
+    )
+  );
+}
+
+function attachmentPresentation(attachment: ComposerShellAttachment) {
+  const extension = attachmentExtension(attachment.name);
+
+  if (["csv", "ods", "xls", "xlsx"].includes(extension)) {
+    return {
+      label: "电子表格",
+      icon: <FileSpreadsheet className="size-5" />,
+      iconClassName: "bg-emerald-500 text-white",
+    };
+  }
+  if (["7z", "gz", "rar", "tar", "zip"].includes(extension)) {
+    return {
+      label: "压缩文件",
+      icon: <Archive className="size-5" />,
+      iconClassName: "bg-amber-500 text-white",
+    };
+  }
+  if (extension === "pdf") {
+    return {
+      label: "PDF 文档",
+      icon: <FileText className="size-5" />,
+      iconClassName: "bg-red-500 text-white",
+    };
+  }
+  if (
+    attachment.contentType?.startsWith("text/") ||
+    ["doc", "docx", "md", "rtf", "txt"].includes(extension)
+  ) {
+    return {
+      label: "文档",
+      icon: <FileText className="size-5" />,
+      iconClassName: "bg-blue-500 text-white",
+    };
+  }
+  return {
+    label: "文件",
+    icon: <FileIcon className="size-5" />,
+    iconClassName: "bg-muted text-muted-foreground",
+  };
+}
+
+function ComposerAttachmentItem({
+  attachment,
+  onRemove,
+}: {
+  attachment: ComposerShellAttachment;
+  onRemove: () => void;
+}) {
+  const image = isImageAttachment(attachment);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    if (!image) return;
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setPreviewUrl(null);
+    setPreviewFailed(false);
+
+    const loadPreview = async () => {
+      try {
+        const blob = attachment.file
+          ? attachment.file
+          : attachment.conversationId && attachment.attachmentId
+            ? await getConversationAttachmentBlob(
+                attachment.conversationId,
+                attachment.attachmentId,
+              )
+            : null;
+        if (!blob) {
+          if (!cancelled) setPreviewFailed(true);
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setPreviewUrl(objectUrl);
+      } catch {
+        if (!cancelled) setPreviewFailed(true);
+      }
+    };
+
+    void loadPreview();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.attachmentId, attachment.conversationId, attachment.file, image]);
+
+  const removeButton = (
+    <Button
+      type="button"
+      variant="default"
+      size="icon-xs"
+      aria-label={`移除 ${attachment.name}`}
+      className="absolute right-1 top-1 z-10 size-5 rounded-full bg-foreground p-0 text-background shadow-none hover:bg-foreground/80"
+      onClick={onRemove}
+    >
+      <X className="size-3.5" />
+    </Button>
+  );
+
+  if (image) {
+    return (
+      <>
+        <div className="relative size-16 shrink-0">
+          <button
+            type="button"
+            aria-label={`预览 ${attachment.name}`}
+            className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            disabled={!previewUrl}
+            onClick={() => setPreviewOpen(true)}
+          >
+            {previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewUrl}
+                alt={attachment.name}
+                className="size-full object-cover"
+                onError={() => setPreviewFailed(true)}
+              />
+            ) : previewFailed ? (
+              <ImageIcon className="size-5 text-muted-foreground" />
+            ) : (
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            )}
+          </button>
+          {removeButton}
+        </div>
+
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="max-w-[calc(100%-2rem)] gap-0 bg-black p-2 text-white ring-white/15 sm:max-w-4xl">
+            <DialogTitle className="sr-only">{attachment.name}</DialogTitle>
+            {previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewUrl}
+                alt={attachment.name}
+                className="max-h-[82vh] w-full object-contain"
+              />
+            ) : null}
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  const presentation = attachmentPresentation(attachment);
+  return (
+    <div className="relative flex h-16 w-60 shrink-0 items-center gap-3 rounded-lg border bg-background p-2 pr-8">
+      <span
+        className={cn(
+          "flex size-11 shrink-0 items-center justify-center rounded-md",
+          presentation.iconClassName,
+        )}
+      >
+        {presentation.icon}
+      </span>
+      <span className="min-w-0 text-left">
+        <span className="block truncate text-sm font-medium">{attachment.name}</span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+          {presentation.label} · {formatComposerFileSize(attachment.size)}
+        </span>
+      </span>
+      {removeButton}
+    </div>
+  );
+}
+
 export function ComposerShell({
   attachments,
   autoFocus,
@@ -74,12 +272,13 @@ export function ComposerShell({
   const textareaRef = inputRef ?? fallbackRef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inactive = Boolean(disabled || busy);
-  const { currentHeight, isMultiline, maxHeight, singleLineHeight } = useAutosizeTextarea(
+  const { currentHeight, isMultiline, singleLineHeight } = useAutosizeTextarea(
     textareaRef,
     value,
     5,
+    { singleLineLeft: 52, singleLineRight: 224, multilineLeft: 12, multilineRight: 12 },
   );
-  const attachmentOffset = attachments.length > 0 ? 40 : 0;
+  const attachmentOffset = attachments.length > 0 ? 76 : 0;
   const lowerAreaCenterY = attachmentOffset + 28;
   const shellHeight = isMultiline ? currentHeight + 64 + attachmentOffset : 56 + attachmentOffset;
 
@@ -116,26 +315,13 @@ export function ComposerShell({
       />
 
       {attachments.length > 0 ? (
-        <div className="absolute left-3 right-3 top-2 flex min-w-0 gap-1.5 overflow-x-auto">
+        <div className="absolute left-3 right-3 top-2 flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {attachments.map((attachment) => (
-            <span
+            <ComposerAttachmentItem
               key={attachment.key}
-              className="inline-flex max-w-48 shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-1 text-xs text-muted-foreground"
-              title={attachment.name}
-            >
-              <span className="truncate">{attachment.name}</span>
-              <span className="shrink-0 text-muted-foreground/70">
-                {formatComposerFileSize(attachment.size)}
-              </span>
-              <button
-                type="button"
-                className="ml-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full hover:bg-background hover:text-foreground"
-                onClick={() => onRemoveAttachment?.(attachment.key)}
-              >
-                <X className="h-3 w-3" />
-                <span className="sr-only">移除文件</span>
-              </button>
-            </span>
+              attachment={attachment}
+              onRemove={() => onRemoveAttachment?.(attachment.key)}
+            />
           ))}
         </div>
       ) : null}
@@ -146,6 +332,11 @@ export function ComposerShell({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (event.key === "Backspace" && value.length === 0 && attachments.length > 0) {
+            event.preventDefault();
+            onRemoveAttachment?.(attachments[attachments.length - 1].key);
+            return;
+          }
           if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           if (event.ctrlKey) {
             event.preventDefault();
@@ -163,10 +354,10 @@ export function ComposerShell({
         }}
         placeholder={placeholder}
         disabled={inactive}
-        className={`absolute min-h-0 resize-none border-0 bg-transparent pl-2 py-0 leading-6 shadow-none [field-sizing:fixed] focus-visible:ring-0 ${isMultiline ? "right-3" : "right-[224px]"}`}
+        className={`absolute w-auto min-h-0 resize-none border-0 bg-transparent pl-2 py-0 leading-6 shadow-none [field-sizing:fixed] focus-visible:ring-0 ${isMultiline ? "right-3" : "right-[224px]"}`}
         style={
           isMultiline
-            ? { top: 8 + attachmentOffset, left: 52, height: maxHeight }
+            ? { top: 8 + attachmentOffset, left: 12, height: currentHeight }
             : {
                 top: lowerAreaCenterY,
                 left: 52,
@@ -184,11 +375,7 @@ export function ComposerShell({
         className="absolute rounded-full text-muted-foreground hover:text-foreground"
         disabled={inactive || uploadBusy}
         onClick={() => fileInputRef.current?.click()}
-        style={
-          isMultiline
-            ? { left: 12, bottom: 12 }
-            : { left: 12, top: lowerAreaCenterY, transform: "translateY(-50%)" }
-        }
+        style={{ left: 12, bottom: 10 }}
       >
         {uploadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
         <span className="sr-only">上传文件</span>
@@ -205,9 +392,7 @@ export function ComposerShell({
         onModelReasoningEffortChange={(targetModelId, effort) =>
           onModelReasoningEffortChange?.(targetModelId, effort)
         }
-        style={
-          isMultiline ? { bottom: 14 } : { top: lowerAreaCenterY, transform: "translateY(-50%)" }
-        }
+        style={{ bottom: 10 }}
       />
 
       <Button
@@ -215,11 +400,7 @@ export function ComposerShell({
         onClick={onSubmit}
         disabled={(!value.trim() && attachments.length === 0) || inactive || uploadBusy}
         className="absolute rounded-full"
-        style={
-          isMultiline
-            ? { right: 12, bottom: 12 }
-            : { right: 12, top: lowerAreaCenterY, transform: "translateY(-50%)" }
-        }
+        style={{ right: 12, bottom: 10 }}
       >
         {busy || uploadBusy ? (
           <Loader2 className="h-4 w-4 animate-spin" />

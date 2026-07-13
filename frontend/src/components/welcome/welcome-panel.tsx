@@ -41,6 +41,8 @@ export function WelcomePanel({
   reasoningEfforts = {},
 }: WelcomePanelProps) {
   const keyedFiles = files.map((file, index) => ({
+    contentType: file.type,
+    file,
     key: `${file.name}-${file.size}-${file.lastModified}-${index}`,
     name: file.name,
     size: file.size,

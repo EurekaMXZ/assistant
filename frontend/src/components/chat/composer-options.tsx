@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2, Settings2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -68,13 +68,13 @@ export function ComposerOptions({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
-              className="h-8 max-w-40 rounded-full px-2.5 text-muted-foreground hover:text-foreground"
+              className="h-9 max-w-40 rounded-full px-3 text-sm text-muted-foreground hover:text-foreground"
               disabled={disabled}
             />
           }
         >
           <span className="truncate">{buttonLabel}</span>
+          <ChevronDown className="size-3.5 opacity-70" />
           <span className="sr-only">选择模型和推理强度</span>
         </DropdownMenuTrigger>
 
