@@ -1,4 +1,7 @@
+import type { Conversation } from "./types";
+
 interface ConversationUpdatedEvent {
+  conversation?: Conversation;
   id: string;
   title?: string | null;
   archived_at?: string | null;

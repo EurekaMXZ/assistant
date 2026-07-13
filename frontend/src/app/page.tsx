@@ -9,6 +9,7 @@ import {
   prepareInitialTurn,
 } from "@/lib/api";
 import { openAuthDialog } from "@/lib/auth-dialog-events";
+import { emitConversationUpdated } from "@/lib/conversation-events";
 import { useAuth } from "@/hooks/use-auth";
 import { useComposerPreferences } from "@/hooks/use-composer-preferences";
 import { stashPendingHomeTurn } from "@/lib/pending-home-turn";
@@ -73,6 +74,12 @@ export default function HomePage() {
         turn: messageResult.turn,
         stream_path: messageResult.stream_path,
       });
+      if (messageResult.conversation) {
+        emitConversationUpdated({
+          conversation: messageResult.conversation,
+          id: messageResult.conversation.id,
+        });
+      }
       setDraft("");
       setFiles([]);
       router.push(`/c/${completedOperation.conversation_id}`);

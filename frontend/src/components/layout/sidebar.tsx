@@ -148,6 +148,26 @@ export function Sidebar({
 
   useEffect(() => {
     return subscribeConversationUpdated((event) => {
+      const createdConversation = event.conversation;
+      if (createdConversation) {
+        generationRef.current += 1;
+        listRequestRef.current?.controller.abort();
+        listRequestRef.current = null;
+        setIsLoading(false);
+        setConversations((prev) => {
+          const existingIndex = prev.findIndex(
+            (conversation) => conversation.id === createdConversation.id,
+          );
+          if (existingIndex === -1) {
+            return [createdConversation, ...prev];
+          }
+          return prev.map((conversation, index) =>
+            index === existingIndex ? createdConversation : conversation,
+          );
+        });
+        return;
+      }
+
       setConversations((prev) => {
         let changed = false;
         const next = prev.map((conversation) => {
