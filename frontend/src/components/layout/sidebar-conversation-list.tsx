@@ -163,13 +163,11 @@ export function SidebarConversationList({
                         event.preventDefault();
                         onSelectConversation(conversation.id);
                       }}
-                      className="min-w-0 truncate text-inherit"
+                      className="flex min-w-0 flex-1 self-stretch items-center text-inherit"
                       title={conversation.title || "新会话"}
                     >
-                      {conversation.title || "新会话"}
+                      <span className="min-w-0 truncate">{conversation.title || "新会话"}</span>
                     </Link>
-
-                    <span className="min-w-0 flex-1" />
 
                     <Button
                       variant="ghost"
