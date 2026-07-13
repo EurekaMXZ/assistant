@@ -83,6 +83,10 @@ services:
         SERVICE: migrate
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
         GOSUMDB: ${GOSUMDB:-sum.golang.org}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
+        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
+        NO_PROXY: ${DOCKER_NO_PROXY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +103,10 @@ services:
         SERVICE: api
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
         GOSUMDB: ${GOSUMDB:-sum.golang.org}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
+        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
+        NO_PROXY: ${DOCKER_NO_PROXY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -122,6 +130,38 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api/v1}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
+        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
+        NO_PROXY: ${DOCKER_NO_PROXY:-}
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
   worker:
     build:
       context: .
@@ -130,6 +170,10 @@ services:
         SERVICE: worker
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
         GOSUMDB: ${GOSUMDB:-sum.golang.org}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
+        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
+        NO_PROXY: ${DOCKER_NO_PROXY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -164,6 +208,8 @@ services:
       OUTBOX_BATCH_SIZE: 100
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./prompts:/app/prompts:ro
     restart: unless-stopped
 
 volumes:

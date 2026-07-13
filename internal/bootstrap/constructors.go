@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/EurekaMXZ/assistant/internal/config"
@@ -24,6 +25,11 @@ func NewAPI(ctx context.Context, logger *log.Logger, cfg config.Config) (*APIRun
 }
 
 func NewWorker(ctx context.Context, logger *log.Logger, cfg config.Config) (*WorkerRuntime, error) {
+	loaded, err := cfg.LoadPrompts()
+	if err != nil {
+		return nil, fmt.Errorf("load workflow prompts: %w", err)
+	}
+	cfg = loaded
 	base := newBaseSettings(cfg, false)
 	assembled, err := newBaseAssembly(ctx, base)
 	if err != nil {
@@ -41,6 +47,11 @@ func NewWorker(ctx context.Context, logger *log.Logger, cfg config.Config) (*Wor
 }
 
 func NewBackend(ctx context.Context, logger *log.Logger, cfg config.Config) (*BackendRuntime, error) {
+	loaded, err := cfg.LoadPrompts()
+	if err != nil {
+		return nil, fmt.Errorf("load workflow prompts: %w", err)
+	}
+	cfg = loaded
 	base := newBaseSettings(cfg, true)
 	assembled, err := newBaseAssembly(ctx, base)
 	if err != nil {

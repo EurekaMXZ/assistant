@@ -18,6 +18,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY db ./db
 COPY internal ./internal
+COPY prompts ./prompts
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 	go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/${SERVICE}
@@ -29,6 +30,7 @@ WORKDIR /app
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/app /app/app
 COPY --from=builder /src/db /app/db
+COPY --from=builder /src/prompts /app/prompts
 
 EXPOSE 8080
 

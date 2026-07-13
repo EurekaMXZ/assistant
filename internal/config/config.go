@@ -49,6 +49,8 @@ const (
 	defaultAgentBayRegionID         = "cn-hangzhou"
 	defaultAgentBayImageID          = "code_latest"
 	defaultAgentBayAPITimeout       = time.Minute
+	defaultAgentSystemPromptFile    = "prompts/system.md"
+	defaultAgentCompactPromptFile   = "prompts/compact.md"
 )
 
 type Config struct {
@@ -98,6 +100,8 @@ type Config struct {
 	AgentBayImageID             string
 	AgentBayPolicyID            string
 	AgentBayAPITimeout          time.Duration
+	AgentSystemPromptFile       string
+	AgentCompactPromptFile      string
 	AgentSystemPrompt           string
 	AgentCompactPrompt          string
 	RemoteToolReplayMaxBytes    int
@@ -158,8 +162,8 @@ func Load() Config {
 		AgentBayImageID:             getenv("AGENTBAY_IMAGE_ID", defaultAgentBayImageID),
 		AgentBayPolicyID:            os.Getenv("AGENTBAY_POLICY_ID"),
 		AgentBayAPITimeout:          getenvDuration("AGENTBAY_API_TIMEOUT", defaultAgentBayAPITimeout),
-		AgentSystemPrompt:           os.Getenv("AGENT_SYSTEM_PROMPT"),
-		AgentCompactPrompt:          os.Getenv("AGENT_COMPACT_PROMPT"),
+		AgentSystemPromptFile:       getenv("AGENT_SYSTEM_PROMPT_FILE", defaultAgentSystemPromptFile),
+		AgentCompactPromptFile:      getenv("AGENT_COMPACT_PROMPT_FILE", defaultAgentCompactPromptFile),
 		RemoteToolReplayMaxBytes:    getenvInt("REMOTE_TOOL_REPLAY_MAX_BYTES", defaultRemoteToolReplayMaxBytes),
 		CompactMaxOutputTokens:      getenvInt("AGENT_COMPACT_MAX_OUTPUT_TOKENS", defaultCompactOutputTokens),
 		CompactTriggerTokens:        getenvInt("AGENT_COMPACT_TRIGGER_TOKENS", defaultCompactTriggerTokens),
@@ -167,6 +171,37 @@ func Load() Config {
 		CacheTailCapacity:           getenvInt("CACHE_TAIL_CAPACITY", defaultCacheTailCapacity),
 		HTTPClientTimeout:           getenvDuration("HTTP_CLIENT_TIMEOUT", defaultHTTPClientTimeout),
 	}
+}
+
+func (c Config) LoadPrompts() (Config, error) {
+	systemPrompt, err := readPromptFile(c.AgentSystemPromptFile, "system prompt")
+	if err != nil {
+		return Config{}, err
+	}
+	compactPrompt, err := readPromptFile(c.AgentCompactPromptFile, "compaction prompt")
+	if err != nil {
+		return Config{}, err
+	}
+
+	c.AgentSystemPrompt = systemPrompt
+	c.AgentCompactPrompt = compactPrompt
+	return c, nil
+}
+
+func readPromptFile(path string, label string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("%s file path is empty", label)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s file %q: %w", label, path, err)
+	}
+	prompt := strings.TrimSpace(string(content))
+	if prompt == "" {
+		return "", fmt.Errorf("%s file %q is empty", label, path)
+	}
+	return prompt, nil
 }
 
 func (c Config) Address() string {
@@ -214,8 +249,8 @@ func (c Config) ValidateWorker() error {
 		"MINIO_ACCESS_KEY":               c.MinIOAccessKey,
 		"MINIO_SECRET_KEY":               c.MinIOSecretKey,
 		"PROVIDER_CREDENTIAL_MASTER_KEY": c.ProviderCredentialMasterKey,
-		"AGENT_SYSTEM_PROMPT":            c.AgentSystemPrompt,
-		"AGENT_COMPACT_PROMPT":           c.AgentCompactPrompt,
+		"AGENT_SYSTEM_PROMPT_FILE":       c.AgentSystemPromptFile,
+		"AGENT_COMPACT_PROMPT_FILE":      c.AgentCompactPromptFile,
 	}
 	key, value, err := c.sandboxProviderRequirement()
 	if err != nil {

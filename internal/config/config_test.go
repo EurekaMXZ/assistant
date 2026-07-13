@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,6 +238,66 @@ func TestLoadReadsBillingSettings(t *testing.T) {
 	}
 }
 
+func TestLoadReadsPromptFilePaths(t *testing.T) {
+	t.Setenv("AGENT_SYSTEM_PROMPT_FILE", "/etc/assistant/system.md")
+	t.Setenv("AGENT_COMPACT_PROMPT_FILE", "/etc/assistant/compact.md")
+
+	cfg := Load()
+
+	if cfg.AgentSystemPromptFile != "/etc/assistant/system.md" {
+		t.Fatalf("AgentSystemPromptFile = %q", cfg.AgentSystemPromptFile)
+	}
+	if cfg.AgentCompactPromptFile != "/etc/assistant/compact.md" {
+		t.Fatalf("AgentCompactPromptFile = %q", cfg.AgentCompactPromptFile)
+	}
+}
+
+func TestLoadPromptsReadsAndTrimsMarkdownFiles(t *testing.T) {
+	dir := t.TempDir()
+	systemPath := filepath.Join(dir, "system.md")
+	compactPath := filepath.Join(dir, "compact.md")
+	if err := os.WriteFile(systemPath, []byte("\n# System\n\nDo the work.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compactPath, []byte("\n# Compact\n\nSummarize.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := (Config{
+		AgentSystemPromptFile:  systemPath,
+		AgentCompactPromptFile: compactPath,
+	}).LoadPrompts()
+	if err != nil {
+		t.Fatalf("LoadPrompts: %v", err)
+	}
+	if cfg.AgentSystemPrompt != "# System\n\nDo the work." {
+		t.Fatalf("AgentSystemPrompt = %q", cfg.AgentSystemPrompt)
+	}
+	if cfg.AgentCompactPrompt != "# Compact\n\nSummarize." {
+		t.Fatalf("AgentCompactPrompt = %q", cfg.AgentCompactPrompt)
+	}
+}
+
+func TestLoadPromptsRejectsEmptyMarkdownFile(t *testing.T) {
+	dir := t.TempDir()
+	systemPath := filepath.Join(dir, "system.md")
+	compactPath := filepath.Join(dir, "compact.md")
+	if err := os.WriteFile(systemPath, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compactPath, []byte("compact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (Config{
+		AgentSystemPromptFile:  systemPath,
+		AgentCompactPromptFile: compactPath,
+	}).LoadPrompts()
+	if err == nil || !strings.Contains(err.Error(), "system prompt") {
+		t.Fatalf("LoadPrompts error = %v", err)
+	}
+}
+
 func validWorkerConfig() Config {
 	return Config{
 		DatabaseURL:                 "postgres://db",
@@ -244,8 +306,8 @@ func validWorkerConfig() Config {
 		MinIOAccessKey:              "minio",
 		MinIOSecretKey:              "minio123",
 		ProviderCredentialMasterKey: "credential-master-key",
-		AgentSystemPrompt:           "system",
-		AgentCompactPrompt:          "compact",
+		AgentSystemPromptFile:       "prompts/system.md",
+		AgentCompactPromptFile:      "prompts/compact.md",
 		SandboxBridgeURL:            "http://127.0.0.1:8787",
 	}
 }
