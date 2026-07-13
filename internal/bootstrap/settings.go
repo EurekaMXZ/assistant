@@ -19,7 +19,7 @@ type baseSettings struct {
 	Address                     string
 	EnableAuth                  bool
 	BillingCurrency             string
-	SandboxHTTP                 assistantsandbox.HTTPRuntimeSettings
+	Sandbox                     assistantsandbox.RuntimeSettings
 	Stream                      streamredis.Settings
 	Server                      server.Settings
 	Auth                        assistantauth.TokenSettings
@@ -34,7 +34,7 @@ type workerSettings struct {
 	OpenAI                openai.Settings
 	Tavily                tavily.Settings
 	SandboxExecEnabled    bool
-	SandboxHTTP           assistantsandbox.HTTPRuntimeSettings
+	Sandbox               assistantsandbox.RuntimeSettings
 	MinIO                 minio.Settings
 	Kafka                 assistantkafka.Settings
 	KafkaReader           assistantkafka.ReaderSettings
@@ -48,10 +48,20 @@ func newBaseSettings(cfg config.Config, enableAuth bool) baseSettings {
 		Address:         cfg.Address(),
 		EnableAuth:      enableAuth,
 		BillingCurrency: cfg.BillingCurrency,
-		SandboxHTTP: assistantsandbox.HTTPRuntimeSettings{
-			BaseURL:           cfg.SandboxBridgeURL,
-			Token:             cfg.SandboxBridgeToken,
-			HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+		Sandbox: assistantsandbox.RuntimeSettings{
+			Provider: cfg.SandboxProvider,
+			HTTP: assistantsandbox.HTTPRuntimeSettings{
+				BaseURL:           cfg.SandboxBridgeURL,
+				Token:             cfg.SandboxBridgeToken,
+				HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+			},
+			AgentBay: assistantsandbox.AgentBayRuntimeSettings{
+				APIKey:     cfg.AgentBayAPIKey,
+				RegionID:   cfg.AgentBayRegionID,
+				ImageID:    cfg.AgentBayImageID,
+				PolicyID:   cfg.AgentBayPolicyID,
+				APITimeout: cfg.AgentBayAPITimeout,
+			},
 		},
 		Stream: streamredis.Settings{
 			Addr:          cfg.RedisAddr,
@@ -101,10 +111,20 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			HTTPClientTimeout: cfg.HTTPClientTimeout,
 		},
 		SandboxExecEnabled: cfg.SandboxExecEnabled,
-		SandboxHTTP: assistantsandbox.HTTPRuntimeSettings{
-			BaseURL:           cfg.SandboxBridgeURL,
-			Token:             cfg.SandboxBridgeToken,
-			HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+		Sandbox: assistantsandbox.RuntimeSettings{
+			Provider: cfg.SandboxProvider,
+			HTTP: assistantsandbox.HTTPRuntimeSettings{
+				BaseURL:           cfg.SandboxBridgeURL,
+				Token:             cfg.SandboxBridgeToken,
+				HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+			},
+			AgentBay: assistantsandbox.AgentBayRuntimeSettings{
+				APIKey:     cfg.AgentBayAPIKey,
+				RegionID:   cfg.AgentBayRegionID,
+				ImageID:    cfg.AgentBayImageID,
+				PolicyID:   cfg.AgentBayPolicyID,
+				APITimeout: cfg.AgentBayAPITimeout,
+			},
 		},
 		MinIO: minio.Settings{
 			Endpoint:  cfg.MinIOEndpoint,

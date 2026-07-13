@@ -14,6 +14,7 @@ type SandboxHandle struct {
 	Provider  string          `json:"provider"`
 	RuntimeID string          `json:"runtime_id"`
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	Reused    bool            `json:"-"`
 }
 
 type ConversationSandbox struct {

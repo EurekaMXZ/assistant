@@ -182,7 +182,7 @@ Fields:
 
 - `id`
 - `conversation_id`
-- `provider`: `firecracker`
+- `provider`: `firecracker | agentbay`
 - `runtime_id`
 - `status`: `active | destroyed`
 - `runtime_metadata`

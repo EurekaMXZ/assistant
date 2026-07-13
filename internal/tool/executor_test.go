@@ -41,15 +41,16 @@ func (s *stubConversationTitleUpdater) UpdateConversationTitle(_ context.Context
 }
 
 type stubConversationSandboxStore struct {
-	conversationID string
-	created        *domain.ConversationSandbox
-	destroyed      *domain.ConversationSandbox
-	active         *domain.ConversationSandbox
-	err            error
-	createErr      error
-	destroyErr     error
-	restoreErr     error
-	restored       *domain.ConversationSandbox
+	conversationID      string
+	created             *domain.ConversationSandbox
+	destroyed           *domain.ConversationSandbox
+	active              *domain.ConversationSandbox
+	err                 error
+	createErr           error
+	activeOnCreateError *domain.ConversationSandbox
+	destroyErr          error
+	restoreErr          error
+	restored            *domain.ConversationSandbox
 }
 
 func (s *stubConversationSandboxStore) GetLatestConversationSandbox(_ context.Context, conversationID string) (*domain.ConversationSandbox, error) {
@@ -77,6 +78,9 @@ func (s *stubConversationSandboxStore) GetActiveConversationSandbox(_ context.Co
 func (s *stubConversationSandboxStore) CreateConversationSandbox(_ context.Context, conversationID string, provider string, runtimeID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
 	s.conversationID = conversationID
 	if s.createErr != nil {
+		if s.activeOnCreateError != nil {
+			s.active = s.activeOnCreateError
+		}
 		return nil, s.createErr
 	}
 	s.created = &domain.ConversationSandbox{
@@ -132,6 +136,7 @@ type stubSandboxManager struct {
 	destroyErr            error
 	createCalls           int
 	destroyCalls          int
+	destroyContextErr     error
 	requestKeys           []string
 }
 
@@ -145,8 +150,9 @@ func (s *stubSandboxManager) CreateSandbox(_ context.Context, conversationID str
 	return s.createResult, nil
 }
 
-func (s *stubSandboxManager) DestroySandbox(_ context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+func (s *stubSandboxManager) DestroySandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
 	s.destroyCalls++
+	s.destroyContextErr = ctx.Err()
 	s.requestKeys = append(s.requestKeys, requestKey)
 	s.destroyedHandle = handle
 	if s.destroyErr != nil {
@@ -323,6 +329,70 @@ func TestCreateSandboxCompensatesRuntimeWhenDatabaseCreateFails(t *testing.T) {
 	}
 	if runtime.createCalls != 1 || runtime.destroyCalls != 1 {
 		t.Fatalf("runtime calls create=%d destroy=%d, want one compensation", runtime.createCalls, runtime.destroyCalls)
+	}
+}
+
+func TestCreateSandboxDoesNotDestroyReusedRuntimeOnDatabaseConflict(t *testing.T) {
+	existing := &domain.ConversationSandbox{
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "agentbay", RuntimeID: "session-1", Status: domain.SandboxStatusActive,
+	}
+	store := &stubConversationSandboxStore{
+		createErr:           domain.ErrConflict,
+		activeOnCreateError: existing,
+	}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1", Reused: true}}
+
+	result, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1", RequestKey: "run-1:call-1"})
+	if err != nil || result.ID != "sandbox-1" {
+		t.Fatalf("create reused sandbox result=%#v err=%v", result, err)
+	}
+	if runtime.destroyCalls != 0 {
+		t.Fatalf("reused runtime was destroyed %d times", runtime.destroyCalls)
+	}
+}
+
+func TestCreateSandboxReturnsCommittedRuntimeAfterAmbiguousDatabaseError(t *testing.T) {
+	existing := &domain.ConversationSandbox{
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "agentbay", RuntimeID: "session-1", Status: domain.SandboxStatusActive,
+	}
+	store := &stubConversationSandboxStore{
+		createErr:           errors.New("database connection reset"),
+		activeOnCreateError: existing,
+	}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1"}}
+
+	result, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1"})
+	if err != nil || result.ID != "sandbox-1" {
+		t.Fatalf("create sandbox result=%#v err=%v", result, err)
+	}
+	if runtime.destroyCalls != 0 {
+		t.Fatalf("committed runtime was destroyed %d times", runtime.destroyCalls)
+	}
+}
+
+func TestCreateSandboxDoesNotDestroyReusedRuntimeWhenDatabaseCreateFails(t *testing.T) {
+	store := &stubConversationSandboxStore{createErr: errors.New("database unavailable")}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1", Reused: true}}
+
+	if _, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1"}); err == nil {
+		t.Fatal("expected database create failure")
+	}
+	if runtime.destroyCalls != 0 {
+		t.Fatalf("reused runtime was destroyed %d times", runtime.destroyCalls)
+	}
+}
+
+func TestCreateSandboxCompensationIgnoresCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	store := &stubConversationSandboxStore{createErr: errors.New("database unavailable")}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1"}}
+
+	if _, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(ctx, CreateSandboxInput{ConversationID: "conv-1"}); err == nil {
+		t.Fatal("expected database create failure")
+	}
+	if runtime.destroyCalls != 1 || runtime.destroyContextErr != nil {
+		t.Fatalf("compensation calls=%d contextErr=%v, want one uncanceled cleanup", runtime.destroyCalls, runtime.destroyContextErr)
 	}
 }
 

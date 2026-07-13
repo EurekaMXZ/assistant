@@ -40,13 +40,25 @@ func (uc CreateSandbox) Execute(ctx context.Context, input CreateSandboxInput) (
 
 	sandbox, err := uc.Sandboxes.CreateConversationSandbox(ctx, input.ConversationID, handle.Provider, handle.RuntimeID, handle.Metadata)
 	if err != nil {
-		_, compensateErr := uc.Runtime.DestroySandbox(ctx, *handle, requestKey+":compensate")
-		if compensateErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("compensate sandbox runtime creation: %w", compensateErr))
+		cleanupCtx := context.WithoutCancel(ctx)
+		var activeSandbox *domain.ConversationSandbox
+		if existing, getErr := uc.Sandboxes.GetActiveConversationSandbox(cleanupCtx, input.ConversationID); getErr == nil {
+			if existing.Provider == handle.Provider && existing.RuntimeID == handle.RuntimeID {
+				return existing, nil
+			}
+			activeSandbox = existing
+		}
+		if !handle.Reused {
+			_, compensateErr := uc.Runtime.DestroySandbox(cleanupCtx, *handle, requestKey+":compensate")
+			if compensateErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("compensate sandbox runtime creation: %w", compensateErr))
+			}
+		}
+		if activeSandbox != nil {
+			return activeSandbox, nil
 		}
 		if errors.Is(err, domain.ErrConflict) {
-			existing, getErr := uc.Sandboxes.GetActiveConversationSandbox(ctx, input.ConversationID)
-			if getErr == nil {
+			if existing, getErr := uc.Sandboxes.GetActiveConversationSandbox(cleanupCtx, input.ConversationID); getErr == nil {
 				return existing, nil
 			}
 		}

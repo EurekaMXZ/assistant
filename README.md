@@ -68,6 +68,22 @@ SANDBOX_BRIDGE_TOKEN=your-secret-token
 SANDBOX_EXEC_ENABLED=true
 ```
 
+### 阿里云 AgentBay 沙箱部署
+
+后端可通过官方 AgentBay Go SDK 直接创建云端 Agent Sandbox，不需要启动 Firecracker bridge。AgentBay session 使用手动释放生命周期，与 conversation sandbox 的 `active` / `destroyed` 状态保持一致；不再使用时应调用 sandbox destroy，避免继续占用云端资源。
+
+```bash
+SANDBOX_PROVIDER=agentbay
+AGENTBAY_API_KEY=your-agentbay-api-key
+AGENTBAY_REGION_ID=cn-hangzhou
+AGENTBAY_IMAGE_ID=code_latest
+AGENTBAY_POLICY_ID=                 # 可选：AgentBay 安全策略 ID
+AGENTBAY_API_TIMEOUT=1m
+SANDBOX_EXEC_ENABLED=true
+```
+
+`AGENTBAY_REGION_ID` 支持 AgentBay 当前区域，默认 `cn-hangzhou`；`AGENTBAY_IMAGE_ID` 默认 `code_latest`。切换 provider 后，数据库中已有 sandbox 仍按其持久化的 `provider` 路由：存在 active Firecracker sandbox 时需保留 `SANDBOX_BRIDGE_URL`，存在 active AgentBay sandbox 时需保留 `AGENTBAY_API_KEY`。
+
 ### 数据库迁移
 
 ```bash

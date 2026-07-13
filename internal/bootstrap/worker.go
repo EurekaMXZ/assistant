@@ -40,7 +40,7 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	openaiClient := openai.New(settings.OpenAI)
 	openaiClient.SetCredentialResolver(credential.NewResolver(workflows.ProviderCredentials, workflows.CredentialCipher))
 	streamPublisher := workflow.NewArchivingStreamPublisher(publisher, artifactStore, workflows.StreamEvents)
-	sandboxRuntime, err := buildSandboxRuntime(settings.SandboxHTTP)
+	sandboxRuntime, err := buildSandboxRuntime(settings.Sandbox)
 	if err != nil {
 		return nil, err
 	}
@@ -122,10 +122,10 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	return worker.New(logger, workflowEngine, settings.Process, writer, newReader), nil
 }
 
-func buildSandboxRuntime(settings assistantsandbox.HTTPRuntimeSettings) (tool.SandboxManager, error) {
-	runtime, err := assistantsandbox.NewHTTPRuntime(settings)
+func buildSandboxRuntime(settings assistantsandbox.RuntimeSettings) (tool.SandboxManager, error) {
+	runtime, err := assistantsandbox.NewRuntime(settings)
 	if err != nil {
-		return nil, fmt.Errorf("configure sandbox bridge runtime: %w", err)
+		return nil, fmt.Errorf("configure sandbox runtime: %w", err)
 	}
 	return runtime, nil
 }

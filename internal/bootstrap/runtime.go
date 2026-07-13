@@ -69,7 +69,7 @@ func newBaseAssembly(ctx context.Context, settings baseSettings) (*baseAssembly,
 		}
 	}
 
-	sandboxRuntime, err := buildSandboxRuntime(settings.SandboxHTTP)
+	sandboxRuntime, err := buildSandboxRuntime(settings.Sandbox)
 	if err != nil {
 		lifecycle.close()
 		return nil, err

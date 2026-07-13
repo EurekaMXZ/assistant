@@ -44,7 +44,11 @@ const (
 	defaultWebOrigin                = "http://localhost:3000"
 	defaultJWTIssuer                = "assistant"
 	defaultAccessTokenTTL           = 24 * time.Hour
+	defaultSandboxProvider          = "firecracker"
 	defaultSandboxBridgeTimeout     = time.Minute
+	defaultAgentBayRegionID         = "cn-hangzhou"
+	defaultAgentBayImageID          = "code_latest"
+	defaultAgentBayAPITimeout       = time.Minute
 )
 
 type Config struct {
@@ -85,9 +89,15 @@ type Config struct {
 	BillingCurrency             string
 	TavilyAPIKey                string
 	SandboxExecEnabled          bool
+	SandboxProvider             string
 	SandboxBridgeURL            string
 	SandboxBridgeToken          string
 	SandboxBridgeTimeout        time.Duration
+	AgentBayAPIKey              string
+	AgentBayRegionID            string
+	AgentBayImageID             string
+	AgentBayPolicyID            string
+	AgentBayAPITimeout          time.Duration
 	AgentSystemPrompt           string
 	AgentCompactPrompt          string
 	RemoteToolReplayMaxBytes    int
@@ -139,9 +149,15 @@ func Load() Config {
 		BillingCurrency:             getenv("BILLING_CURRENCY", "USD"),
 		TavilyAPIKey:                os.Getenv("TAVILY_API_KEY"),
 		SandboxExecEnabled:          getenvBool("SANDBOX_EXEC_ENABLED", false),
+		SandboxProvider:             getenv("SANDBOX_PROVIDER", defaultSandboxProvider),
 		SandboxBridgeURL:            os.Getenv("SANDBOX_BRIDGE_URL"),
 		SandboxBridgeToken:          os.Getenv("SANDBOX_BRIDGE_TOKEN"),
 		SandboxBridgeTimeout:        getenvDuration("SANDBOX_BRIDGE_TIMEOUT", defaultSandboxBridgeTimeout),
+		AgentBayAPIKey:              os.Getenv("AGENTBAY_API_KEY"),
+		AgentBayRegionID:            getenv("AGENTBAY_REGION_ID", defaultAgentBayRegionID),
+		AgentBayImageID:             getenv("AGENTBAY_IMAGE_ID", defaultAgentBayImageID),
+		AgentBayPolicyID:            os.Getenv("AGENTBAY_POLICY_ID"),
+		AgentBayAPITimeout:          getenvDuration("AGENTBAY_API_TIMEOUT", defaultAgentBayAPITimeout),
 		AgentSystemPrompt:           os.Getenv("AGENT_SYSTEM_PROMPT"),
 		AgentCompactPrompt:          os.Getenv("AGENT_COMPACT_PROMPT"),
 		RemoteToolReplayMaxBytes:    getenvInt("REMOTE_TOOL_REPLAY_MAX_BYTES", defaultRemoteToolReplayMaxBytes),
@@ -163,13 +179,17 @@ func (c Config) ValidateAPI() error {
 	required := map[string]string{
 		"DATABASE_URL":                   c.DatabaseURL,
 		"REDIS_ADDR":                     c.RedisAddr,
-		"SANDBOX_BRIDGE_URL":             c.SandboxBridgeURL,
 		"AUTH_JWT_SECRET":                c.JWTSecret,
 		"SYSTEM_USER_EMAIL":              c.SystemUserEmail,
 		"SYSTEM_USER_USERNAME":           c.SystemUserUsername,
 		"SYSTEM_USER_PASSWORD_HASH":      c.SystemUserPasswordHash,
 		"PROVIDER_CREDENTIAL_MASTER_KEY": c.ProviderCredentialMasterKey,
 	}
+	key, value, err := c.sandboxProviderRequirement()
+	if err != nil {
+		return fmt.Errorf("invalid api config: %w", err)
+	}
+	required[key] = value
 
 	for key, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -190,7 +210,6 @@ func (c Config) ValidateWorker() error {
 	required := map[string]string{
 		"DATABASE_URL":                   c.DatabaseURL,
 		"REDIS_ADDR":                     c.RedisAddr,
-		"SANDBOX_BRIDGE_URL":             c.SandboxBridgeURL,
 		"KAFKA_BROKERS":                  strings.Join(c.KafkaBrokers, ","),
 		"MINIO_ACCESS_KEY":               c.MinIOAccessKey,
 		"MINIO_SECRET_KEY":               c.MinIOSecretKey,
@@ -198,6 +217,11 @@ func (c Config) ValidateWorker() error {
 		"AGENT_SYSTEM_PROMPT":            c.AgentSystemPrompt,
 		"AGENT_COMPACT_PROMPT":           c.AgentCompactPrompt,
 	}
+	key, value, err := c.sandboxProviderRequirement()
+	if err != nil {
+		return fmt.Errorf("invalid worker config: %w", err)
+	}
+	required[key] = value
 
 	for key, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -234,6 +258,21 @@ func (c Config) ValidateMigration() error {
 	}
 
 	return nil
+}
+
+func (c Config) sandboxProviderRequirement() (string, string, error) {
+	provider := strings.ToLower(strings.TrimSpace(c.SandboxProvider))
+	if provider == "" {
+		provider = defaultSandboxProvider
+	}
+	switch provider {
+	case "firecracker":
+		return "SANDBOX_BRIDGE_URL", c.SandboxBridgeURL, nil
+	case "agentbay":
+		return "AGENTBAY_API_KEY", c.AgentBayAPIKey, nil
+	default:
+		return "", "", fmt.Errorf("SANDBOX_PROVIDER must be firecracker or agentbay, got %q", c.SandboxProvider)
+	}
 }
 
 func getenv(key, fallback string) string {
