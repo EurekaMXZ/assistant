@@ -109,7 +109,7 @@ export function ComposerOptions({
                         ) : null}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {effort ? `推理强度 ${effort}` : model.display_name}
+                        {model.description}
                       </p>
                     </div>
                     {selected ? <Check className="size-4 shrink-0" /> : null}
