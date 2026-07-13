@@ -34,6 +34,7 @@ interface TurnTimelinePanelProps {
   onClose: () => void;
   timeline?: Timeline | null;
   turn?: Turn | null;
+  variant?: "dialog" | "panel";
 }
 
 const timelineIcons = {
@@ -337,6 +338,7 @@ export function TurnTimelinePanel({
   onClose,
   timeline,
   turn = null,
+  variant = "panel",
 }: TurnTimelinePanelProps) {
   const steps = useMemo(() => timeline?.items ?? [], [timeline]);
   const isCompleted = turn?.status === "completed";
@@ -350,18 +352,31 @@ export function TurnTimelinePanel({
   );
 
   return (
-    <aside className="animate-in slide-in-from-right-8 fade-in-0 flex h-full w-full min-w-0 flex-col border-l bg-background duration-500 ease-in-out">
-      <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b px-5">
+    <aside
+      className={cn(
+        "flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background",
+        variant === "panel" &&
+          "animate-in slide-in-from-right-8 fade-in-0 border-l duration-500 ease-in-out",
+      )}
+    >
+      <header
+        className={cn(
+          "flex h-14 shrink-0 items-center justify-between gap-4 border-b px-5",
+          variant === "dialog" && "pr-14",
+        )}
+      >
         <div className="min-w-0">
           <h3 className="truncate font-medium text-foreground">{panelTitle}</h3>
           {isTurnActive(turn, isStreaming) && durationLabel ? (
             <p className="mt-1 text-xs tabular-nums text-muted-foreground">{durationLabel}</p>
           ) : null}
         </div>
-        <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={onClose}>
-          <X className="h-4 w-4" />
-          <span className="sr-only">关闭时间轴</span>
-        </Button>
+        {variant === "panel" ? (
+          <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={onClose}>
+            <X className="h-4 w-4" />
+            <span className="sr-only">关闭时间轴</span>
+          </Button>
+        ) : null}
       </header>
 
       <ScrollArea className="min-h-0 flex-1">

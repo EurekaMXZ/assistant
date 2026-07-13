@@ -2,8 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Menu, RefreshCw } from "lucide-react";
+import { Pencil, RefreshCw } from "lucide-react";
+import { AssistantLogo } from "@/components/assistant-logo";
 import { AuthDialog } from "@/components/auth/auth-dialog";
+import {
+  MobileHeaderContext,
+  type MobileHeaderAction,
+} from "@/components/layout/mobile-header-context";
 import { Sidebar } from "@/components/layout/sidebar";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { Button } from "@/components/ui/button";
@@ -22,6 +27,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout, isLoading, error: authError, refresh, status: authStatus } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
+  const [mobileHeaderTitle, setMobileHeaderTitle] = useState("Assistant");
+  const [mobileHeaderAction, setMobileHeaderAction] = useState<MobileHeaderAction | null>(null);
   const [authMode, setAuthMode] = useState<AuthDialogMode | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const pathname = usePathname();
@@ -29,6 +36,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isAuthRoute = pathname.startsWith("/auth/");
   const isProtectedRoute = pathname !== "/" && !isAuthRoute;
   const currentConversationId = extractConversationId(pathname);
+
+  useEffect(() => {
+    setMobileHeaderTitle(currentConversationId ? "新会话" : "Assistant");
+  }, [currentConversationId]);
 
   useEffect(() => {
     if (authStatus === "unauthenticated" && isProtectedRoute) {
@@ -138,79 +149,96 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden">
-      <aside
-        className={cn(
-          "hidden h-full shrink-0 border-r bg-sidebar transition-[width] duration-200 ease-in-out md:block",
-          desktopSidebarCollapsed ? "w-[52px]" : "w-[260px]",
-        )}
-      >
-        <Sidebar
-          authLoading={isLoading}
-          collapsed={desktopSidebarCollapsed}
-          currentConversationId={currentConversationId}
+    <MobileHeaderContext.Provider
+      value={{ setAction: setMobileHeaderAction, setTitle: setMobileHeaderTitle }}
+    >
+      <div className="flex h-dvh w-full overflow-hidden">
+        <aside
+          className={cn(
+            "hidden h-full shrink-0 border-r bg-sidebar transition-[width] duration-200 ease-in-out md:block",
+            desktopSidebarCollapsed ? "w-[52px]" : "w-[260px]",
+          )}
+        >
+          <Sidebar
+            authLoading={isLoading}
+            collapsed={desktopSidebarCollapsed}
+            currentConversationId={currentConversationId}
+            user={user}
+            onLogout={logout}
+            onNavigate={() => setSidebarOpen(false)}
+            onToggleCollapse={() => setDesktopSidebarCollapsed((collapsed) => !collapsed)}
+            onOpenLogin={() => openAuthDialog("login")}
+            onOpenRegister={() => openAuthDialog("register")}
+            onOpenSettings={openSettings}
+          />
+        </aside>
+
+        <div className="flex min-h-0 flex-1 flex-col">
+          <header className="grid h-14 shrink-0 grid-cols-[2.25rem_minmax(0,1fr)_2.25rem] items-center border-b px-2 md:hidden">
+            <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+              <SheetTrigger
+                render={<Button variant="ghost" size="icon-sm" className="rounded-lg" />}
+              >
+                <AssistantLogo className="size-5" />
+                <span className="sr-only">打开侧栏</span>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[260px] gap-0 p-0" showCloseButton={false}>
+                <Sidebar
+                  authLoading={isLoading}
+                  currentConversationId={currentConversationId}
+                  user={user}
+                  onLogout={() => {
+                    setSidebarOpen(false);
+                    logout();
+                  }}
+                  onNavigate={() => setSidebarOpen(false)}
+                  onOpenLogin={() => {
+                    setSidebarOpen(false);
+                    openAuthDialog("login");
+                  }}
+                  onOpenRegister={() => {
+                    setSidebarOpen(false);
+                    openAuthDialog("register");
+                  }}
+                  onOpenSettings={openSettings}
+                />
+              </SheetContent>
+            </Sheet>
+
+            <h1 className="truncate px-2 text-center text-sm font-medium">{mobileHeaderTitle}</h1>
+
+            {mobileHeaderAction ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-lg"
+                onClick={mobileHeaderAction.onClick}
+              >
+                <Pencil className="size-4" />
+                <span className="sr-only">{mobileHeaderAction.label}</span>
+              </Button>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </header>
+
+          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+        </div>
+
+        <SettingsDialog
+          open={settingsSection !== null}
+          section={settingsSection || "user/profile"}
           user={user}
-          onLogout={logout}
-          onNavigate={() => setSidebarOpen(false)}
-          onToggleCollapse={() => setDesktopSidebarCollapsed((collapsed) => !collapsed)}
-          onOpenLogin={() => openAuthDialog("login")}
-          onOpenRegister={() => openAuthDialog("register")}
-          onOpenSettings={openSettings}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeSettings();
+            }
+          }}
+          onSectionChange={handleSettingsSectionChange}
         />
-      </aside>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-3 md:hidden">
-          <span className="font-semibold">Assistant</span>
-          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-            <SheetTrigger
-              render={
-                <Button variant="ghost" size="icon">
-                  <Menu className="h-5 w-5" />
-                  <span className="sr-only">打开菜单</span>
-                </Button>
-              }
-            />
-            <SheetContent side="left" className="w-[260px] p-0">
-              <Sidebar
-                authLoading={isLoading}
-                currentConversationId={currentConversationId}
-                user={user}
-                onLogout={() => {
-                  setSidebarOpen(false);
-                  logout();
-                }}
-                onNavigate={() => setSidebarOpen(false)}
-                onOpenLogin={() => {
-                  setSidebarOpen(false);
-                  openAuthDialog("login");
-                }}
-                onOpenRegister={() => {
-                  setSidebarOpen(false);
-                  openAuthDialog("register");
-                }}
-                onOpenSettings={openSettings}
-              />
-            </SheetContent>
-          </Sheet>
-        </header>
-
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+        <AuthDialog mode={authMode} onModeChange={setAuthMode} />
       </div>
-
-      <SettingsDialog
-        open={settingsSection !== null}
-        section={settingsSection || "user/profile"}
-        user={user}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeSettings();
-          }
-        }}
-        onSectionChange={handleSettingsSectionChange}
-      />
-
-      <AuthDialog mode={authMode} onModeChange={setAuthMode} />
-    </div>
+    </MobileHeaderContext.Provider>
   );
 }

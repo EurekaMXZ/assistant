@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   createMessage,
   getConversation,
@@ -15,6 +15,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useComposerPreferences } from "@/hooks/use-composer-preferences";
 import { useTurnStream } from "@/hooks/use-turn-stream";
 import { useTurnTimelineController } from "@/hooks/use-turn-timeline-controller";
+import { useMobileHeader } from "@/components/layout/mobile-header-context";
 import { emitConversationUpdated, subscribeConversationUpdated } from "@/lib/conversation-events";
 import { takePendingHomeTurn } from "@/lib/pending-home-turn";
 import type { Conversation, Attachment, Message, Turn } from "@/lib/types";
@@ -40,9 +41,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface ChatContainerProps {
   conversationId: string;
+}
+
+const mobileViewportQuery = "(max-width: 767px)";
+
+function subscribeMobileViewport(onChange: () => void) {
+  const mediaQuery = window.matchMedia(mobileViewportQuery);
+  mediaQuery.addEventListener("change", onChange);
+  return () => mediaQuery.removeEventListener("change", onChange);
+}
+
+function getMobileViewportSnapshot() {
+  return typeof window !== "undefined" && window.matchMedia(mobileViewportQuery).matches;
 }
 
 async function inspectUnresolvedTurns(messages: Message[], conversationId: string) {
@@ -90,6 +104,12 @@ async function inspectUnresolvedTurns(messages: Message[], conversationId: strin
 
 export function ChatContainer({ conversationId }: ChatContainerProps) {
   const { user, isLoading: authLoading } = useAuth();
+  const { setAction: setMobileAction, setTitle: setMobileTitle } = useMobileHeader();
+  const isMobileViewport = useSyncExternalStore(
+    subscribeMobileViewport,
+    getMobileViewportSnapshot,
+    () => false,
+  );
   const composerPreferences = useComposerPreferences(Boolean(user) && !authLoading);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -148,6 +168,17 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     setMessages,
     onConversationUpdated: handleStreamConversationUpdated,
   });
+
+  useEffect(() => {
+    setMobileTitle(conversation?.id === conversationId ? conversation.title || "新会话" : "新会话");
+  }, [conversation?.id, conversation?.title, conversationId, setMobileTitle]);
+
+  useEffect(() => () => setMobileTitle("Assistant"), [setMobileTitle]);
+
+  useEffect(() => {
+    setMobileAction({ label: "重命名对话", onClick: () => setRenameOpen(true) });
+    return () => setMobileAction(null);
+  }, [setMobileAction]);
 
   const refreshMessages = useCallback(async () => {
     const requestedConversationId = conversationId;
@@ -474,6 +505,21 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     () => ensureStreamingThinkingMessage(messages, streamingTurnId, conversationId),
     [conversationId, messages, streamingTurnId],
   );
+  const timelinePanelProps = timelineTurnId
+    ? {
+        isStreaming:
+          (timelineTurnId === streamingTurnId && isStreaming) ||
+          Boolean(timelineLoading[timelineTurnId]) ||
+          ["accepted", "context_ready", "processing"].includes(
+            turnTimelines[timelineTurnId]?.status || "",
+          ),
+        timeline: turnTimelines[timelineTurnId] || null,
+        loading: timelineLoading[timelineTurnId] || false,
+        error: timelineErrors[timelineTurnId] || null,
+        turn: turnsById[timelineTurnId] || null,
+        onClose: closeTimeline,
+      }
+    : null;
   if (authLoading || isLoading || !conversation) {
     return <ChatSkeleton />;
   }
@@ -482,15 +528,15 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     <>
       <div
         data-stream-state={streamConnectionState}
-        className="grid h-full min-h-0 w-full overflow-hidden transition-[grid-template-columns] duration-500 ease-in-out"
-        style={{
-          gridTemplateColumns: timelineTurnId
-            ? "minmax(0, 42rem) minmax(0, 1fr)"
-            : "minmax(0, 1fr) minmax(0, 0fr)",
-        }}
+        className={cn(
+          "grid h-full min-h-0 w-full grid-cols-1 overflow-hidden transition-[grid-template-columns] duration-500 ease-in-out",
+          timelineTurnId
+            ? "md:grid-cols-[minmax(0,42rem)_minmax(0,1fr)]"
+            : "md:grid-cols-[minmax(0,1fr)_minmax(0,0fr)]",
+        )}
       >
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+          <header className="hidden h-14 shrink-0 items-center justify-between border-b px-4 md:flex">
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="truncate text-base font-semibold">{conversation.title || "新会话"}</h2>
               <Button
@@ -549,25 +595,28 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
           </div>
         </section>
 
-        <div className="min-w-0 overflow-hidden">
-          {timelineTurnId ? (
-            <TurnTimelinePanel
-              isStreaming={
-                (timelineTurnId === streamingTurnId && isStreaming) ||
-                Boolean(timelineLoading[timelineTurnId]) ||
-                ["accepted", "context_ready", "processing"].includes(
-                  turnTimelines[timelineTurnId]?.status || "",
-                )
-              }
-              timeline={turnTimelines[timelineTurnId] || null}
-              loading={timelineLoading[timelineTurnId] || false}
-              error={timelineErrors[timelineTurnId] || null}
-              turn={turnsById[timelineTurnId] || null}
-              onClose={closeTimeline}
-            />
-          ) : null}
+        <div className="hidden min-w-0 overflow-hidden md:block">
+          {timelinePanelProps ? <TurnTimelinePanel {...timelinePanelProps} /> : null}
         </div>
       </div>
+
+      {isMobileViewport ? (
+        <Dialog
+          open={timelinePanelProps !== null}
+          onOpenChange={(open) => {
+            if (!open) closeTimeline();
+          }}
+        >
+          {timelinePanelProps ? (
+            <DialogContent className="h-[min(720px,calc(100dvh-2rem))] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[700px]">
+              <DialogHeader className="sr-only">
+                <DialogTitle>时间线详情</DialogTitle>
+              </DialogHeader>
+              <TurnTimelinePanel {...timelinePanelProps} variant="dialog" />
+            </DialogContent>
+          ) : null}
+        </Dialog>
+      ) : null}
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
