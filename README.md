@@ -2,6 +2,53 @@
 
 Agentic AI 对话助手，基于 OpenAI Responses API，支持网络搜索、文件理解、图片生成，以及基于 microVM 沙箱的不受信任命令安全执行。
 
+## 功能展示
+
+点击截图可查看原图。
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./assets/websearch.png">
+        <img src="./assets/websearch.png" alt="联网检索与执行时间线：对话主区域展示检索进度，右侧面板展示完整执行步骤" />
+      </a>
+      <br />
+      <strong>联网检索与执行时间线</strong>
+      <br />
+      <sub>在对话中持续反馈检索进度，并通过时间线查看完整工具调用过程。</sub>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./assets/sandbox.png">
+        <img src="./assets/sandbox.png" alt="沙箱执行：在隔离环境中运行大整数分解程序并返回结构化结果" />
+      </a>
+      <br />
+      <strong>隔离沙箱执行</strong>
+      <br />
+      <sub>在 Firecracker 或 AgentBay 沙箱中执行不受信任命令并返回结果。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./assets/latex.png">
+        <img src="./assets/latex.png" alt="Markdown 与 LaTeX：对话中展示傅里叶变换公式和数学推导" />
+      </a>
+      <br />
+      <strong>Markdown 与 LaTeX</strong>
+      <br />
+      <sub>流式呈现结构化 Markdown、代码、表格和数学公式。</sub>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./assets/billing.png">
+        <img src="./assets/billing.png" alt="用量与计费：设置界面展示账户余额、资金流水和模型用量" />
+      </a>
+      <br />
+      <strong>用量与计费</strong>
+      <br />
+      <sub>查看账户余额、资金流水、模型用量和逐次请求成本。</sub>
+    </td>
+  </tr>
+</table>
+
 ## 部署
 
 ### 环境准备
