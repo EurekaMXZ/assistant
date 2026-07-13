@@ -138,6 +138,14 @@
 
 .chat-markdown {
   --chat-rich-surface: color-mix(in oklch, var(--muted) 72%, var(--background));
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown :not(pre) > code {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .chat-markdown [data-streamdown="code-block"] {

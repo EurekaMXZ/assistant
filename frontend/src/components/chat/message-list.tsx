@@ -86,7 +86,7 @@ export function MessageList({
   return (
     <div ref={scrollRootRef} className="min-h-0 flex-1">
       <ScrollArea className="h-full">
-        <div className="mx-auto w-full max-w-2xl px-4 pt-4 pb-52 sm:px-6">
+        <div className="mx-auto min-w-0 w-full max-w-2xl px-4 pt-4 pb-52 sm:px-6">
           {messages.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               发送第一条消息开始对话

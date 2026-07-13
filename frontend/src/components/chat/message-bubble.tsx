@@ -182,7 +182,7 @@ function MessageBody({ isStreaming, message }: { isStreaming?: boolean; message:
 
   return (
     <div
-      className="leading-relaxed"
+      className="min-w-0 max-w-full leading-relaxed"
       style={isUser ? undefined : { paddingLeft: `${assistantActionIconInsetPx}px` }}
     >
       {isError ? (
@@ -238,11 +238,13 @@ export function MessageBubble({ message, onEdit, onRetry, isStreaming }: Message
   const isThinkingBlock = !isUser && displayKind === "thinking";
 
   return (
-    <div className={cn("group/message flex w-full", isUser ? "justify-end" : "justify-start")}>
-      <div className={cn("flex w-full flex-col", isUser ? "items-end" : "items-start")}>
+    <div
+      className={cn("group/message flex min-w-0 w-full", isUser ? "justify-end" : "justify-start")}
+    >
+      <div className={cn("flex min-w-0 w-full flex-col", isUser ? "items-end" : "items-start")}>
         <div
           className={cn(
-            "relative",
+            "relative min-w-0 max-w-full",
             isUser
               ? "ml-auto max-w-full rounded-2xl bg-muted px-4 py-3 text-foreground"
               : "w-full text-foreground",
