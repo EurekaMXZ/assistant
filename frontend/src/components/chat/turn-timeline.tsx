@@ -5,7 +5,7 @@ import type { Timeline, TimelineItem, Turn } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { MarkdownRenderer } from "./markdown-renderer";
+import { TimelineMarkdownRenderer } from "./markdown-renderer";
 import {
   AlertCircle,
   Bot,
@@ -234,7 +234,7 @@ function TimelineReasoningPayload({
   const body = section.body || summary;
   return (
     <div className="text-sm text-muted-foreground">
-      <MarkdownRenderer content={body} isStreaming={isStreaming} />
+      <TimelineMarkdownRenderer content={body} isStreaming={isStreaming} />
     </div>
   );
 }
@@ -273,7 +273,7 @@ function TimelineStep({
         ) : item.type === "output_text" || item.type === "final_answer" ? (
           item.content_text ? (
             <div className="text-sm text-foreground">
-              <MarkdownRenderer content={item.content_text} isStreaming={isStreaming} />
+              <TimelineMarkdownRenderer content={item.content_text} isStreaming={isStreaming} />
             </div>
           ) : null
         ) : item.content_text ? (

@@ -10,7 +10,8 @@ interface MarkdownRendererProps {
   isStreaming?: boolean;
 }
 
-const plugins = { cjk, code, math: createMathPlugin({ singleDollarTextMath: true }) };
+const chatPlugins = { cjk, code, math: createMathPlugin({ singleDollarTextMath: true }) };
+const timelinePlugins = { code };
 
 export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
   return (
@@ -19,7 +20,21 @@ export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRende
       mode={isStreaming ? "streaming" : "static"}
       isAnimating={isStreaming}
       lineNumbers
-      plugins={plugins}
+      plugins={chatPlugins}
+    >
+      {content}
+    </Streamdown>
+  );
+}
+
+export function TimelineMarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
+  return (
+    <Streamdown
+      className="chat-markdown"
+      mode={isStreaming ? "streaming" : "static"}
+      isAnimating={isStreaming}
+      lineNumbers
+      plugins={timelinePlugins}
     >
       {content}
     </Streamdown>
