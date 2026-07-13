@@ -135,3 +135,43 @@
     @apply h-full overflow-hidden font-sans;
   }
 }
+
+.chat-markdown {
+  --chat-rich-surface: color-mix(in oklch, var(--muted) 72%, var(--background));
+}
+
+.chat-markdown [data-streamdown="code-block"] {
+  border-color: var(--chat-rich-surface);
+  border-radius: var(--radius-md);
+  background: var(--chat-rich-surface);
+}
+
+.chat-markdown [data-streamdown="code-block-actions"] {
+  border-color: transparent;
+}
+
+.chat-markdown [data-streamdown="code-block-body"] {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  background: transparent;
+}
+
+.chat-markdown [data-streamdown="code-block-body"] pre {
+  width: max-content;
+  min-width: 100%;
+  white-space: pre;
+  background: transparent;
+}
+
+.chat-markdown [data-streamdown="table-wrapper"] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.chat-markdown [data-streamdown="table-wrapper"] > div:last-child {
+  border: 0;
+}
