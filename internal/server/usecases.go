@@ -155,6 +155,18 @@ type UpdateBillingAccountInput struct {
 	Status *string
 }
 
+type IssueRedemptionCodeInput struct {
+	Amount    string
+	Quantity  int
+	ExpiresAt *time.Time
+	RequestID string
+}
+
+type RedeemBillingCodeInput struct {
+	Code      string
+	RequestID string
+}
+
 type BillingListInput struct {
 	UserID string
 	Kind   string
@@ -271,6 +283,10 @@ type BillingUseCases struct {
 	UpdateBillingAccount    func(ctx context.Context, actor *domain.User, input UpdateBillingAccountInput) (*domain.BillingAccount, error)
 	ApplyManualTopup        func(ctx context.Context, actor *domain.User, input ManualBillingInput) (*domain.BillingTransaction, error)
 	ApplyManualRefund       func(ctx context.Context, actor *domain.User, input ManualBillingInput) (*domain.BillingTransaction, error)
+	IssueRedemptionCodes    func(ctx context.Context, actor *domain.User, input IssueRedemptionCodeInput) ([]domain.BillingRedemptionCodeIssue, error)
+	ListRedemptionCodes     func(ctx context.Context, actor *domain.User, limit int, cursor string) (*PageResult[domain.BillingRedemptionCode], error)
+	DisableRedemptionCode   func(ctx context.Context, actor *domain.User, codeID string, requestID string) (*domain.BillingRedemptionCode, error)
+	RedeemBillingCode       func(ctx context.Context, actor *domain.User, input RedeemBillingCodeInput) (*domain.BillingRedemptionResult, error)
 	ListBillingTransactions func(ctx context.Context, input BillingListInput) (*PageResult[domain.BillingTransaction], error)
 	GetBillingTransaction   func(ctx context.Context, transactionID string, userID string) (*domain.BillingTransaction, error)
 	ListBillingUsageEvents  func(ctx context.Context, input BillingListInput) (*PageResult[domain.BillingUsageEvent], error)

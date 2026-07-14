@@ -46,7 +46,11 @@ func (a *API) auditRequests() gin.HandlerFunc {
 			return
 		}
 		path := c.FullPath()
-		if path == "" || strings.Contains(path, "/healthz") || strings.HasSuffix(path, "/topups") || strings.HasSuffix(path, "/refunds") {
+		if path == "" || strings.Contains(path, "/healthz") {
+			return
+		}
+		semanticBillingMutation := strings.HasSuffix(path, "/topups") || strings.HasSuffix(path, "/refunds") || strings.HasSuffix(path, "/billing/redemptions") || strings.HasSuffix(path, "/billing/redemption-codes") || (strings.Contains(path, "/admin/billing/redemption-codes/") && strings.HasSuffix(path, "/disable"))
+		if semanticBillingMutation && c.Writer.Status() < http.StatusBadRequest {
 			return
 		}
 		actor := currentUser(c)
@@ -101,7 +105,7 @@ func auditRequiredRole(path string) string {
 }
 
 func firstPathID(c *gin.Context) string {
-	for _, name := range []string{"transactionID", "usageEventID", "auditEventID", "credentialID", "priceID", "modelID", "turnID", "conversationID", "userID"} {
+	for _, name := range []string{"transactionID", "usageEventID", "auditEventID", "credentialID", "priceID", "modelID", "turnID", "conversationID", "codeID", "userID"} {
 		if value := strings.TrimSpace(c.Param(name)); value != "" {
 			return value
 		}

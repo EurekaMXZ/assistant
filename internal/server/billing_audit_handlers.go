@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/gin-gonic/gin"
@@ -83,6 +84,67 @@ func (a *API) handleManualBilling(c *gin.Context, refund bool) {
 
 func (a *API) handleManualTopup(c *gin.Context)  { a.handleManualBilling(c, false) }
 func (a *API) handleManualRefund(c *gin.Context) { a.handleManualBilling(c, true) }
+
+func (a *API) handleIssueRedemptionCode(c *gin.Context) {
+	var request struct {
+		Amount    string     `json:"amount"`
+		Quantity  int        `json:"quantity"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := bindJSON(c, &request); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	result, err := a.useCases.Billing.IssueRedemptionCodes(c.Request.Context(), currentUser(c), IssueRedemptionCodeInput{
+		Amount: request.Amount, Quantity: request.Quantity, ExpiresAt: request.ExpiresAt, RequestID: requestID(c),
+	})
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusCreated, gin.H{"redemption_codes": result})
+}
+
+func (a *API) handleListRedemptionCodes(c *gin.Context) {
+	result, err := a.useCases.Billing.ListRedemptionCodes(
+		c.Request.Context(), currentUser(c), parseLimit(c, 50, 200), strings.TrimSpace(c.Query("cursor")),
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, pagePayload(result.Items, result.NextCursor))
+}
+
+func (a *API) handleDisableRedemptionCode(c *gin.Context) {
+	item, err := a.useCases.Billing.DisableRedemptionCode(
+		c.Request.Context(), currentUser(c), c.Param("codeID"), requestID(c),
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"redemption_code": item})
+}
+
+func (a *API) handleRedeemBillingCode(c *gin.Context) {
+	var request struct {
+		Code string `json:"code"`
+	}
+	if err := bindJSON(c, &request); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	result, err := a.useCases.Billing.RedeemBillingCode(c.Request.Context(), currentUser(c), RedeemBillingCodeInput{
+		Code: request.Code, RequestID: requestID(c),
+	})
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, result)
+}
 
 func billingListInput(c *gin.Context, userID string) BillingListInput {
 	return BillingListInput{

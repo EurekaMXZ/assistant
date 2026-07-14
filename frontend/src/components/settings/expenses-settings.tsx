@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowDownLeft,
   ArrowUpRight,
+  Gift,
   Loader2,
   ReceiptText,
   RefreshCw,
@@ -12,13 +13,25 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   getBillingAccount,
   isSessionUnauthorizedError,
   listBillingTransactions,
   listBillingUsageEvents,
+  redeemBillingCode,
 } from "@/lib/api";
+import { emitBillingAccountUpdated } from "@/lib/billing-account-events";
 import { cn } from "@/lib/utils";
 import type {
   BillingAccount,
@@ -26,8 +39,10 @@ import type {
   BillingUsageEvent,
   CursorPage,
 } from "@/lib/types";
+import { toast } from "sonner";
 
 type ExpenseView = "transactions" | "usage";
+const redemptionCodePattern = /^(?:[0-9a-f]{48}|ASST-[A-Za-z0-9_-]{32})$/;
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -43,6 +58,7 @@ function transactionLabel(kind: BillingTransaction["kind"]) {
     manual_topup: "账户充值",
     manual_refund: "余额扣减",
     model_usage_charge: "模型用量",
+    redemption_credit: "兑换码充值",
   };
   return labels[kind];
 }
@@ -63,6 +79,10 @@ export function ExpensesSettings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [redemptionOpen, setRedemptionOpen] = useState(false);
+  const [redemptionCode, setRedemptionCode] = useState("");
+  const [redemptionError, setRedemptionError] = useState("");
+  const [isRedeeming, setIsRedeeming] = useState(false);
 
   const loadInitial = async () => {
     setIsLoading(true);
@@ -114,6 +134,39 @@ export function ExpensesSettings() {
     }
   };
 
+  const redeem = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const code = redemptionCode.trim();
+    if (!code || isRedeeming) return;
+    if (!redemptionCodePattern.test(code)) {
+      setRedemptionError("兑换码格式不正确");
+      return;
+    }
+    setIsRedeeming(true);
+    setRedemptionError("");
+    try {
+      const result = await redeemBillingCode(code);
+      setAccount(result.account);
+      if (!result.replayed) {
+        setTransactions((items) => [result.transaction, ...items]);
+      }
+      emitBillingAccountUpdated(result.account);
+      setRedemptionOpen(false);
+      setRedemptionCode("");
+      toast.success(
+        result.replayed
+          ? "该兑换码已兑换，余额未重复增加"
+          : `已兑换 ${result.transaction.currency} ${result.transaction.amount}`,
+      );
+    } catch (err) {
+      if (!isSessionUnauthorizedError(err)) {
+        setRedemptionError(err instanceof Error ? err.message : "兑换失败");
+      }
+    } finally {
+      setIsRedeeming(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-7">
@@ -156,16 +209,25 @@ export function ExpensesSettings() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <WalletCards className="size-4" />
               当前余额
+              <Badge variant={account.status === "active" ? "secondary" : "destructive"}>
+                {account.status === "active" ? "正常" : "已冻结"}
+              </Badge>
             </div>
             <p className="mt-2 font-mono text-3xl font-semibold leading-none">
               {account.currency} {account.balance}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 sm:justify-end">
-            <Badge variant="outline">预付费</Badge>
-            <Badge variant={account.status === "active" ? "secondary" : "destructive"}>
-              {account.status === "active" ? "正常" : "已冻结"}
-            </Badge>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={account.status !== "active"}
+              onClick={() => setRedemptionOpen(true)}
+            >
+              <Gift className="size-4" />
+              兑换余额
+            </Button>
           </div>
         </section>
       ) : null}
@@ -363,6 +425,63 @@ export function ExpensesSettings() {
           </div>
         ) : null}
       </section>
+
+      <Dialog
+        open={redemptionOpen}
+        onOpenChange={(open) => {
+          setRedemptionOpen(open);
+          if (!open && !isRedeeming) {
+            setRedemptionCode("");
+            setRedemptionError("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>兑换余额</DialogTitle>
+            <DialogDescription>输入兑换码，金额将立即计入当前账户余额。</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={redeem}>
+            <div className="space-y-2">
+              <Label htmlFor="billing-redemption-code">兑换码</Label>
+              <Input
+                id="billing-redemption-code"
+                autoCapitalize="none"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono"
+                placeholder="48 位小写十六进制兑换码"
+                aria-invalid={redemptionError ? true : undefined}
+                aria-describedby={redemptionError ? "billing-redemption-error" : undefined}
+                value={redemptionCode}
+                onChange={(event) => {
+                  setRedemptionCode(event.target.value);
+                  setRedemptionError("");
+                }}
+              />
+              {redemptionError ? (
+                <p id="billing-redemption-error" role="alert" className="text-sm text-destructive">
+                  {redemptionError}
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isRedeeming}
+                onClick={() => setRedemptionOpen(false)}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={isRedeeming || !redemptionCode.trim()}>
+                {isRedeeming ? <Loader2 className="animate-spin" /> : null}
+                确认兑换
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

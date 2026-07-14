@@ -6,8 +6,14 @@ import (
 )
 
 const (
-	BillingTransactionManualTopup  = "manual_topup"
-	BillingTransactionManualRefund = "manual_refund"
+	BillingTransactionManualTopup      = "manual_topup"
+	BillingTransactionManualRefund     = "manual_refund"
+	BillingTransactionRedemptionCredit = "redemption_credit"
+
+	BillingRedemptionCodeActive   = "active"
+	BillingRedemptionCodeDisabled = "disabled"
+	BillingRedemptionCodeExpired  = "expired"
+	BillingRedemptionCodeRedeemed = "redeemed"
 )
 
 type BillingAccount struct {
@@ -38,6 +44,34 @@ type BillingTransaction struct {
 	Reason            string    `json:"reason"`
 	Reference         string    `json:"reference"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type BillingRedemptionCode struct {
+	ID                   string     `json:"id"`
+	CodeHint             string     `json:"code_hint"`
+	Currency             string     `json:"currency"`
+	AmountNanos          int64      `json:"amount_nanos"`
+	Amount               string     `json:"amount"`
+	Status               string     `json:"status"`
+	CreatedByUserID      string     `json:"created_by_user_id"`
+	RedeemedByUserID     string     `json:"redeemed_by_user_id,omitempty"`
+	BillingTransactionID string     `json:"billing_transaction_id,omitempty"`
+	DisabledByUserID     string     `json:"disabled_by_user_id,omitempty"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+	RedeemedAt           *time.Time `json:"redeemed_at,omitempty"`
+	DisabledAt           *time.Time `json:"disabled_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+}
+
+type BillingRedemptionCodeIssue struct {
+	RedemptionCode BillingRedemptionCode `json:"redemption_code"`
+	Code           string                `json:"code"`
+}
+
+type BillingRedemptionResult struct {
+	Account     BillingAccount     `json:"account"`
+	Transaction BillingTransaction `json:"transaction"`
+	Replayed    bool               `json:"replayed"`
 }
 
 type BillingUsageEvent struct {

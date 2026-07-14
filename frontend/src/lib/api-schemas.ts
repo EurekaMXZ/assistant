@@ -184,7 +184,7 @@ export const billingTransactionSchema = z.object({
   user_id: z.string(),
   currency: z.string(),
   account_sequence: z.number().int(),
-  kind: z.enum(["manual_topup", "manual_refund", "model_usage_charge"]),
+  kind: z.enum(["manual_topup", "manual_refund", "model_usage_charge", "redemption_credit"]),
   direction: z.enum(["credit", "debit"]),
   amount_nanos: z.number().int(),
   amount: z.string(),
@@ -194,6 +194,23 @@ export const billingTransactionSchema = z.object({
   reason: z.string(),
   reference: z.string(),
   metadata: metadata.optional(),
+  created_at: dateTime,
+});
+
+export const billingRedemptionCodeSchema = z.object({
+  id: z.string(),
+  code_hint: z.string(),
+  currency: z.string(),
+  amount_nanos: z.number().int(),
+  amount: z.string(),
+  status: z.enum(["active", "disabled", "expired", "redeemed"]),
+  created_by_user_id: z.string(),
+  redeemed_by_user_id: z.string().optional(),
+  billing_transaction_id: z.string().optional(),
+  disabled_by_user_id: z.string().optional(),
+  expires_at: dateTime.optional(),
+  redeemed_at: dateTime.optional(),
+  disabled_at: dateTime.optional(),
   created_at: dateTime,
 });
 

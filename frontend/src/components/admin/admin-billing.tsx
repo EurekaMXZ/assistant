@@ -10,6 +10,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { toast } from "sonner";
+import { AdminRedemptionCodes } from "@/components/admin/admin-redemption-codes";
 import {
   AdminEmpty,
   AdminError,
@@ -51,7 +52,7 @@ import { parseDecimalNanos } from "@/lib/decimal-nanos";
 import { createIdempotencyKey } from "@/lib/idempotency-key";
 import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from "@/lib/types";
 
-type BillingView = "accounts" | "transactions" | "usage";
+type BillingView = "accounts" | "transactions" | "usage" | "codes";
 
 export function AdminBilling() {
   const [view, setView] = useState<BillingView>("accounts");
@@ -172,7 +173,7 @@ export function AdminBilling() {
         role="tablist"
         aria-label="计费视图"
       >
-        {(["accounts", "transactions", "usage"] as const).map((item) => (
+        {(["accounts", "transactions", "usage", "codes"] as const).map((item) => (
           <Button
             key={item}
             type="button"
@@ -183,12 +184,18 @@ export function AdminBilling() {
             className="h-7 min-h-7 rounded px-2.5 text-xs aria-selected:bg-background aria-selected:shadow-xs"
             onClick={() => setView(item)}
           >
-            {item === "accounts" ? "账户" : item === "transactions" ? "资金流水" : "模型用量"}
+            {item === "accounts"
+              ? "账户"
+              : item === "transactions"
+                ? "资金流水"
+                : item === "usage"
+                  ? "模型用量"
+                  : "兑换码"}
           </Button>
         ))}
       </div>
-      {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={load} /> : null}
+      {loading && view !== "codes" ? <AdminLoading /> : null}
+      {!loading && error && view !== "codes" ? <AdminError message={error} onRetry={load} /> : null}
       {!loading && !error && view === "accounts" ? (
         accounts.length ? (
           <div className="mt-5 overflow-x-auto border-y">
@@ -367,6 +374,8 @@ export function AdminBilling() {
         )
       ) : null}
 
+      {view === "codes" ? <AdminRedemptionCodes users={users} /> : null}
+
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
           <DialogHeader>
@@ -463,5 +472,10 @@ export function AdminBilling() {
 }
 
 function transactionName(kind: BillingTransaction["kind"]) {
-  return { manual_topup: "充值", manual_refund: "退款扣减", model_usage_charge: "模型用量" }[kind];
+  return {
+    manual_topup: "充值",
+    manual_refund: "退款扣减",
+    model_usage_charge: "模型用量",
+    redemption_credit: "兑换码充值",
+  }[kind];
 }

@@ -57,7 +57,7 @@ export interface BillingTransaction {
   user_id: string;
   currency: string;
   account_sequence: number;
-  kind: "manual_topup" | "manual_refund" | "model_usage_charge";
+  kind: "manual_topup" | "manual_refund" | "model_usage_charge" | "redemption_credit";
   direction: "credit" | "debit";
   amount_nanos: number;
   amount: string;
@@ -68,6 +68,34 @@ export interface BillingTransaction {
   reference: string;
   metadata?: Record<string, unknown>;
   created_at: string;
+}
+
+export interface BillingRedemptionCode {
+  id: string;
+  code_hint: string;
+  currency: string;
+  amount_nanos: number;
+  amount: string;
+  status: "active" | "disabled" | "expired" | "redeemed";
+  created_by_user_id: string;
+  redeemed_by_user_id?: string;
+  billing_transaction_id?: string;
+  disabled_by_user_id?: string;
+  expires_at?: string;
+  redeemed_at?: string;
+  disabled_at?: string;
+  created_at: string;
+}
+
+export interface BillingRedemptionResult {
+  account: BillingAccount;
+  transaction: BillingTransaction;
+  replayed: boolean;
+}
+
+export interface BillingRedemptionCodeIssue {
+  redemption_code: BillingRedemptionCode;
+  code: string;
 }
 
 export interface BillingUsageEvent {

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { User } from "@/lib/types";
 import type { BillingAccount } from "@/lib/types";
 import { getBillingAccount, isSessionUnauthorizedError } from "@/lib/api";
+import { subscribeBillingAccountUpdated } from "@/lib/billing-account-events";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -39,11 +40,24 @@ export function SidebarUserPanel({
   onOpenSettings,
 }: SidebarUserPanelProps) {
   const [billingAccount, setBillingAccount] = useState<BillingAccount | null>(null);
+  const activeUserIDRef = useRef(user?.id);
+
+  useEffect(() => {
+    activeUserIDRef.current = user?.id;
+  }, [user?.id]);
+
+  const applyBillingAccount = useCallback((account: BillingAccount) => {
+    if (account.user_id !== activeUserIDRef.current) return;
+    setBillingAccount((current) => {
+      if (current?.user_id === account.user_id && current.version > account.version) return current;
+      return account;
+    });
+  }, []);
 
   const refreshBalance = async () => {
     if (!user) return;
     try {
-      setBillingAccount(await getBillingAccount());
+      applyBillingAccount(await getBillingAccount());
     } catch (error) {
       if (!isSessionUnauthorizedError(error)) setBillingAccount(null);
     }
@@ -57,7 +71,7 @@ export function SidebarUserPanel({
     let cancelled = false;
     void getBillingAccount()
       .then((account) => {
-        if (!cancelled) setBillingAccount(account);
+        if (!cancelled) applyBillingAccount(account);
       })
       .catch((error) => {
         if (!cancelled && !isSessionUnauthorizedError(error)) setBillingAccount(null);
@@ -65,7 +79,9 @@ export function SidebarUserPanel({
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [applyBillingAccount, user]);
+
+  useEffect(() => subscribeBillingAccountUpdated(applyBillingAccount), [applyBillingAccount]);
 
   const balanceLabel = billingAccount
     ? `${billingAccount.currency} ${billingAccount.balance}`

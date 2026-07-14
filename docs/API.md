@@ -1169,6 +1169,16 @@ Money values use a three-letter currency and integer `*_nanos`, where one curren
 
 Returns the authenticated user's prepaid account. Accounts are created lazily with a zero balance.
 
+### POST `/billing/redemptions`
+
+```json
+{
+  "code": "0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+Atomically consumes a single-use redemption code and credits the authenticated user's account. Returns `201 Created` with `account` and the immutable `redemption_credit` transaction. Retrying the same code as the same user returns the original transaction; invalid, expired, or already consumed codes return the same generic validation error. Plaintext codes are never logged or stored.
+
 ### GET `/billing/transactions`
 
 Query params: `kind`, `limit` (default `50`, max `200`), and `cursor`. Results are always scoped to the authenticated user.
@@ -1520,6 +1530,26 @@ Creates an immediate credit and returns `201 Created` with `transaction`. Replay
 ### POST `/admin/billing/accounts/:userID/refunds`
 
 Uses the same request and idempotency rules as topups, but creates an arbitrary manual debit. It returns `402` when the debit would make the balance negative.
+
+### POST `/admin/billing/redemption-codes`
+
+```json
+{
+  "amount": "10.00",
+  "quantity": 20,
+  "expires_at": "2026-12-31T23:59:59Z"
+}
+```
+
+Atomically generates `quantity` single-use redemption codes with the same face value and expiry in the configured billing currency. `quantity` must be between `1` and `100`. New codes are 48-character lowercase hexadecimal strings generated from 24 cryptographically random bytes. `expires_at` is optional and must be in the future. Returns `201 Created` with a `redemption_codes` array containing metadata and plaintext codes. Plaintext is returned only by this response; only SHA-256 hashes and masked hints are stored.
+
+### GET `/admin/billing/redemption-codes`
+
+Lists redemption code metadata with cursor pagination. Status is computed as `active | disabled | expired | redeemed`; list responses never contain plaintext codes.
+
+### POST `/admin/billing/redemption-codes/:codeID/disable`
+
+Permanently disables an active redemption code. The amount and expiry remain immutable. Repeating the disable is safe; redeemed or expired codes return `409 Conflict`.
 
 ### GET `/admin/billing/transactions`
 

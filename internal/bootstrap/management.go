@@ -358,6 +358,37 @@ func attachManagementUseCases(useCases *server.UseCases, deps managementDependen
 	useCases.Billing.ApplyManualRefund = func(ctx context.Context, actor *domain.User, input server.ManualBillingInput) (*domain.BillingTransaction, error) {
 		return manual(ctx, actor, input, domain.BillingTransactionManualRefund)
 	}
+	useCases.Billing.IssueRedemptionCodes = func(ctx context.Context, actor *domain.User, input server.IssueRedemptionCodeInput) ([]domain.BillingRedemptionCodeIssue, error) {
+		if err := requireAdminActor(actor); err != nil {
+			return nil, err
+		}
+		amountNanos, err := billing.ParseAmount(input.Amount)
+		if err != nil {
+			return nil, domain.NewValidationError(err.Error())
+		}
+		return deps.billing.IssueRedemptionCodes(ctx, postgres.IssueRedemptionCodeParams{
+			ActorUserID: actor.ID, ActorRole: actor.Role, Currency: deps.currency,
+			AmountNanos: amountNanos, Quantity: input.Quantity, ExpiresAt: input.ExpiresAt, RequestID: input.RequestID,
+		})
+	}
+	useCases.Billing.ListRedemptionCodes = func(ctx context.Context, actor *domain.User, limit int, cursor string) (*server.PageResult[domain.BillingRedemptionCode], error) {
+		if err := requireAdminActor(actor); err != nil {
+			return nil, err
+		}
+		items, next, err := deps.billing.ListRedemptionCodes(ctx, postgres.RedemptionCodeListParams{Limit: limit, Cursor: cursor})
+		return &server.PageResult[domain.BillingRedemptionCode]{Items: items, NextCursor: next}, err
+	}
+	useCases.Billing.DisableRedemptionCode = func(ctx context.Context, actor *domain.User, codeID string, requestID string) (*domain.BillingRedemptionCode, error) {
+		if err := requireAdminActor(actor); err != nil {
+			return nil, err
+		}
+		return deps.billing.DisableRedemptionCode(ctx, postgres.DisableRedemptionCodeParams{
+			CodeID: codeID, ActorUserID: actor.ID, ActorRole: actor.Role, RequestID: requestID,
+		})
+	}
+	useCases.Billing.RedeemBillingCode = func(ctx context.Context, actor *domain.User, input server.RedeemBillingCodeInput) (*domain.BillingRedemptionResult, error) {
+		return deps.billing.RedeemCode(ctx, actor.ID, actor.Role, input.Code, input.RequestID)
+	}
 	useCases.Billing.ListBillingTransactions = func(ctx context.Context, input server.BillingListInput) (*server.PageResult[domain.BillingTransaction], error) {
 		items, next, err := deps.billing.ListTransactions(ctx, postgres.BillingListParams(input))
 		return &server.PageResult[domain.BillingTransaction]{Items: items, NextCursor: next}, err

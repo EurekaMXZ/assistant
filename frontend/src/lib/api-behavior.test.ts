@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   applyAdminBillingAdjustment,
+  disableAdminBillingRedemptionCode,
   getStreamUrl,
   handleSessionUnauthorized,
+  issueAdminBillingRedemptionCodes,
   isSessionUnauthorizedError,
+  redeemBillingCode,
 } from "./api";
 
 beforeEach(() => {
@@ -81,5 +84,105 @@ describe("same-origin API routing", () => {
   it("routes backend stream paths through the frontend proxy", () => {
     expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
     expect(getStreamUrl("/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
+  });
+});
+
+describe("billing redemptions", () => {
+  it("redeems a code against the authenticated account", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        account: {
+          id: "account-1",
+          user_id: "user-1",
+          currency: "USD",
+          status: "active",
+          balance_nanos: 5_000_000_000,
+          balance: "5.00",
+          version: 1,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+        transaction: {
+          id: "transaction-1",
+          account_id: "account-1",
+          user_id: "user-1",
+          currency: "USD",
+          account_sequence: 1,
+          kind: "redemption_credit",
+          direction: "credit",
+          amount_nanos: 5_000_000_000,
+          amount: "5.00",
+          balance_after_nanos: 5_000_000_000,
+          balance_after: "5.00",
+          actor_user_id: "user-1",
+          reason: "Redemption code",
+          reference: "***abcdef",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        replayed: false,
+      }),
+    );
+
+    const code = "0123456789abcdef0123456789abcdef0123456789abcdef";
+    const result = await redeemBillingCode(code);
+
+    expect(result.transaction.kind).toBe("redemption_credit");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/billing/redemptions");
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ code }));
+  });
+
+  it("issues a code from the admin billing API", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        redemption_codes: [
+          {
+            redemption_code: {
+              id: "code-1",
+              code_hint: "***abcdef",
+              currency: "USD",
+              amount_nanos: 5_000_000_000,
+              amount: "5.00",
+              status: "active",
+              created_by_user_id: "admin-1",
+              created_at: "2026-01-01T00:00:00Z",
+            },
+            code: "0123456789abcdef0123456789abcdef0123456789abcdef",
+          },
+        ],
+      }),
+    );
+
+    const result = await issueAdminBillingRedemptionCodes({ amount: "5.00", quantity: 1 });
+
+    expect(result[0].code).toBe("0123456789abcdef0123456789abcdef0123456789abcdef");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/billing/redemption-codes");
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ amount: "5.00", quantity: 1 }));
+  });
+
+  it("disables an active code from the admin billing API", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        redemption_code: {
+          id: "code-1",
+          code_hint: "***abcdef",
+          currency: "USD",
+          amount_nanos: 5_000_000_000,
+          amount: "5.00",
+          status: "disabled",
+          created_by_user_id: "admin-1",
+          disabled_by_user_id: "admin-1",
+          disabled_at: "2026-01-01T00:01:00Z",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      }),
+    );
+
+    const result = await disableAdminBillingRedemptionCode("code-1");
+
+    expect(result.status).toBe("disabled");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/admin/billing/redemption-codes/code-1/disable",
+    );
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
   });
 });

@@ -1,6 +1,9 @@
 import type {
   Attachment,
   BillingAccount,
+  BillingRedemptionCode,
+  BillingRedemptionCodeIssue,
+  BillingRedemptionResult,
   BillingTransaction,
   BillingUsageEvent,
   Conversation,
@@ -22,6 +25,7 @@ import {
   attachmentSchema,
   auditEventSchema,
   billingAccountSchema,
+  billingRedemptionCodeSchema,
   billingTransactionSchema,
   billingUsageEventSchema,
   committedInitialTurnSchema,
@@ -325,6 +329,18 @@ export async function getBillingAccount() {
   ).then((r) => r.account);
 }
 
+export async function redeemBillingCode(code: string) {
+  return apiFetch<BillingRedemptionResult>(
+    "/billing/redemptions",
+    { method: "POST", body: JSON.stringify({ code }) },
+    z.object({
+      account: billingAccountSchema,
+      transaction: billingTransactionSchema,
+      replayed: z.boolean(),
+    }),
+  );
+}
+
 export async function listBillingTransactions(cursor?: string) {
   const params = new URLSearchParams({ limit: "20" });
   if (cursor) params.set("cursor", cursor);
@@ -536,6 +552,40 @@ export async function revokeAdminCredential(credentialId: string) {
 
 export async function listAdminBillingAccounts() {
   return listAllCursorItems("/admin/billing/accounts?limit=200", billingAccountSchema);
+}
+
+export async function listAdminBillingRedemptionCodes(cursor?: string) {
+  const params = new URLSearchParams({ limit: "50" });
+  if (cursor) params.set("cursor", cursor);
+  return apiFetch<CursorPageResponse<BillingRedemptionCode>>(
+    `/admin/billing/redemption-codes?${params.toString()}`,
+    {},
+    cursorPageSchema(billingRedemptionCodeSchema),
+  );
+}
+
+export async function issueAdminBillingRedemptionCodes(payload: {
+  amount: string;
+  quantity: number;
+  expires_at?: string;
+}) {
+  return apiFetch<{ redemption_codes: BillingRedemptionCodeIssue[] }>(
+    "/admin/billing/redemption-codes",
+    { method: "POST", body: JSON.stringify(payload) },
+    z.object({
+      redemption_codes: z.array(
+        z.object({ redemption_code: billingRedemptionCodeSchema, code: z.string() }),
+      ),
+    }),
+  ).then((result) => result.redemption_codes);
+}
+
+export async function disableAdminBillingRedemptionCode(codeId: string) {
+  return apiFetch<{ redemption_code: BillingRedemptionCode }>(
+    `/admin/billing/redemption-codes/${codeId}/disable`,
+    { method: "POST" },
+    z.object({ redemption_code: billingRedemptionCodeSchema }),
+  ).then((result) => result.redemption_code);
 }
 
 export async function updateAdminBillingAccount(

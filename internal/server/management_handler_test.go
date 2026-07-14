@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	assistantmail "github.com/EurekaMXZ/assistant/internal/mail"
@@ -23,6 +24,7 @@ func TestAdminManagementRoutesRejectRegularUser(t *testing.T) {
 		"/api/v1/admin/provider-credentials",
 		"/api/v1/admin/models",
 		"/api/v1/admin/billing/accounts",
+		"/api/v1/admin/billing/redemption-codes",
 		"/api/v1/admin/audit-events",
 	} {
 		req := httptest.NewRequest(http.MethodGet, route, nil)
@@ -165,5 +167,76 @@ func TestOwnBillingTransactionsAreScopedToAuthenticatedUser(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, `"data":[]`) {
 		t.Fatalf("empty page encoded as null: %s", body)
+	}
+}
+
+func TestIssueRedemptionCodesPassesAmountQuantityExpiryAndRequestID(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleAdmin)},
+		Billing: BillingUseCases{IssueRedemptionCodes: func(_ context.Context, actor *domain.User, input IssueRedemptionCodeInput) ([]domain.BillingRedemptionCodeIssue, error) {
+			if actor.ID != "user-1" || input.Amount != "10.00" || input.Quantity != 3 || input.ExpiresAt == nil || !input.ExpiresAt.Equal(expiresAt) || input.RequestID != "request-issue" {
+				t.Fatalf("unexpected redemption issue input: actor=%q input=%#v", actor.ID, input)
+			}
+			return []domain.BillingRedemptionCodeIssue{
+				{RedemptionCode: domain.BillingRedemptionCode{ID: "code-1", Amount: "10.00"}, Code: "0123456789abcdef0123456789abcdef0123456789abcdef"},
+				{RedemptionCode: domain.BillingRedemptionCode{ID: "code-2", Amount: "10.00"}, Code: "1123456789abcdef0123456789abcdef0123456789abcdef"},
+				{RedemptionCode: domain.BillingRedemptionCode{ID: "code-3", Amount: "10.00"}, Code: "2123456789abcdef0123456789abcdef0123456789abcdef"},
+			}, nil
+		}},
+	})
+	body := `{"amount":"10.00","quantity":3,"expires_at":"` + expiresAt.Format(time.RFC3339) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/billing/redemption-codes", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "request-issue")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || rec.Header().Get("Cache-Control") != "no-store" || strings.Count(rec.Body.String(), `"redemption_code"`) != 3 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRedeemBillingCodeUsesAuthenticatedUser(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Billing: BillingUseCases{RedeemBillingCode: func(_ context.Context, actor *domain.User, input RedeemBillingCodeInput) (*domain.BillingRedemptionResult, error) {
+			if actor.ID != "user-1" || actor.Role != domain.UserRoleUser || input.Code != "0123456789abcdef0123456789abcdef0123456789abcdef" || input.RequestID != "request-redeem" {
+				t.Fatalf("unexpected redemption input: actor=%#v input=%#v", actor, input)
+			}
+			return &domain.BillingRedemptionResult{
+				Account:     domain.BillingAccount{ID: "account-1", Balance: "10.00"},
+				Transaction: domain.BillingTransaction{ID: "transaction-1", Kind: domain.BillingTransactionRedemptionCredit},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/redemptions", strings.NewReader(`{"code":"0123456789abcdef0123456789abcdef0123456789abcdef","user_id":"other-user"}`))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "request-redeem")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"kind":"redemption_credit"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDisableRedemptionCodeUsesAdminAndRequestID(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleAdmin)},
+		Billing: BillingUseCases{DisableRedemptionCode: func(_ context.Context, actor *domain.User, codeID string, requestID string) (*domain.BillingRedemptionCode, error) {
+			if actor.ID != "user-1" || codeID != "code-1" || requestID != "request-disable" {
+				t.Fatalf("unexpected disable input: actor=%#v code=%q request=%q", actor, codeID, requestID)
+			}
+			return &domain.BillingRedemptionCode{ID: codeID, Status: domain.BillingRedemptionCodeDisabled}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/billing/redemption-codes/code-1/disable", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("X-Request-ID", "request-disable")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"disabled"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
