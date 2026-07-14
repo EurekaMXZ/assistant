@@ -172,7 +172,15 @@ export function transitionTurnTimelineState(
         turnsById: turn
           ? {
               ...state.turnsById,
-              [action.turnId]: { ...turn, status: action.snapshot.status },
+              [action.turnId]: {
+                ...turn,
+                status: action.snapshot.status,
+                ...(action.snapshot.started_at ? { started_at: action.snapshot.started_at } : {}),
+                ...(action.snapshot.completed_at
+                  ? { completed_at: action.snapshot.completed_at }
+                  : {}),
+                ...(action.snapshot.failed_at ? { failed_at: action.snapshot.failed_at } : {}),
+              },
             }
           : state.turnsById,
         loading: { ...state.loading, [action.turnId]: false },

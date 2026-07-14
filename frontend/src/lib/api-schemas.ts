@@ -318,6 +318,9 @@ export const turnStreamEventSchemas = {
     conversation_id: z.string(),
     status: turnStatusSchema,
     items: z.array(timelineItemSchema),
+    started_at: dateTime.optional(),
+    completed_at: dateTime.optional(),
+    failed_at: dateTime.optional(),
   }),
   "item.upsert": timelineItemSchema,
   "item.delta": z.object({

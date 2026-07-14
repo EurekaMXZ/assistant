@@ -331,6 +331,9 @@ export interface TurnStreamSnapshot {
   conversation_id: string;
   status: TurnStatus;
   items: TimelineItem[];
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
 }
 
 export interface TurnStreamItemDelta {

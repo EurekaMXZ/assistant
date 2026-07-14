@@ -97,6 +97,9 @@ type TurnStreamSnapshot struct {
 	ConversationID string             `json:"conversation_id"`
 	Status         string             `json:"status"`
 	Items          []TurnTimelineItem `json:"items"`
+	StartedAt      *time.Time         `json:"started_at,omitempty"`
+	CompletedAt    *time.Time         `json:"completed_at,omitempty"`
+	FailedAt       *time.Time         `json:"failed_at,omitempty"`
 }
 
 type TurnStreamItemDelta struct {

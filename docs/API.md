@@ -752,8 +752,9 @@ Server behavior:
 
 - the server always sends one complete, filtered `turn.snapshot` first
 - if the turn is completed or failed, it then sends `turn.done` and closes
-- if the turn is still running, it continues with canonical item mutation events until `turn.done`
-- if live terminal delivery is missed, the server reconciles durable turn state, sends a fresh authoritative `turn.snapshot`, then `turn.done`
+- if the turn is still running, it continues with canonical item mutation events, then reconciles durable state and sends a final authoritative `turn.snapshot` before `turn.done`
+- terminal snapshots include `started_at` and either `completed_at` or `failed_at`, so clients do not need a separate turn fetch to calculate elapsed time
+- if live terminal delivery is missed, polling performs the same final `turn.snapshot` and `turn.done` reconciliation
 - the server sends SSE keep-alive comments every 30 seconds
 - raw provider events, tool arguments, tool output, encrypted reasoning, model instructions, tool definitions, and usage are never returned
 - tool presentation fields are selected and sanitized by the backend before entering either the snapshot or live stream
@@ -770,7 +771,7 @@ data: {"item_id":"assistant:resp_123:0:0","item_type":"output_text","delta":"Hel
 
 Only registered presentation events are returned:
 
-- `turn.snapshot`: complete filtered state at connection time
+- `turn.snapshot`: complete filtered state at connection time or terminal reconciliation
 - `item.upsert`: create or replace one display item
 - `item.delta`: append text to one display item; consumers ignore a `sequence_number` that is not newer than the item's current sequence
 - `item.done`: authoritative completed display item

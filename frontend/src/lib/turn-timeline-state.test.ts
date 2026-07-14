@@ -22,11 +22,13 @@ describe("turn timeline state transitions", () => {
         turn_id: turn.id,
         conversation_id: turn.conversation_id,
         status: "completed",
+        started_at: "2026-01-01T00:00:00Z",
+        completed_at: "2026-01-01T00:00:12Z",
         items: [
           {
             id: "reasoning-1",
             type: "reasoning",
-            content_text: "Thinking",
+            content_text: "**Inspecting**\n\nFull reasoning body.",
             metadata: { sequence_number: 4 },
             created_at: "2026-01-01T00:00:00Z",
           },
@@ -43,6 +45,13 @@ describe("turn timeline state transitions", () => {
 
     expect(result.state.timelines[turn.id].items.map((item) => item.id)).toEqual(["reasoning-1"]);
     expect(result.state.turnsById[turn.id].status).toBe("completed");
+    expect(result.state.turnsById[turn.id]).toMatchObject({
+      started_at: "2026-01-01T00:00:00Z",
+      completed_at: "2026-01-01T00:00:12Z",
+    });
+    expect(result.state.timelines[turn.id].items[0].content_text).toBe(
+      "**Inspecting**\n\nFull reasoning body.",
+    );
     expect(result.state.itemSequences["turn-1:output-1"]).toBe(5);
   });
 

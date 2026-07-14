@@ -208,6 +208,8 @@ func TestFallbackTurnStreamSnapshotUsesEmptyItemsArray(t *testing.T) {
 
 func TestHandleStreamTurnTranslatesLiveEventsIntoUIItems(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	startedAt := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(12 * time.Second)
 	channel := make(chan stream.Event, 6)
 	channel <- stream.Event{
 		Type:           stream.EventReasoningSummary,
@@ -252,15 +254,34 @@ func TestHandleStreamTurnTranslatesLiveEventsIntoUIItems(t *testing.T) {
 	close(channel)
 
 	streamHub := &stubStreamSubscriber{channel: channel}
+	turnLookups := 0
+	timelineLookups := 0
 	srv := newTestServerWithStream(UseCases{
 		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
 			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
 		}},
 		Turns: TurnUseCases{GetTurn: func(context.Context, string, string) (*domain.Turn, error) {
-			return &domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+			turnLookups++
+			if turnLookups == 1 {
+				return &domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+			}
+			return &domain.Turn{
+				ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusCompleted,
+				StartedAt: &startedAt, CompletedAt: &completedAt,
+			}, nil
 		},
 			GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
-				return &TurnTimeline{TurnID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+				timelineLookups++
+				if timelineLookups == 1 {
+					return &TurnTimeline{TurnID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+				}
+				return &TurnTimeline{
+					TurnID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusCompleted,
+					Items: []TurnTimelineItem{{
+						ID: "reasoning:resp-1:0:0", Type: turnTimelineItemReasoning, Status: "completed",
+						ContentText: "**Inspecting the request**\n\nThe durable reasoning body.", CreatedAt: startedAt,
+					}},
+				}, nil
 			}},
 	}, streamHub)
 
@@ -291,6 +312,12 @@ func TestHandleStreamTurnTranslatesLiveEventsIntoUIItems(t *testing.T) {
 	}
 	if !strings.Contains(body, "event: turn.done") {
 		t.Fatalf("expected turn done event, got %q", body)
+	}
+	if strings.Count(body, "event: turn.snapshot") != 2 || !strings.Contains(body, `"content_text":"**Inspecting the request**\n\nThe durable reasoning body."`) {
+		t.Fatalf("expected authoritative terminal reasoning snapshot, got %q", body)
+	}
+	if !strings.Contains(body, `"started_at":"2026-07-14T10:00:00Z"`) || !strings.Contains(body, `"completed_at":"2026-07-14T10:00:12Z"`) {
+		t.Fatalf("expected terminal timing fields, got %q", body)
 	}
 	if !strings.Contains(body, "event: conversation.updated") || !strings.Contains(body, `"title":"Filtered title"`) || strings.Contains(body, `"secret"`) {
 		t.Fatalf("expected filtered conversation update, got %q", body)
@@ -355,6 +382,8 @@ func TestHandleStreamTurnFiltersProviderEventsIntoCanonicalItems(t *testing.T) {
 
 func TestHandleStreamTurnSanitizesProviderFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	startedAt := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	failedAt := startedAt.Add(4 * time.Second)
 	channel := make(chan stream.Event, 2)
 	channel <- stream.Event{
 		Type:           stream.EventResponseFailed,
@@ -375,15 +404,29 @@ func TestHandleStreamTurnSanitizesProviderFailure(t *testing.T) {
 	close(channel)
 
 	streamHub := &stubStreamSubscriber{channel: channel}
+	turnLookups := 0
+	timelineLookups := 0
 	srv := newTestServerWithStream(UseCases{
 		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
 			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
 		}},
 		Turns: TurnUseCases{GetTurn: func(context.Context, string, string) (*domain.Turn, error) {
-			return &domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+			turnLookups++
+			if turnLookups == 1 {
+				return &domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+			}
+			return &domain.Turn{
+				ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusFailed,
+				ErrorCode: domain.TurnErrorUpstreamRequestFailed, StartedAt: &startedAt, FailedAt: &failedAt,
+			}, nil
 		},
 			GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
-				return &TurnTimeline{TurnID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+				timelineLookups++
+				status := domain.TurnStatusProcessing
+				if timelineLookups > 1 {
+					status = domain.TurnStatusFailed
+				}
+				return &TurnTimeline{TurnID: "turn-1", ConversationID: "conv-1", Status: status}, nil
 			}},
 	}, streamHub)
 
@@ -405,6 +448,9 @@ func TestHandleStreamTurnSanitizesProviderFailure(t *testing.T) {
 	}
 	if !strings.Contains(body, "event: turn.done") {
 		t.Fatalf("expected terminal event, got %q", body)
+	}
+	if !strings.Contains(body, `"started_at":"2026-07-14T10:00:00Z"`) || !strings.Contains(body, `"failed_at":"2026-07-14T10:00:04Z"`) {
+		t.Fatalf("expected failed turn timing fields, got %q", body)
 	}
 }
 
@@ -472,18 +518,31 @@ func TestHandleStreamTurnKeepsSnapshotResponseIdentity(t *testing.T) {
 	close(channel)
 
 	streamHub := &stubStreamSubscriber{channel: channel}
+	turnLookups := 0
 	srv := newTestServerWithStream(UseCases{
 		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
 			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
 		}},
 		Turns: TurnUseCases{GetTurn: func(context.Context, string, string) (*domain.Turn, error) {
-			return &domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+			turnLookups++
+			status := domain.TurnStatusProcessing
+			if turnLookups > 1 {
+				status = domain.TurnStatusFailed
+			}
+			return &domain.Turn{
+				ID: "turn-1", ConversationID: "conv-1", Status: status,
+				ErrorCode: domain.TurnErrorUpstreamRequestFailed,
+			}, nil
 		},
 			GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
+				status := domain.TurnStatusProcessing
+				if turnLookups > 1 {
+					status = domain.TurnStatusFailed
+				}
 				return &TurnTimeline{
 					TurnID:         "turn-1",
 					ConversationID: "conv-1",
-					Status:         domain.TurnStatusProcessing,
+					Status:         status,
 					Items: []TurnTimelineItem{{
 						ID:          "status:response-failed:resp-1",
 						Type:        turnTimelineItemStatus,
@@ -501,7 +560,7 @@ func TestHandleStreamTurnKeepsSnapshotResponseIdentity(t *testing.T) {
 	srv.Handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	if strings.Count(body, `"id":"status:response-failed:resp-1"`) != 2 {
+	if strings.Count(body, `"id":"status:response-failed:resp-1"`) != 3 {
 		t.Fatalf("expected snapshot and durable failure to share one item identity, got %q", body)
 	}
 	if strings.Contains(body, `"id":"status:response-failed"`) {

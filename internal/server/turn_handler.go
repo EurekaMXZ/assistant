@@ -64,6 +64,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 
 	userID := currentUser(c).ID
 	terminal := turn.Status == domain.TurnStatusCompleted || turn.Status == domain.TurnStatusFailed
+	initiallyTerminal := terminal
 
 	var (
 		sub     io.Closer
@@ -105,15 +106,22 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 		terminal = true
 	}
 	if terminal {
+		if !initiallyTerminal {
+			if err := a.writeFinalTurnStreamState(c.Request.Context(), c.Writer, userID, turn.ID, itemRegistry); err != nil {
+				return
+			}
+			c.Writer.Flush()
+			return
+		}
 		errorCode := ""
 		publicError := ""
-		if snapshot.Status == domain.TurnStatusFailed {
+		if turn.Status == domain.TurnStatusFailed {
 			errorCode, publicError = presentationFailure(turn.ErrorCode)
 		}
 		_ = writeSSE(c.Writer, streamUIEventTurnDone, TurnStreamDone{
 			TurnID:         turn.ID,
 			ConversationID: turn.ConversationID,
-			Status:         snapshot.Status,
+			Status:         turn.Status,
 			ErrorCode:      errorCode,
 			Error:          publicError,
 		})
@@ -143,26 +151,8 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 			if refreshErr != nil || refreshed == nil || (refreshed.Status != domain.TurnStatusCompleted && refreshed.Status != domain.TurnStatusFailed) {
 				continue
 			}
-			finalSnapshot, _, _, snapshotErr := a.loadTurnStreamSnapshot(c.Request.Context(), userID, refreshed, itemRegistry)
-			if snapshotErr != nil {
+			if err := a.writeFinalTurnStreamState(c.Request.Context(), c.Writer, userID, turn.ID, itemRegistry); err != nil {
 				continue
-			}
-			if err := writeSSE(c.Writer, streamUIEventTurnSnapshot, finalSnapshot); err != nil {
-				return
-			}
-			errorCode := ""
-			publicError := ""
-			if refreshed.Status == domain.TurnStatusFailed {
-				errorCode, publicError = presentationFailure(refreshed.ErrorCode)
-			}
-			if err := writeSSE(c.Writer, streamUIEventTurnDone, TurnStreamDone{
-				TurnID:         refreshed.ID,
-				ConversationID: refreshed.ConversationID,
-				Status:         refreshed.Status,
-				ErrorCode:      errorCode,
-				Error:          publicError,
-			}); err != nil {
-				return
 			}
 			c.Writer.Flush()
 			return
@@ -178,6 +168,10 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 			c.Writer.Flush()
 
 			if done {
+				if err := a.writeFinalTurnStreamState(c.Request.Context(), c.Writer, userID, turn.ID, itemRegistry); err != nil {
+					return
+				}
+				c.Writer.Flush()
 				return
 			}
 		}
@@ -195,6 +189,9 @@ func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, tu
 			ConversationID: timeline.ConversationID,
 			Status:         timeline.Status,
 			Items:          items.FilterAll(timeline.Items),
+			StartedAt:      turn.StartedAt,
+			CompletedAt:    turn.CompletedAt,
+			FailedAt:       turn.FailedAt,
 		}, lastTimelineResponseID(timeline.Items, turnResponseID(turn)), responseOutputSlotsFromTimeline(timeline.Items), nil
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
@@ -206,6 +203,9 @@ func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, tu
 		ConversationID: turn.ConversationID,
 		Status:         turn.Status,
 		Items:          []TurnTimelineItem{},
+		StartedAt:      turn.StartedAt,
+		CompletedAt:    turn.CompletedAt,
+		FailedAt:       turn.FailedAt,
 	}
 	if len(snapshot.Items) == 0 {
 		if item := fallbackStatusItem(turn); item != nil {
@@ -215,6 +215,35 @@ func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, tu
 		}
 	}
 	return snapshot, turnResponseID(turn), newResponseOutputSlotResolver(), nil
+}
+
+func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWriter, ownerUserID string, turnID string, items *presentationItemRegistry) error {
+	turn, err := a.useCases.Turns.GetTurn(ctx, ownerUserID, turnID)
+	if err != nil {
+		return err
+	}
+	if turn == nil || (turn.Status != domain.TurnStatusCompleted && turn.Status != domain.TurnStatusFailed) {
+		return errors.New("terminal stream event arrived before durable turn completion")
+	}
+	snapshot, _, _, err := a.loadTurnStreamSnapshot(ctx, ownerUserID, turn, items)
+	if err != nil {
+		return err
+	}
+	if err := writeSSE(w, streamUIEventTurnSnapshot, snapshot); err != nil {
+		return err
+	}
+	errorCode := ""
+	publicError := ""
+	if turn.Status == domain.TurnStatusFailed {
+		errorCode, publicError = presentationFailure(turn.ErrorCode)
+	}
+	return writeSSE(w, streamUIEventTurnDone, TurnStreamDone{
+		TurnID:         turn.ID,
+		ConversationID: turn.ConversationID,
+		Status:         turn.Status,
+		ErrorCode:      errorCode,
+		Error:          publicError,
+	})
 }
 
 func responseOutputSlotsFromTimeline(items []TurnTimelineItem) *responseOutputSlotResolver {
@@ -255,10 +284,13 @@ func (a *API) writeStreamUIEvents(w http.ResponseWriter, state *presentationStre
 	}
 	terminal := false
 	for _, frame := range frames {
+		if frame.Terminal {
+			terminal = true
+			continue
+		}
 		if err := writeSSE(w, frame.Event, frame.Payload); err != nil {
 			return false, err
 		}
-		terminal = terminal || frame.Terminal
 	}
 	return terminal, nil
 }
