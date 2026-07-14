@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,5 +110,20 @@ func TestMailSettingsRequireExactSystemRole(t *testing.T) {
 	_, err := service.GetSettings(context.Background(), &domain.User{ID: "admin-1", Role: domain.UserRoleAdmin})
 	if !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("admin settings error = %v, want forbidden", err)
+	}
+}
+
+func TestVerificationEmailUsesConfiguredPublicOrigin(t *testing.T) {
+	store := &stubSettingsStore{stored: StoredSettings{Settings: Settings{
+		Enabled: true, Host: "smtp.example.com", Port: 587, Security: SecurityStartTLS, FromEmail: "noreply@example.com",
+	}}}
+	sender := &stubSender{}
+	service := &Service{Settings: store, Sender: sender, PublicURL: "https://assistant.example.com"}
+	if err := service.SendVerification(context.Background(), "recipient@example.com", "verification-token"); err != nil {
+		t.Fatalf("send verification: %v", err)
+	}
+	want := "https://assistant.example.com/auth/verify-email?token=verification-token"
+	if !strings.Contains(sender.message.Body, want) || strings.Contains(sender.message.Body, "localhost") {
+		t.Fatalf("unexpected verification email body: %q", sender.message.Body)
 	}
 }
