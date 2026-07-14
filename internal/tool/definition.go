@@ -163,95 +163,91 @@ func internetSearchDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        internetSearchName,
-		Description: "Discover relevant public web sources. This returns candidate URLs and search snippets, not full page content. After choosing the most relevant results, use internet.extract to read those URLs before relying on their contents. Refine the query instead of requesting page bodies through search.",
+		Description: "Search the web for current information on any topic. Returns snippets and source URLs. Use internet.extract to read selected pages before relying on their full contents.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"query":{
 					"type":"string",
-					"description":"The search query to run."
-				},
-				"topic":{
-					"type":"string",
-					"enum":["general","news"],
-					"description":"Search topic. Use news for recent news-specific queries; otherwise use general."
+					"description":"Search query"
 				},
 				"search_depth":{
 					"type":"string",
 					"enum":["basic","advanced","fast","ultra-fast"],
-					"description":"How thorough or fast the search should be. Use advanced for stronger retrieval and fast/ultra-fast when latency matters."
+					"description":"The depth of the search. basic for generic results, advanced for more thorough search, fast for optimized low latency with high relevance, ultra-fast for prioritizing latency above all else.",
+					"default":"basic"
 				},
-				"chunks_per_source":{
-					"type":"integer",
-					"minimum":1,
-					"maximum":3,
-					"description":"Number of content chunks per source when supported by the selected search depth."
-				},
-				"max_results":{
-					"type":"integer",
-					"minimum":1,
-					"maximum":20,
-					"description":"The maximum number of search results to return."
+				"topic":{
+					"type":"string",
+					"enum":["general"],
+					"description":"The category of the search.",
+					"default":"general"
 				},
 				"time_range":{
 					"type":"string",
-					"enum":["day","week","month","year","d","w","m","y"],
-					"description":"Optional recency window for the search."
+					"enum":["day","week","month","year"],
+					"description":"The time range back from the current date to include in the search results."
 				},
 				"start_date":{
 					"type":"string",
-					"description":"Optional inclusive start date in YYYY-MM-DD format."
+					"description":"Will return all results after the specified start date. Required format: YYYY-MM-DD.",
+					"default":""
 				},
 				"end_date":{
 					"type":"string",
-					"description":"Optional inclusive end date in YYYY-MM-DD format."
+					"description":"Will return all results before the specified end date. Required format: YYYY-MM-DD.",
+					"default":""
 				},
-				"days":{
-					"type":"integer",
-					"minimum":1,
-					"description":"Optional number of days back to include for news searches."
+				"max_results":{
+					"type":"number",
+					"minimum":5,
+					"maximum":20,
+					"description":"The maximum number of search results to return.",
+					"default":5
 				},
 				"include_images":{
 					"type":"boolean",
-					"description":"Include query-related images."
+					"description":"Include a list of query-related images in the response.",
+					"default":false
 				},
 				"include_image_descriptions":{
 					"type":"boolean",
-					"description":"Include descriptions for returned images."
+					"description":"Include descriptions for returned images.",
+					"default":false
 				},
-				"include_favicon":{
+				"include_raw_content":{
 					"type":"boolean",
-					"description":"Include favicon URLs for result domains."
-				},
-				"include_usage":{
-					"type":"boolean",
-					"description":"Include Tavily credit usage metadata when needed."
+					"description":"Include the cleaned and parsed HTML content of each search result.",
+					"default":false
 				},
 				"include_domains":{
 					"type":"array",
-					"description":"Optional domains to include in the search.",
-					"items":{"type":"string"}
+					"description":"A list of domains to specifically include in the search results.",
+					"items":{"type":"string"},
+					"default":[]
 				},
 				"exclude_domains":{
 					"type":"array",
-					"description":"Optional domains to exclude from the search.",
-					"items":{"type":"string"}
+					"description":"A list of domains to specifically exclude from the search results.",
+					"items":{"type":"string"},
+					"default":[]
 				},
 				"country":{
 					"type":"string",
-					"description":"Optional lowercase English country name used to bias general web results, for example 'united states'."
+					"description":"Boost results from a country. Use the full country name, not an ISO code. Available only for general search.",
+					"default":""
 				},
-				"auto_parameters":{
+				"include_favicon":{
 					"type":"boolean",
-					"description":"Let Tavily automatically tune search parameters when appropriate."
+					"description":"Whether to include the favicon URL for each result.",
+					"default":false
 				},
 				"exact_match":{
 					"type":"boolean",
-					"description":"Require results to contain a phrase verbatim. Set this only when query contains a non-empty ASCII double-quoted phrase, for example '\"John Smith\" CEO'; otherwise omit it or set false."
+					"description":"Only return results containing the exact phrase or phrases in quotes in the query."
 				}
 			},
-			"required":["query"],
-			"additionalProperties":false
+			"required":["query"]
 		}`),
 	}
 }
@@ -260,66 +256,43 @@ func internetExtractDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        internetExtractName,
-		Description: "Read content from URLs selected from internet.search results. Use this after search when grounding an answer in source content, normally with only the 1-3 most relevant URLs and a focused query so Tavily returns relevant chunks.",
+		Description: "Extract content from URLs selected from internet.search results. Returns raw page content in markdown or text format.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"urls":{
 					"type":"array",
-					"description":"The 1-3 most relevant URLs selected from internet.search results.",
-					"items":{"type":"string"},
-					"minItems":1,
-					"maxItems":3
+					"description":"List of URLs to extract content from.",
+					"items":{"type":"string"}
 				},
 				"extract_depth":{
 					"type":"string",
 					"enum":["basic","advanced"],
-					"description":"Extraction depth. Use advanced for JavaScript-heavy pages, tables, or embedded content."
+					"description":"Use advanced for LinkedIn, protected sites, or tables and embedded content.",
+					"default":"basic"
+				},
+				"include_images":{
+					"type":"boolean",
+					"description":"Include images from pages.",
+					"default":false
 				},
 				"format":{
 					"type":"string",
 					"enum":["markdown","text"],
-					"description":"Content format to return."
-				},
-				"timeout":{
-					"type":"number",
-					"minimum":1,
-					"maximum":60,
-					"description":"Per-request extraction timeout in seconds."
-				},
-				"include_images":{
-					"type":"boolean",
-					"description":"Include image URLs extracted from the page."
+					"description":"Output format.",
+					"default":"markdown"
 				},
 				"include_favicon":{
 					"type":"boolean",
-					"description":"Include favicon URLs."
-				},
-				"include_usage":{
-					"type":"boolean",
-					"description":"Include Tavily credit usage metadata when needed."
+					"description":"Include favicon URLs.",
+					"default":false
 				},
 				"query":{
 					"type":"string",
-					"description":"Focused user intent used to rerank extracted chunks and avoid returning unrelated page content."
-				},
-				"chunks_per_source":{
-					"type":"integer",
-					"minimum":1,
-					"maximum":5,
-					"description":"Number of chunks per source when query reranking is used."
-				},
-				"extraction_prompt":{
-					"type":"string",
-					"description":"Optional natural-language extraction instruction for structured extraction."
-				},
-				"schema":{
-					"type":"object",
-					"description":"Optional JSON schema for structured extraction."
+					"description":"Query to rerank content chunks by relevance."
 				}
 			},
-			"required":["urls"],
-			"additionalProperties":false
+			"required":["urls"]
 		}`),
 	}
 }

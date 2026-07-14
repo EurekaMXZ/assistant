@@ -2,7 +2,6 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 )
 
 type SearchWebHandler struct {
@@ -18,22 +17,17 @@ func (h SearchWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCal
 		Query                    string   `json:"query"`
 		Topic                    string   `json:"topic"`
 		SearchDepth              string   `json:"search_depth"`
-		ChunksPerSource          int      `json:"chunks_per_source"`
-		MaxResults               int      `json:"max_results"`
+		MaxResults               float64  `json:"max_results"`
 		TimeRange                string   `json:"time_range"`
 		StartDate                string   `json:"start_date"`
 		EndDate                  string   `json:"end_date"`
-		Days                     int      `json:"days"`
-		IncludeAnswer            any      `json:"include_answer"`
-		IncludeRawContent        any      `json:"include_raw_content"`
+		IncludeRawContent        bool     `json:"include_raw_content"`
 		IncludeImages            bool     `json:"include_images"`
 		IncludeImageDescriptions bool     `json:"include_image_descriptions"`
 		IncludeFavicon           bool     `json:"include_favicon"`
-		IncludeUsage             bool     `json:"include_usage"`
 		IncludeDomains           []string `json:"include_domains"`
 		ExcludeDomains           []string `json:"exclude_domains"`
 		Country                  string   `json:"country"`
-		AutoParameters           bool     `json:"auto_parameters"`
 		ExactMatch               bool     `json:"exact_match"`
 	}
 	if err := decodeToolArguments(call, WebSearch, &input); err != nil {
@@ -44,22 +38,17 @@ func (h SearchWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCal
 		Query:                    input.Query,
 		Topic:                    input.Topic,
 		SearchDepth:              input.SearchDepth,
-		ChunksPerSource:          input.ChunksPerSource,
 		MaxResults:               input.MaxResults,
 		TimeRange:                input.TimeRange,
 		StartDate:                input.StartDate,
 		EndDate:                  input.EndDate,
-		Days:                     input.Days,
-		IncludeAnswer:            input.IncludeAnswer,
 		IncludeRawContent:        input.IncludeRawContent,
 		IncludeImages:            input.IncludeImages,
 		IncludeImageDescriptions: input.IncludeImageDescriptions,
 		IncludeFavicon:           input.IncludeFavicon,
-		IncludeUsage:             input.IncludeUsage,
 		IncludeDomains:           input.IncludeDomains,
 		ExcludeDomains:           input.ExcludeDomains,
 		Country:                  input.Country,
-		AutoParameters:           input.AutoParameters,
 		ExactMatch:               input.ExactMatch,
 	})
 	if err != nil {
@@ -84,34 +73,24 @@ func (h ExtractWebHandler) ToolName() string {
 
 func (h ExtractWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCall) (*ToolExecutionResult, error) {
 	var input struct {
-		URLs             []string        `json:"urls"`
-		ExtractDepth     string          `json:"extract_depth"`
-		Format           string          `json:"format"`
-		Timeout          float64         `json:"timeout"`
-		IncludeImages    bool            `json:"include_images"`
-		IncludeFavicon   bool            `json:"include_favicon"`
-		IncludeUsage     bool            `json:"include_usage"`
-		Query            string          `json:"query"`
-		ChunksPerSource  int             `json:"chunks_per_source"`
-		ExtractionPrompt string          `json:"extraction_prompt"`
-		Schema           json.RawMessage `json:"schema"`
+		URLs           []string `json:"urls"`
+		ExtractDepth   string   `json:"extract_depth"`
+		Format         string   `json:"format"`
+		IncludeImages  bool     `json:"include_images"`
+		IncludeFavicon bool     `json:"include_favicon"`
+		Query          string   `json:"query"`
 	}
 	if err := decodeToolArguments(call, WebExtract, &input); err != nil {
 		return nil, err
 	}
 
 	payload, err := h.UseCase.Extract(ctx, ExtractWebInput{
-		URLs:             input.URLs,
-		ExtractDepth:     input.ExtractDepth,
-		Format:           input.Format,
-		Timeout:          input.Timeout,
-		IncludeImages:    input.IncludeImages,
-		IncludeFavicon:   input.IncludeFavicon,
-		IncludeUsage:     input.IncludeUsage,
-		Query:            input.Query,
-		ChunksPerSource:  input.ChunksPerSource,
-		ExtractionPrompt: input.ExtractionPrompt,
-		Schema:           input.Schema,
+		URLs:           input.URLs,
+		ExtractDepth:   input.ExtractDepth,
+		Format:         input.Format,
+		IncludeImages:  input.IncludeImages,
+		IncludeFavicon: input.IncludeFavicon,
+		Query:          input.Query,
 	})
 	if err != nil {
 		return nil, err

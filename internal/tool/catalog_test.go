@@ -35,7 +35,7 @@ func TestDefaultToolsWithTavilyIncludesInternetNamespace(t *testing.T) {
 
 func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 	search := internetSearchDefinition()
-	if !strings.Contains(search.Description, "candidate URLs") || !strings.Contains(search.Description, "internet.extract") {
+	if !strings.Contains(search.Description, "source URLs") || !strings.Contains(search.Description, "internet.extract") {
 		t.Fatalf("search description does not define discovery workflow: %q", search.Description)
 	}
 
@@ -45,7 +45,7 @@ func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 	if err := json.Unmarshal(search.Parameters, &searchSchema); err != nil {
 		t.Fatalf("decode search schema: %v", err)
 	}
-	for _, property := range []string{"include_answer", "include_raw_content"} {
+	for _, property := range []string{"include_answer", "chunks_per_source", "auto_parameters"} {
 		if _, exists := searchSchema.Properties[property]; exists {
 			t.Fatalf("search schema exposes %q", property)
 		}
@@ -55,19 +55,19 @@ func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 	}
 
 	extract := internetExtractDefinition()
-	if !strings.Contains(extract.Description, "selected from internet.search") || !strings.Contains(extract.Description, "focused query") {
+	if !strings.Contains(extract.Description, "internet.search") || !strings.Contains(extract.Description, "markdown or text") {
 		t.Fatalf("extract description does not define follow-up workflow: %q", extract.Description)
 	}
 	var extractSchema struct {
-		Properties map[string]struct {
-			MaxItems int `json:"maxItems"`
-		} `json:"properties"`
+		Properties map[string]json.RawMessage `json:"properties"`
 	}
 	if err := json.Unmarshal(extract.Parameters, &extractSchema); err != nil {
 		t.Fatalf("decode extract schema: %v", err)
 	}
-	if extractSchema.Properties["urls"].MaxItems != 3 {
-		t.Fatalf("extract urls maxItems = %d, want 3", extractSchema.Properties["urls"].MaxItems)
+	for _, property := range []string{"timeout", "chunks_per_source", "extraction_prompt", "schema"} {
+		if _, exists := extractSchema.Properties[property]; exists {
+			t.Fatalf("extract schema exposes %q", property)
+		}
 	}
 }
 
