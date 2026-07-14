@@ -14,9 +14,9 @@ import {
 } from "lucide-react";
 import { useAutosizeTextarea } from "@/hooks/use-autosize-textarea";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { getConversationAttachmentBlob } from "@/lib/api";
+import { ImagePreview } from "./image-preview";
 import { ComposerOptions } from "./composer-options";
 import type { Model, ReasoningEffort } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -129,7 +129,6 @@ function ComposerAttachmentItem({
   const image = isImageAttachment(attachment);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!image) return;
@@ -182,46 +181,28 @@ function ComposerAttachmentItem({
 
   if (image) {
     return (
-      <>
-        <div className="relative size-16 shrink-0">
-          <button
-            type="button"
-            aria-label={`预览 ${attachment.name}`}
-            className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            disabled={!previewUrl}
-            onClick={() => setPreviewOpen(true)}
-          >
-            {previewUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt={attachment.name}
-                className="size-full object-cover"
-                onError={() => setPreviewFailed(true)}
-              />
-            ) : previewFailed ? (
+      <div className="relative size-16 shrink-0">
+        {previewUrl && !previewFailed ? (
+          <ImagePreview
+            src={previewUrl}
+            alt={attachment.name}
+            wrapperClassName="size-16"
+            previewButtonClassName="size-16 border bg-muted transition-colors hover:border-foreground/30"
+            imageClassName="size-full object-cover"
+            showActions={false}
+            onError={() => setPreviewFailed(true)}
+          />
+        ) : (
+          <div className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+            {previewFailed ? (
               <ImageIcon className="size-5 text-muted-foreground" />
             ) : (
               <Loader2 className="size-4 animate-spin text-muted-foreground" />
             )}
-          </button>
-          {removeButton}
-        </div>
-
-        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent className="max-w-[calc(100%-2rem)] gap-0 bg-black p-2 text-white ring-white/15 sm:max-w-4xl">
-            <DialogTitle className="sr-only">{attachment.name}</DialogTitle>
-            {previewUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt={attachment.name}
-                className="max-h-[82vh] w-full object-contain"
-              />
-            ) : null}
-          </DialogContent>
-        </Dialog>
-      </>
+          </div>
+        )}
+        {removeButton}
+      </div>
     );
   }
 

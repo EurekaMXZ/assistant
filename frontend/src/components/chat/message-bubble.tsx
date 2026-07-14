@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { getConversationAttachmentBlob } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Message, Turn } from "@/lib/types";
+import { ImagePreview } from "./image-preview";
 
 interface MessageBubbleProps {
   message: Message;
@@ -134,11 +135,14 @@ function AttachmentImagePreview({
   return (
     <div className="overflow-hidden rounded-lg border bg-background/60">
       {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <ImagePreview
           src={src}
           alt={attachment.filename || "附件图片"}
-          className="max-h-72 w-full object-contain"
+          wrapperClassName="flex w-full"
+          previewButtonClassName="w-full"
+          imageClassName="max-h-72 w-full object-contain"
+          downloadName={attachment.filename}
+          onError={() => setHidden(true)}
         />
       ) : (
         <div className="h-32 w-48 animate-pulse bg-muted" />
