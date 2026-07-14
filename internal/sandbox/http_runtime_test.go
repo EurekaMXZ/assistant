@@ -43,7 +43,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 			if request.Command != "echo" || len(request.Args) != 1 || request.Args[0] != "hello" {
 				t.Fatalf("unexpected exec request: %#v", request)
 			}
-			_ = json.NewEncoder(w).Encode(domain.SandboxCommandResult{RuntimeID: "runtime-1", Command: "echo", Stdout: "hello\n"})
+			_ = json.NewEncoder(w).Encode(domain.SandboxCommandResult{RuntimeID: "runtime-1", Command: "echo", Output: "hello\n"})
 		case "DELETE /sandboxes/runtime-1":
 			_ = json.NewEncoder(w).Encode(domain.SandboxHandle{Provider: "firecracker", RuntimeID: "runtime-1"})
 		default:
@@ -69,8 +69,8 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec command: %v", err)
 	}
-	if result.Stdout != "hello\n" {
-		t.Fatalf("Stdout = %q, want hello", result.Stdout)
+	if result.Output != "hello\n" {
+		t.Fatalf("Output = %q, want hello", result.Output)
 	}
 
 	destroyed, err := runtime.DestroySandbox(context.Background(), *handle, "destroy-key")

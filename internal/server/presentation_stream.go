@@ -161,8 +161,7 @@ func filterToolPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 		Links:            links,
 		Command:          presentation.Command,
 		WorkingDirectory: presentation.WorkingDirectory,
-		Stdout:           presentation.Stdout,
-		Stderr:           presentation.Stderr,
+		CommandOutput:    presentation.CommandOutput,
 		ExitCode:         presentation.ExitCode,
 		TimedOut:         presentation.TimedOut,
 		Metadata: compactMetadata(map[string]any{

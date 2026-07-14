@@ -198,8 +198,7 @@ Fields:
 - `command`
 - `args`
 - `working_directory`
-- `stdout`
-- `stderr`
+- `output`: stdout and stderr in their original execution order
 - `exit_code`
 - `timed_out`
 

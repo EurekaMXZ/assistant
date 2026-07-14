@@ -221,8 +221,8 @@ function TimelineToolPayload({ item }: { item: TimelineItem }) {
   );
 }
 
-function SandboxCommandPayload({ item }: { item: TimelineItem }) {
-  const hasOutput = item.stdout !== undefined || item.stderr !== undefined;
+export function SandboxCommandPayload({ item }: { item: TimelineItem }) {
+  const output = item.command_output;
   const running = item.status === "started" || item.status === "streaming";
 
   return (
@@ -250,27 +250,16 @@ function SandboxCommandPayload({ item }: { item: TimelineItem }) {
           </span>
         </div>
 
-        {hasOutput ? (
-          <div className="divide-y">
-            {item.stdout !== undefined && item.stdout !== "" ? (
-              <div className="overflow-x-auto px-3 py-2.5">
-                <pre className="w-max min-w-full whitespace-pre font-mono leading-5 text-foreground">
-                  {item.stdout}
-                </pre>
-              </div>
-            ) : null}
-            {item.stderr !== undefined && item.stderr !== "" ? (
-              <div className="overflow-x-auto px-3 py-2.5">
-                <div className="mb-1 font-medium text-destructive">stderr</div>
-                <pre className="w-max min-w-full whitespace-pre font-mono leading-5 text-destructive">
-                  {item.stderr}
-                </pre>
-              </div>
-            ) : null}
-            {item.stdout === "" && item.stderr === "" ? (
-              <p className="px-3 py-2.5 text-muted-foreground">无输出</p>
-            ) : null}
-          </div>
+        {output !== undefined ? (
+          output ? (
+            <div className="overflow-x-auto px-3 py-2.5">
+              <pre className="w-max min-w-full whitespace-pre font-mono leading-5 text-foreground">
+                {output}
+              </pre>
+            </div>
+          ) : (
+            <p className="px-3 py-2.5 text-muted-foreground">无输出</p>
+          )
         ) : (
           <p className="px-3 py-2.5 text-muted-foreground">
             {running ? "等待命令完成…" : "未提供命令输出"}

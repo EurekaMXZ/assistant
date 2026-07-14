@@ -65,13 +65,13 @@ func TestPresentationItemRegistryAllowsSandboxCommandOutputOnly(t *testing.T) {
 		Title:     "sandbox.exec",
 		Status:    "completed",
 		Arguments: json.RawMessage(`{"command":"printf","args":["hello"]}`),
-		Output:    json.RawMessage(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-secret","command":"printf","args":["hello"],"stdout":"hello","stderr":"","exit_code":0}}`),
+		Output:    json.RawMessage(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-secret","command":"printf","args":["hello"],"output":"hello","exit_code":0}}`),
 		Metadata:  map[string]any{"error": "private-error"},
 	})
 	if !ok {
 		t.Fatal("sandbox command item was dropped")
 	}
-	if item.Title != "命令执行完成" || item.Command != "printf hello" || item.Stdout != "hello" {
+	if item.Title != "命令执行完成" || item.Command != "printf hello" || item.CommandOutput != "hello" {
 		t.Fatalf("unexpected sandbox command presentation: %#v", item)
 	}
 	if item.ExitCode == nil || *item.ExitCode != 0 {

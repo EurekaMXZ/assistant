@@ -307,8 +307,7 @@ export interface TimelineItem {
   links?: TimelineLink[];
   command?: string;
   working_directory?: string;
-  stdout?: string;
-  stderr?: string;
+  command_output?: string;
   exit_code?: number;
   timed_out?: boolean;
   metadata?: Record<string, unknown>;

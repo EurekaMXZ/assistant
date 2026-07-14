@@ -484,7 +484,7 @@ func TestLocalExecutorExecSandboxCommand(t *testing.T) {
 			RuntimeID:        "runtime-1",
 			Command:          "pwd",
 			WorkingDirectory: "/tmp/sandbox",
-			Stdout:           "/tmp/sandbox\n",
+			Output:           "/tmp/sandbox\n",
 			ExitCode:         0,
 		},
 	}
@@ -516,6 +516,9 @@ func TestLocalExecutorExecSandboxCommand(t *testing.T) {
 	}
 	if result == nil || result.OutputItem.CallID != "call-6" || len(result.StreamEvents) != 0 {
 		t.Fatalf("unexpected sandbox exec output: %#v", result)
+	}
+	if !strings.Contains(result.OutputItem.Output, `"output":"/tmp/sandbox\n"`) || strings.Contains(result.OutputItem.Output, `"stdout"`) || strings.Contains(result.OutputItem.Output, `"stderr"`) {
+		t.Fatalf("sandbox tool did not return unified command output: %s", result.OutputItem.Output)
 	}
 }
 

@@ -160,12 +160,12 @@ func Exec(ctx context.Context, settings Settings, request domain.SandboxCommandR
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	stdout := &limitedBuffer{limit: settings.MaxOutputBytes}
-	stderr := &limitedBuffer{limit: settings.MaxOutputBytes}
+	output := &limitedBuffer{limit: settings.MaxOutputBytes}
 	cmd := exec.CommandContext(commandCtx, command, request.Args...)
 	cmd.Dir = workdir
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	// A shared writer gives both child descriptors one OS pipe, preserving write order.
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	exitCode := 0
 	runErr := cmd.Run()
@@ -176,8 +176,8 @@ func Exec(ctx context.Context, settings Settings, request domain.SandboxCommandR
 			exitCode = exitErr.ExitCode()
 		} else if timedOut {
 			exitCode = -1
-			if stderr.Len() == 0 {
-				_, _ = stderr.Write([]byte(runErr.Error()))
+			if output.Len() == 0 {
+				_, _ = output.Write([]byte(runErr.Error()))
 			}
 		} else {
 			return nil, fmt.Errorf("exec command: %w", runErr)
@@ -188,8 +188,7 @@ func Exec(ctx context.Context, settings Settings, request domain.SandboxCommandR
 		Command:          command,
 		Args:             append([]string(nil), request.Args...),
 		WorkingDirectory: workdir,
-		Stdout:           stdout.String(),
-		Stderr:           stderr.String(),
+		Output:           output.String(),
 		ExitCode:         exitCode,
 		TimedOut:         timedOut,
 	}, nil

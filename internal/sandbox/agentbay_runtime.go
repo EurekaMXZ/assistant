@@ -80,6 +80,7 @@ type agentBayDeleteResult struct {
 }
 
 type agentBayCommandResult struct {
+	Output       string
 	Stdout       string
 	Stderr       string
 	ExitCode     int
@@ -203,27 +204,43 @@ func (r *AgentBayRuntime) ExecSandboxCommand(ctx context.Context, handle domain.
 		return nil, fmt.Errorf("command timeout is too large")
 	}
 	workingDirectory := strings.TrimSpace(request.WorkingDirectory)
-	result, err := session.ExecuteCommand(joinShellCommand(command, request.Args), timeoutSeconds*1000, workingDirectory)
+	// AgentBay otherwise returns separate completed buffers with no cross-stream ordering.
+	result, err := session.ExecuteCommand(joinShellCommand(command, request.Args)+" 2>&1", timeoutSeconds*1000, workingDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("execute AgentBay command: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	stderr := result.Stderr
-	if stderr == "" && result.ExitCode != 0 {
-		stderr = result.ErrorMessage
+	output := result.Output
+	if output == "" {
+		output = mergeLegacyCommandOutput(result.Stdout, result.Stderr)
+	}
+	if output == "" && result.ExitCode != 0 {
+		output = result.ErrorMessage
 	}
 	return &domain.SandboxCommandResult{
 		RuntimeID:        strings.TrimSpace(handle.RuntimeID),
 		Command:          command,
 		Args:             append([]string(nil), request.Args...),
 		WorkingDirectory: workingDirectory,
-		Stdout:           result.Stdout,
-		Stderr:           stderr,
+		Output:           output,
 		ExitCode:         result.ExitCode,
 		TimedOut:         result.TimedOut,
 	}, nil
+}
+
+func mergeLegacyCommandOutput(stdout string, stderr string) string {
+	if stdout == "" {
+		return stderr
+	}
+	if stderr == "" {
+		return stdout
+	}
+	if strings.HasSuffix(stdout, "\n") {
+		return stdout + stderr
+	}
+	return stdout + "\n" + stderr
 }
 
 func (r *AgentBayRuntime) ready(ctx context.Context) error {
@@ -420,6 +437,7 @@ func (s *sdkAgentBaySession) ExecuteCommand(command string, timeoutMs int, worki
 		return agentBayCommandResult{}, fmt.Errorf("AgentBay command returned an empty response")
 	}
 	return agentBayCommandResult{
+		Output:       result.Output,
 		Stdout:       result.Stdout,
 		Stderr:       result.Stderr,
 		ExitCode:     result.ExitCode,

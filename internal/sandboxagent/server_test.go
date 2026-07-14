@@ -19,10 +19,10 @@ func TestExecRunsCommandInsideWorkdir(t *testing.T) {
 		t.Fatalf("exec: %v", err)
 	}
 	if result.ExitCode != 0 {
-		t.Fatalf("ExitCode = %d, want 0; stderr=%q", result.ExitCode, result.Stderr)
+		t.Fatalf("ExitCode = %d, want 0; output=%q", result.ExitCode, result.Output)
 	}
-	if !strings.Contains(result.Stdout, "nested") {
-		t.Fatalf("Stdout = %q, want nested workdir", result.Stdout)
+	if !strings.Contains(result.Output, "nested") {
+		t.Fatalf("Output = %q, want nested workdir", result.Output)
 	}
 }
 
@@ -36,8 +36,21 @@ func TestExecAllowsWorkdirOutsideRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec: %v", err)
 	}
-	if !strings.Contains(result.Stdout, filepath.Join(base, "outside")) {
-		t.Fatalf("Stdout = %q, want outside workdir", result.Stdout)
+	if !strings.Contains(result.Output, filepath.Join(base, "outside")) {
+		t.Fatalf("Output = %q, want outside workdir", result.Output)
+	}
+}
+
+func TestExecPreservesStdoutAndStderrOrder(t *testing.T) {
+	result, err := Exec(context.Background(), Settings{Workdir: t.TempDir(), MaxOutputBytes: 1024}, domain.SandboxCommandRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf 'first\\n'; printf 'second\\n' >&2; printf 'third\\n'"},
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if result.Output != "first\nsecond\nthird\n" {
+		t.Fatalf("Output = %q, want interleaved command output", result.Output)
 	}
 }
 

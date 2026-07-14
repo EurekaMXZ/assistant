@@ -76,7 +76,7 @@ func TestAgentBayRuntimeLifecycle(t *testing.T) {
 		id:           "session-1",
 		deleteResult: agentBayDeleteResult{Success: true, RequestID: "delete-request"},
 		commandResult: agentBayCommandResult{
-			Stdout:   "hello\n",
+			Output:   "hello\n",
 			ExitCode: 0,
 		},
 	}
@@ -128,14 +128,14 @@ func TestAgentBayRuntimeLifecycle(t *testing.T) {
 	if client.getSessionID != "session-1" {
 		t.Fatalf("get session ID = %q, want session-1", client.getSessionID)
 	}
-	wantCommand := `'printf' '%s' 'hello world' 'a'"'"'b' '; rm -rf /'`
+	wantCommand := `'printf' '%s' 'hello world' 'a'"'"'b' '; rm -rf /' 2>&1`
 	if activeSession.command != wantCommand {
 		t.Fatalf("command = %q, want %q", activeSession.command, wantCommand)
 	}
 	if activeSession.timeoutMs != 7000 || activeSession.workingDirectory != "/workspace/project" {
 		t.Fatalf("unexpected command options: timeout=%d cwd=%q", activeSession.timeoutMs, activeSession.workingDirectory)
 	}
-	if result.RuntimeID != "session-1" || result.Stdout != "hello\n" || result.Command != "printf" {
+	if result.RuntimeID != "session-1" || result.Output != "hello\n" || result.Command != "printf" {
 		t.Fatalf("unexpected command result: %#v", result)
 	}
 
@@ -209,7 +209,7 @@ func TestAgentBayRuntimeUsesDefaultCommandTimeoutAndPreservesFailure(t *testing.
 	if session.timeoutMs != defaultCommandTimeoutSeconds*1000 {
 		t.Fatalf("timeout = %d, want %d", session.timeoutMs, defaultCommandTimeoutSeconds*1000)
 	}
-	if result.ExitCode != 2 || result.Stderr != "command failed" || !result.TimedOut {
+	if result.ExitCode != 2 || result.Output != "command failed" || !result.TimedOut {
 		t.Fatalf("unexpected failed command result: %#v", result)
 	}
 }

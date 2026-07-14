@@ -96,7 +96,7 @@ func TestBuildPublicToolPresentationExposesSandboxCommandResult(t *testing.T) {
 		SandboxExec,
 		"completed",
 		json.RawMessage(`{"command":"bash","args":["-lc","printf 'hello\\n' && printf 'warning\\n' >&2"],"working_directory":"work dir"}`),
-		[]byte(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-1","command":"bash","args":["-lc","printf 'hello\\n' && printf 'warning\\n' >&2"],"working_directory":"work dir","stdout":"hello\n","stderr":"warning\n","exit_code":7}}`),
+		[]byte(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-1","command":"bash","args":["-lc","printf 'hello\\n' && printf 'warning\\n' >&2"],"working_directory":"work dir","output":"hello\nwarning\n","exit_code":7}}`),
 		"",
 	)
 
@@ -106,10 +106,15 @@ func TestBuildPublicToolPresentationExposesSandboxCommandResult(t *testing.T) {
 	if presentation.Command != `bash -lc 'printf '"'"'hello\n'"'"' && printf '"'"'warning\n'"'"' >&2'` {
 		t.Fatalf("Command = %q", presentation.Command)
 	}
-	if presentation.WorkingDirectory != "work dir" || presentation.Stdout != "hello\n" || presentation.Stderr != "warning\n" {
+	if presentation.WorkingDirectory != "work dir" || presentation.CommandOutput != "hello\nwarning\n" {
 		t.Fatalf("unexpected command output: %#v", presentation)
 	}
 	if presentation.ExitCode == nil || *presentation.ExitCode != 7 {
 		t.Fatalf("ExitCode = %#v", presentation.ExitCode)
+	}
+
+	legacy := BuildPublicToolPresentation("", "", SandboxExec, "completed", nil, []byte(`{"result":{"stdout":"hello\n","stderr":"warning\n"}}`), "")
+	if legacy.CommandOutput != "hello\nwarning\n" {
+		t.Fatalf("legacy command output = %q", legacy.CommandOutput)
 	}
 }

@@ -128,8 +128,7 @@ type TurnTimelineItem struct {
 	Links            []TurnTimelineLink `json:"links,omitempty"`
 	Command          string             `json:"command,omitempty"`
 	WorkingDirectory string             `json:"working_directory,omitempty"`
-	Stdout           string             `json:"stdout,omitempty"`
-	Stderr           string             `json:"stderr,omitempty"`
+	CommandOutput    string             `json:"command_output,omitempty"`
 	ExitCode         *int               `json:"exit_code,omitempty"`
 	TimedOut         bool               `json:"timed_out,omitempty"`
 	Raw              json.RawMessage    `json:"raw,omitempty"`

@@ -22,8 +22,7 @@ type PublicToolPresentation struct {
 	Links            []PublicToolLink
 	Command          string
 	WorkingDirectory string
-	Stdout           string
-	Stderr           string
+	CommandOutput    string
 	ExitCode         *int
 	TimedOut         bool
 }
@@ -69,8 +68,10 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 		commandSource := args
 		if output := nestedObject(result, "result"); output != nil {
 			commandSource = output
-			presentation.Stdout = rawStringField(output, "stdout")
-			presentation.Stderr = rawStringField(output, "stderr")
+			presentation.CommandOutput = rawStringField(output, "output")
+			if _, hasOutput := output["output"]; !hasOutput {
+				presentation.CommandOutput = mergeLegacyCommandOutput(rawStringField(output, "stdout"), rawStringField(output, "stderr"))
+			}
 			if exitCode, ok := intField(output, "exit_code"); ok {
 				presentation.ExitCode = &exitCode
 			}
@@ -79,6 +80,20 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 		presentation.Command = commandLineRaw(commandSource)
 		presentation.WorkingDirectory = strings.TrimSpace(rawStringField(commandSource, "working_directory"))
 	}
+}
+
+func mergeLegacyCommandOutput(stdout string, stderr string) string {
+	if stdout == "" {
+		return stderr
+	}
+	if stderr == "" {
+		return stdout
+	}
+	separator := "\n"
+	if strings.HasSuffix(stdout, "\n") {
+		separator = ""
+	}
+	return stdout + separator + stderr
 }
 
 func applyTavilyPublicPresentation(presentation *PublicToolPresentation, toolName string, args map[string]any, result any) {
