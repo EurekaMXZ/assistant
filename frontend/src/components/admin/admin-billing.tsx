@@ -47,8 +47,9 @@ import {
   listAdminUsers,
   updateAdminBillingAccount,
 } from "@/lib/api";
-import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from "@/lib/types";
 import { parseDecimalNanos } from "@/lib/decimal-nanos";
+import { createIdempotencyKey } from "@/lib/idempotency-key";
+import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from "@/lib/types";
 
 type BillingView = "accounts" | "transactions" | "usage";
 
@@ -122,7 +123,7 @@ export function AdminBilling() {
     setAmount("");
     setReason("");
     setReference("");
-    setAdjustmentKey(crypto.randomUUID());
+    setAdjustmentKey(createIdempotencyKey());
   };
 
   const applyAdjustment = async () => {

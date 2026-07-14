@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Attachment, Conversation } from "./types";
 import type { InitialTurnResult } from "./api";
+import { createIdempotencyKey } from "./idempotency-key";
 import { normalizeTurnRequest, type TurnRequestDescriptor } from "./turn-request";
 
 const STORAGE_KEY = "assistant_initial_turn_operation";
@@ -52,7 +53,7 @@ export function createInitialTurnOperation(
   input: Omit<TurnRequestDescriptor, "attachment_ids">,
   files: File[],
   ownerUserId: string,
-  key = crypto.randomUUID(),
+  key = createIdempotencyKey(),
 ): InitialTurnOperation {
   const descriptor = normalizeTurnRequest({
     content: input.content,
