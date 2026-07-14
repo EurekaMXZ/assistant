@@ -47,6 +47,15 @@ export const conversationSchema = z.object({
   archived_at: dateTime.optional(),
 });
 
+export const conversationShareSchema = z.object({
+  id: z.string(),
+  conversation_id: z.string(),
+  created_by_user_id: z.string(),
+  title: z.string().optional(),
+  last_message_seq: z.number().int().nonnegative(),
+  created_at: dateTime,
+});
+
 export const attachmentSchema = z.object({
   id: z.string(),
   conversation_id: z.string(),

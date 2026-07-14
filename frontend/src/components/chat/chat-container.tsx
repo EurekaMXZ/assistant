@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import {
+  createConversationShare,
   createMessage,
   getConversation,
   getTurn,
@@ -18,7 +19,14 @@ import { useTurnTimelineController } from "@/hooks/use-turn-timeline-controller"
 import { useMobileHeader } from "@/components/layout/mobile-header-context";
 import { emitConversationUpdated, subscribeConversationUpdated } from "@/lib/conversation-events";
 import { takePendingHomeTurn } from "@/lib/pending-home-turn";
-import type { Conversation, Attachment, Message, Turn } from "@/lib/types";
+import { createIdempotencyKey } from "@/lib/idempotency-key";
+import {
+  clearConversationShareOperation,
+  readConversationShareOperation,
+  writeConversationShareOperation,
+  type ConversationShareOperation,
+} from "@/lib/conversation-share-operation";
+import type { Conversation, ConversationShare, Attachment, Message, Turn } from "@/lib/types";
 import {
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
@@ -27,6 +35,7 @@ import {
 import { requestDescriptorFromMessage } from "@/lib/turn-request";
 import { MessageList } from "./message-list";
 import { Composer } from "./composer";
+import { ConversationShareDialog } from "./conversation-share-dialog";
 import { ChatSkeleton } from "./chat-skeleton";
 import { TurnTimelinePanel } from "./turn-timeline";
 import { Button } from "@/components/ui/button";
@@ -39,7 +48,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Pencil } from "lucide-react";
+import { Loader2, Pencil, Share } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -104,7 +113,11 @@ async function inspectUnresolvedTurns(messages: Message[], conversationId: strin
 
 export function ChatContainer({ conversationId }: ChatContainerProps) {
   const { user, isLoading: authLoading } = useAuth();
-  const { setAction: setMobileAction, setTitle: setMobileTitle } = useMobileHeader();
+  const {
+    setAction: setMobileAction,
+    setTitle: setMobileTitle,
+    setTitleAction: setMobileTitleAction,
+  } = useMobileHeader();
   const isMobileViewport = useSyncExternalStore(
     subscribeMobileViewport,
     getMobileViewportSnapshot,
@@ -122,8 +135,12 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const [restoreTurns, setRestoreTurns] = useState<Turn[]>([]);
   const [renameOpen, setRenameOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [conversationShare, setConversationShare] = useState<ConversationShare | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
   const resumeConversationIdRef = useRef<string | null>(null);
   const restoreConversationIdRef = useRef<string | null>(null);
+  const shareCacheRef = useRef(new Map<string, ConversationShare>());
   const activeConversationIdRef = useRef(conversationId);
   const mountedRef = useRef(true);
 
@@ -176,9 +193,13 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   useEffect(() => () => setMobileTitle("Assistant"), [setMobileTitle]);
 
   useEffect(() => {
-    setMobileAction({ label: "重命名对话", onClick: () => setRenameOpen(true) });
-    return () => setMobileAction(null);
-  }, [setMobileAction]);
+    setMobileTitleAction({
+      conversationId,
+      label: "修改对话标题",
+      onLongPress: () => setRenameOpen(true),
+    });
+    return () => setMobileTitleAction(null);
+  }, [conversationId, setMobileTitleAction]);
 
   const refreshMessages = useCallback(async () => {
     const requestedConversationId = conversationId;
@@ -284,10 +305,15 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   }, [conversationId]);
 
   useEffect(() => {
+    setConversation(null);
+    setMessages([]);
     setAttachments([]);
     setIsUploadingAttachments(false);
     setResumeTurnId(null);
     setRestoreTurns([]);
+    setConversationShare(shareCacheRef.current.get(conversationId) || null);
+    setShareOpen(false);
+    setIsSharing(false);
     resumeConversationIdRef.current = null;
     restoreConversationIdRef.current = null;
   }, [conversationId]);
@@ -437,6 +463,91 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     }
   };
 
+  const handleShare = useCallback(async () => {
+    if (authLoading || isSharing || isStreaming) return;
+    if (!user) {
+      openAuthDialog("login");
+      return;
+    }
+    if (!conversation || conversation.id !== conversationId) return;
+
+    const latestMessageSeq = messages.reduce((latest, message) => Math.max(latest, message.seq), 0);
+    const cachedShare = shareCacheRef.current.get(conversation.id);
+    if (
+      cachedShare?.last_message_seq === latestMessageSeq &&
+      (cachedShare.title || "") === (conversation.title || "")
+    ) {
+      setConversationShare(cachedShare);
+      setShareOpen(true);
+      return;
+    }
+
+    const requestedConversationId = conversation.id;
+    const title = conversation.title || "";
+    const pendingOperation = readConversationShareOperation(user.id, requestedConversationId);
+    const operation: ConversationShareOperation =
+      pendingOperation?.lastMessageSeq === latestMessageSeq && pendingOperation.title === title
+        ? pendingOperation
+        : {
+            idempotencyKey: createIdempotencyKey(),
+            lastMessageSeq: latestMessageSeq,
+            title,
+          };
+    writeConversationShareOperation(user.id, requestedConversationId, operation);
+    setIsSharing(true);
+    try {
+      const result = await createConversationShare(
+        requestedConversationId,
+        operation.idempotencyKey,
+      );
+      if (
+        readConversationShareOperation(user.id, requestedConversationId)?.idempotencyKey !==
+        operation.idempotencyKey
+      ) {
+        return;
+      }
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
+        return;
+      }
+      clearConversationShareOperation(user.id, requestedConversationId, operation.idempotencyKey);
+      shareCacheRef.current.set(requestedConversationId, result.share);
+      setConversationShare(result.share);
+      setShareOpen(true);
+    } catch (error) {
+      const operationIsCurrent =
+        readConversationShareOperation(user.id, requestedConversationId)?.idempotencyKey ===
+        operation.idempotencyKey;
+      if (
+        mountedRef.current &&
+        activeConversationIdRef.current === requestedConversationId &&
+        operationIsCurrent &&
+        !isSessionUnauthorizedError(error)
+      ) {
+        toast.error(error instanceof Error ? error.message : "创建分享链接失败");
+      }
+    } finally {
+      const currentOperation = readConversationShareOperation(user.id, requestedConversationId);
+      if (
+        activeConversationIdRef.current === requestedConversationId &&
+        (currentOperation?.idempotencyKey === operation.idempotencyKey || currentOperation === null)
+      ) {
+        setIsSharing(false);
+      }
+    }
+  }, [authLoading, conversation, conversationId, isSharing, isStreaming, messages, user]);
+
+  useEffect(() => {
+    setMobileAction({
+      busy: isSharing,
+      conversationId,
+      disabled: conversation?.id !== conversationId || isSharing || isStreaming,
+      icon: isSharing ? <Loader2 className="size-4 animate-spin" /> : <Share className="size-4" />,
+      label: isSharing ? "正在创建分享链接" : "分享对话",
+      onClick: () => void handleShare(),
+    });
+    return () => setMobileAction(null);
+  }, [conversation?.id, conversationId, handleShare, isSharing, isStreaming, setMobileAction]);
+
   const handleEditMessage = (message: Message) => {
     setDraft(message.content_text || "");
 
@@ -550,6 +661,23 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
                 <span className="sr-only">重命名</span>
               </Button>
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              aria-busy={isSharing}
+              aria-label={isSharing ? "正在创建分享链接" : "分享对话"}
+              disabled={conversation.id !== conversationId || isSharing || isStreaming}
+              onClick={() => void handleShare()}
+            >
+              {isSharing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Share className="h-3.5 w-3.5" />
+              )}
+              <span className="sr-only">{isSharing ? "正在创建分享链接" : "分享对话"}</span>
+            </Button>
           </header>
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -640,6 +768,12 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConversationShareDialog
+        open={shareOpen}
+        share={conversationShare}
+        onOpenChange={setShareOpen}
+      />
     </>
   );
 }

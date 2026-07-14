@@ -9,6 +9,7 @@ import type {
   BillingToolPrice,
   BillingUsageEvent,
   Conversation,
+  ConversationShareResult,
   CursorPageResponse,
   Message,
   Model,
@@ -32,6 +33,7 @@ import {
   billingToolPriceSchema,
   billingUsageEventSchema,
   committedInitialTurnSchema,
+  conversationShareSchema,
   conversationSchema,
   cursorPageSchema,
   initialTurnResultSchema,
@@ -748,6 +750,17 @@ export async function patchConversation(
     method: "PATCH",
     body: JSON.stringify(payload),
   }).then((r) => r.conversation);
+}
+
+export async function createConversationShare(conversationId: string, idempotencyKey: string) {
+  return apiFetch<ConversationShareResult>(
+    `/conversations/${conversationId}/shares`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+    },
+    z.object({ share: conversationShareSchema, replayed: z.boolean() }),
+  );
 }
 
 // Attachments

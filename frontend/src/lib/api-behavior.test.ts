@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   applyAdminBillingAdjustment,
+  createConversationShare,
   disableAdminBillingRedemptionCode,
   getAdminOverview,
   getStreamUrl,
@@ -92,6 +93,39 @@ describe("backend API routing", () => {
     );
     expect(getStreamUrl("/turns/turn-1/stream")).toBe(
       "http://localhost:8080/api/v1/turns/turn-1/stream",
+    );
+  });
+});
+
+describe("conversation sharing", () => {
+  it("creates a share with the caller-provided idempotency key", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          share: {
+            id: "share-1",
+            conversation_id: "conversation-1",
+            created_by_user_id: "user-1",
+            title: "Shared conversation",
+            last_message_seq: 4,
+            created_at: "2026-07-14T12:00:00Z",
+          },
+          replayed: false,
+        },
+        { status: 201 },
+      ),
+    );
+
+    const result = await createConversationShare("conversation-1", "share-operation-1");
+
+    expect(result.share.id).toBe("share-1");
+    expect(result.share.last_message_seq).toBe(4);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost:8080/api/v1/conversations/conversation-1/shares",
+    );
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe(
+      "share-operation-1",
     );
   });
 });

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 )
@@ -76,5 +77,82 @@ func TestListConversationResourcesEncodeEmptyArrays(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), test.want) {
 			t.Fatalf("GET %s status=%d body=%s, want %s", test.path, rec.Code, rec.Body.String(), test.want)
 		}
+	}
+}
+
+func TestHandleCreateConversationShare(t *testing.T) {
+	createdAt := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{CreateConversationShare: func(_ context.Context, ownerUserID string, conversationID string, idempotencyKey string) (*CreateConversationShareResult, error) {
+			if ownerUserID != "user-1" || conversationID != "conversation-1" || idempotencyKey != "share-1" {
+				t.Fatalf("unexpected create share input: owner=%q conversation=%q key=%q", ownerUserID, conversationID, idempotencyKey)
+			}
+			return &CreateConversationShareResult{Share: domain.ConversationShare{
+				ID: "share-id", ConversationID: conversationID, CreatedByUserID: ownerUserID,
+				Title: "Shared conversation", LastMessageSeq: 4, CreatedAt: createdAt,
+			}}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conversation-1/shares", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Idempotency-Key", "share-1")
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"id":"share-id"`) || !strings.Contains(rec.Body.String(), `"last_message_seq":4`) || !strings.Contains(rec.Body.String(), `"replayed":false`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleCreateConversationShareReplaysIdempotently(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{CreateConversationShare: func(context.Context, string, string, string) (*CreateConversationShareResult, error) {
+			return &CreateConversationShareResult{Share: domain.ConversationShare{ID: "existing-share"}, Replayed: true}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conversation-1/shares", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Idempotency-Key", "share-1")
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"existing-share"`) || !strings.Contains(rec.Body.String(), `"replayed":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleCreateConversationShareRequiresIdempotencyKey(t *testing.T) {
+	srv := newTestServer(UseCases{Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)}})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conversation-1/shares", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Idempotency-Key") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleCreateConversationShareHidesUnownedConversation(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{CreateConversationShare: func(context.Context, string, string, string) (*CreateConversationShareResult, error) {
+			return nil, domain.ErrNotFound
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conversation-1/shares", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Idempotency-Key", "share-1")
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "resource not found") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

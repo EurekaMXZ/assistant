@@ -244,6 +244,20 @@ export interface Conversation {
   archived_at?: string;
 }
 
+export interface ConversationShare {
+  id: string;
+  conversation_id: string;
+  created_by_user_id: string;
+  title?: string;
+  last_message_seq: number;
+  created_at: string;
+}
+
+export interface ConversationShareResult {
+  share: ConversationShare;
+  replayed: boolean;
+}
+
 export interface Attachment {
   id: string;
   conversation_id: string;

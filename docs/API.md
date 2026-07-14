@@ -522,6 +522,30 @@ Response: `200 OK`
 }
 ```
 
+### POST `/conversations/:conversationID/shares`
+
+Create a share snapshot boundary for an owned conversation. A non-empty caller-generated `Idempotency-Key` header of at most 128 bytes is required.
+
+The snapshot stores the conversation title and the highest message sequence visible at creation time. Messages added later are not part of this share.
+
+Response: `201 Created`
+
+```json
+{
+  "share": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "conversation_id": "conversation_123",
+    "created_by_user_id": "user_123",
+    "title": "Quarterly planning",
+    "last_message_seq": 12,
+    "created_at": "2026-07-14T12:00:00Z"
+  },
+  "replayed": false
+}
+```
+
+Repeating the request with the same conversation, user, and idempotency key returns the original share with `200 OK` and `replayed: true`. A request for a conversation not owned by the caller returns `404 Not Found` without revealing whether it exists.
+
 ## Message APIs
 
 ### GET `/conversations/:conversationID/messages`

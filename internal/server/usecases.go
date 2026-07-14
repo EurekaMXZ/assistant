@@ -19,6 +19,11 @@ type UpdateConversationInput struct {
 	Archived       *bool
 }
 
+type CreateConversationShareResult struct {
+	Share    domain.ConversationShare `json:"share"`
+	Replayed bool                     `json:"replayed"`
+}
+
 type ExecConversationSandboxInput struct {
 	ConversationID   string
 	Command          string
@@ -236,13 +241,14 @@ type UserUseCases struct {
 }
 
 type ConversationUseCases struct {
-	CreateConversation func(ctx context.Context, ownerUserID string, title string, metadata json.RawMessage) (*domain.Conversation, error)
-	InitialTurn        func(ctx context.Context, ownerUserID string, idempotencyKey string, input InitialTurnInput) (*InitialTurnResult, error)
-	ListConversations  func(ctx context.Context, ownerUserID string, limit int) ([]domain.Conversation, error)
-	GetConversation    func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error)
-	UpdateConversation func(ctx context.Context, ownerUserID string, input UpdateConversationInput) (*domain.Conversation, error)
-	SendMessage        func(ctx context.Context, ownerUserID string, conversationID string, input SendMessageInput) (*domain.EnqueuedTurn, error)
-	ListMessages       func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error)
+	CreateConversation      func(ctx context.Context, ownerUserID string, title string, metadata json.RawMessage) (*domain.Conversation, error)
+	CreateConversationShare func(ctx context.Context, ownerUserID string, conversationID string, idempotencyKey string) (*CreateConversationShareResult, error)
+	InitialTurn             func(ctx context.Context, ownerUserID string, idempotencyKey string, input InitialTurnInput) (*InitialTurnResult, error)
+	ListConversations       func(ctx context.Context, ownerUserID string, limit int) ([]domain.Conversation, error)
+	GetConversation         func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error)
+	UpdateConversation      func(ctx context.Context, ownerUserID string, input UpdateConversationInput) (*domain.Conversation, error)
+	SendMessage             func(ctx context.Context, ownerUserID string, conversationID string, input SendMessageInput) (*domain.EnqueuedTurn, error)
+	ListMessages            func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error)
 }
 
 type AttachmentUseCases struct {

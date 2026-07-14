@@ -94,6 +94,7 @@ func (a *API) registerRoutes(router *gin.Engine) {
 	userRoutes.POST("/conversations/initial-turns", a.handleInitialTurn)
 	userRoutes.GET("/conversations/:conversationID", a.handleGetConversation)
 	userRoutes.PATCH("/conversations/:conversationID", a.handleUpdateConversation)
+	userRoutes.POST("/conversations/:conversationID/shares", a.handleCreateConversationShare)
 	userRoutes.POST("/conversations/:conversationID/attachments", a.handleUploadConversationAttachment)
 	userRoutes.GET("/conversations/:conversationID/attachments/:attachmentID", a.handleGetConversationAttachment)
 	userRoutes.GET("/conversations/:conversationID/messages", a.handleListMessages)

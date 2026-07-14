@@ -39,7 +39,7 @@ func (a *API) handleCreateConversation(c *gin.Context) {
 func (a *API) handleInitialTurn(c *gin.Context) {
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 128 {
-		writeAPIError(c, domain.NewValidationError("Idempotency-Key is required and must be at most 128 characters"))
+		writeAPIError(c, domain.NewValidationError("Idempotency-Key is required and must be at most 128 bytes"))
 		return
 	}
 
@@ -140,6 +140,31 @@ func (a *API) handleUpdateConversation(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"conversation": conversation})
+}
+
+func (a *API) handleCreateConversationShare(c *gin.Context) {
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 128 {
+		writeAPIError(c, domain.NewValidationError("Idempotency-Key is required and must be at most 128 characters"))
+		return
+	}
+
+	result, err := a.useCases.Conversations.CreateConversationShare(
+		c.Request.Context(),
+		currentUser(c).ID,
+		c.Param("conversationID"),
+		idempotencyKey,
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	c.JSON(status, result)
 }
 
 func (a *API) handleListMessages(c *gin.Context) {

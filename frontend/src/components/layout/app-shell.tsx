@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Pencil, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { AssistantLogo } from "@/components/assistant-logo";
 import { AuthDialog } from "@/components/auth/auth-dialog";
 import {
   MobileHeaderContext,
   type MobileHeaderAction,
+  type MobileHeaderTitleAction,
 } from "@/components/layout/mobile-header-context";
+import { MobileHeaderTitle } from "@/components/layout/mobile-header-title";
 import { Sidebar } from "@/components/layout/sidebar";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [mobileHeaderTitle, setMobileHeaderTitle] = useState("Assistant");
   const [mobileHeaderAction, setMobileHeaderAction] = useState<MobileHeaderAction | null>(null);
+  const [mobileHeaderTitleAction, setMobileHeaderTitleAction] =
+    useState<MobileHeaderTitleAction | null>(null);
   const [authMode, setAuthMode] = useState<AuthDialogMode | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const pathname = usePathname();
@@ -36,6 +40,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isAuthRoute = pathname.startsWith("/auth/");
   const isProtectedRoute = pathname !== "/" && !isAuthRoute;
   const currentConversationId = extractConversationId(pathname);
+  const mobileHeaderActionIsCurrent =
+    !mobileHeaderAction?.conversationId ||
+    mobileHeaderAction.conversationId === currentConversationId;
+  const mobileHeaderTitleActionIsCurrent =
+    !mobileHeaderTitleAction?.conversationId ||
+    mobileHeaderTitleAction.conversationId === currentConversationId;
 
   useEffect(() => {
     setMobileHeaderTitle(currentConversationId ? "新会话" : "Assistant");
@@ -150,7 +160,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <MobileHeaderContext.Provider
-      value={{ setAction: setMobileHeaderAction, setTitle: setMobileHeaderTitle }}
+      value={{
+        setAction: setMobileHeaderAction,
+        setTitle: setMobileHeaderTitle,
+        setTitleAction: setMobileHeaderTitleAction,
+      }}
     >
       <div className="flex h-dvh w-full overflow-hidden">
         <aside
@@ -205,7 +219,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </SheetContent>
             </Sheet>
 
-            <h1 className="truncate px-2 text-center text-sm font-medium">{mobileHeaderTitle}</h1>
+            <MobileHeaderTitle
+              actionLabel={mobileHeaderTitleAction?.label}
+              onLongPress={
+                mobileHeaderTitleAction && mobileHeaderTitleActionIsCurrent
+                  ? mobileHeaderTitleAction.onLongPress
+                  : undefined
+              }
+              title={mobileHeaderTitle}
+            />
 
             {!user && !isLoading ? (
               <div className="flex items-center justify-end gap-1">
@@ -215,15 +237,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Button size="xs" onClick={() => openAuthDialog("register")}>
                   注册
                 </Button>
+                {mobileHeaderAction && mobileHeaderActionIsCurrent ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="rounded-lg"
+                    aria-busy={mobileHeaderAction.busy}
+                    disabled={mobileHeaderAction.disabled}
+                    onClick={mobileHeaderAction.onClick}
+                  >
+                    {mobileHeaderAction.icon}
+                    <span className="sr-only">{mobileHeaderAction.label}</span>
+                  </Button>
+                ) : null}
               </div>
             ) : mobileHeaderAction ? (
               <Button
                 variant="ghost"
                 size="icon-sm"
                 className="rounded-lg"
-                onClick={mobileHeaderAction.onClick}
+                aria-busy={mobileHeaderAction.busy}
+                disabled={!mobileHeaderActionIsCurrent || mobileHeaderAction.disabled}
+                onClick={() => {
+                  if (mobileHeaderActionIsCurrent) mobileHeaderAction.onClick();
+                }}
               >
-                <Pencil className="size-4" />
+                {mobileHeaderAction.icon}
                 <span className="sr-only">{mobileHeaderAction.label}</span>
               </Button>
             ) : (

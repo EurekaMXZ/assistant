@@ -46,6 +46,7 @@ type attachmentBlobReader interface {
 
 func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentBlobs assistantattachment.BlobStore, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, sandboxLifecycle assistantsandbox.LifecycleSettings, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
 	conversationRepository := postgres.NewConversationRepository(pool)
+	conversationShareRepository := postgres.NewConversationShareRepository(pool)
 	conversationSandboxRepository := postgres.NewConversationSandboxRepository(pool)
 	conversationLocker := postgres.NewConversationLocker(pool)
 	attachmentRepository := postgres.NewAttachmentRepository(pool)
@@ -164,9 +165,18 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		},
 		Conversations: server.ConversationUseCases{
 			CreateConversation: conversationRepository.CreateConversation,
-			InitialTurn:        initialTurnService.Execute,
-			ListConversations:  conversationRepository.ListConversationsByOwner,
-			GetConversation:    ensureOwnedConversation,
+			CreateConversationShare: func(ctx context.Context, ownerUserID string, conversationID string, idempotencyKey string) (*server.CreateConversationShareResult, error) {
+				share, replayed, err := conversationShareRepository.CreateConversationShare(ctx, postgres.CreateConversationShareParams{
+					ConversationID: conversationID, CreatedByUserID: ownerUserID, IdempotencyKey: idempotencyKey,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return &server.CreateConversationShareResult{Share: *share, Replayed: replayed}, nil
+			},
+			InitialTurn:       initialTurnService.Execute,
+			ListConversations: conversationRepository.ListConversationsByOwner,
+			GetConversation:   ensureOwnedConversation,
 			UpdateConversation: func(ctx context.Context, ownerUserID string, input server.UpdateConversationInput) (*domain.Conversation, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, input.ConversationID); err != nil {
 					return nil, err

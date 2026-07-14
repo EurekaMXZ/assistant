@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Share } from "lucide-react";
 import {
   commitInitialTurn,
   isSessionUnauthorizedError,
@@ -12,6 +13,7 @@ import { openAuthDialog } from "@/lib/auth-dialog-events";
 import { emitConversationUpdated } from "@/lib/conversation-events";
 import { useAuth } from "@/hooks/use-auth";
 import { useComposerPreferences } from "@/hooks/use-composer-preferences";
+import { useMobileHeader } from "@/components/layout/mobile-header-context";
 import { stashPendingHomeTurn } from "@/lib/pending-home-turn";
 import {
   createInitialTurnOperation,
@@ -30,7 +32,27 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false);
   const { user, isLoading } = useAuth();
   const composerPreferences = useComposerPreferences(Boolean(user) && !isLoading);
+  const { setAction: setMobileAction } = useMobileHeader();
   const router = useRouter();
+
+  const copyWebsiteUrl = useCallback(async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(new URL("/", window.location.origin).toString());
+      toast.success("网站 URL 已复制");
+    } catch {
+      toast.error("复制网站 URL 失败");
+    }
+  }, []);
+
+  useEffect(() => {
+    setMobileAction({
+      icon: <Share className="size-4" />,
+      label: "复制网站 URL",
+      onClick: () => void copyWebsiteUrl(),
+    });
+    return () => setMobileAction(null);
+  }, [copyWebsiteUrl, setMobileAction]);
 
   const handleSubmit = async () => {
     const content = draft.trim();
@@ -96,16 +118,30 @@ export default function HomePage() {
   return (
     <WelcomePanel
       actions={
-        user || isLoading ? null : (
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => openAuthDialog("login")}>
-              登录
-            </Button>
-            <Button size="sm" onClick={() => openAuthDialog("register")}>
-              注册
-            </Button>
-          </div>
-        )
+        <div className="flex items-center gap-2">
+          {!user && !isLoading ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => openAuthDialog("login")}>
+                登录
+              </Button>
+              <Button size="sm" onClick={() => openAuthDialog("register")}>
+                注册
+              </Button>
+            </>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            aria-label="复制网站 URL"
+            title="复制网站 URL"
+            onClick={() => void copyWebsiteUrl()}
+          >
+            <Share className="h-3.5 w-3.5" />
+            <span className="sr-only">复制网站 URL</span>
+          </Button>
+        </div>
       }
       disabled={isLoading}
       files={files}

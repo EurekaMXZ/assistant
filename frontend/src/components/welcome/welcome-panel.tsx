@@ -50,7 +50,9 @@ export function WelcomePanel({
   return (
     <div className="relative flex flex-1 items-center justify-center px-6">
       {actions ? (
-        <div className="absolute right-6 top-6 z-10 hidden md:block">{actions}</div>
+        <div className="absolute right-4 top-0 z-10 hidden h-14 items-center md:flex">
+          {actions}
+        </div>
       ) : null}
       <div className="w-full max-w-2xl space-y-6 text-center">
         <h1 className="text-3xl font-semibold tracking-tight text-foreground">{prompt}</h1>

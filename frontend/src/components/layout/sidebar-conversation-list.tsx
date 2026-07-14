@@ -99,14 +99,12 @@ export function SidebarConversationList({
     });
   };
 
-  const handleShare = async (conversationId: string) => {
-    const url = `${window.location.origin}/c/${conversationId}`;
-
+  const copyPrivateLink = async (conversationId: string) => {
     try {
-      await window.navigator.clipboard.writeText(url);
-      toast.success("链接已复制");
+      await window.navigator.clipboard.writeText(`${window.location.origin}/c/${conversationId}`);
+      toast.success("私有链接已复制");
     } catch {
-      toast.error("复制链接失败");
+      toast.error("复制私有链接失败");
     }
   };
 
@@ -200,9 +198,9 @@ export function SidebarConversationList({
                         <span className="sr-only">更多</span>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => void handleShare(conversation.id)}>
+                        <DropdownMenuItem onClick={() => void copyPrivateLink(conversation.id)}>
                           <Link2 className="mr-2 h-4 w-4" />
-                          复制链接
+                          复制私有链接
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => onOpenRename(conversation)}>
                           <Pencil className="mr-2 h-4 w-4" />
