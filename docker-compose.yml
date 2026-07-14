@@ -123,7 +123,7 @@ services:
       DATABASE_URL: postgres://assistant:assistant@postgres:5432/assistant?sslmode=disable
       REDIS_ADDR: redis:6379
       MINIO_ENDPOINT: minio:9000
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      WEB_ORIGIN: ""
     expose:
       - "8080"
     extra_hosts:
@@ -135,6 +135,8 @@ services:
     depends_on:
       api:
         condition: service_started
+      frontend:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
@@ -152,19 +154,16 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api/v1}
+        NEXT_PUBLIC_API_BASE_URL: /api/v1
         HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
         HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
         ALL_PROXY: ${DOCKER_ALL_PROXY:-}
         NO_PROXY: ${DOCKER_NO_PROXY:-}
-    depends_on:
-      nginx:
-        condition: service_healthy
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 3000
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     healthcheck:
       test:
         [
