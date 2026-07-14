@@ -272,15 +272,25 @@ export function ComposerShell({
   const textareaRef = inputRef ?? fallbackRef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inactive = Boolean(disabled || busy);
-  const { currentHeight, isMultiline, singleLineHeight } = useAutosizeTextarea(
-    textareaRef,
-    value,
-    5,
-    { singleLineLeft: 52, singleLineRight: 224, multilineLeft: 12, multilineRight: 12 },
-  );
+  const { currentHeight, isMultiline } = useAutosizeTextarea(textareaRef, value, 5, {
+    singleLineLeft: 52,
+    singleLineRight: 224,
+    multilineLeft: 12,
+    multilineRight: 12,
+  });
   const attachmentOffset = attachments.length > 0 ? 76 : 0;
   const lowerAreaCenterY = attachmentOffset + 28;
-  const shellHeight = isMultiline ? currentHeight + 64 + attachmentOffset : 56 + attachmentOffset;
+  const multilineShellHeight = currentHeight + 64 + attachmentOffset;
+  const desktopShellHeight = isMultiline ? multilineShellHeight : 56 + attachmentOffset;
+  const shellStyle = {
+    "--composer-mobile-height": `${multilineShellHeight}px`,
+    "--composer-desktop-height": `${desktopShellHeight}px`,
+  } as React.CSSProperties;
+  const textareaStyle = {
+    "--composer-mobile-input-top": `${8 + attachmentOffset}px`,
+    "--composer-desktop-input-top": `${isMultiline ? 8 + attachmentOffset : lowerAreaCenterY}px`,
+    height: currentHeight,
+  } as React.CSSProperties;
 
   const insertText = (text: string) => {
     const textarea = textareaRef.current;
@@ -297,10 +307,10 @@ export function ComposerShell({
   return (
     <div
       className={cn(
-        "relative mx-auto w-full max-w-2xl overflow-hidden rounded-[28px] border bg-background shadow-sm",
+        "relative mx-auto h-[var(--composer-mobile-height)] w-full max-w-2xl overflow-hidden rounded-[28px] border bg-background shadow-sm md:h-[var(--composer-desktop-height)]",
         className,
       )}
-      style={{ height: shellHeight }}
+      style={shellStyle}
     >
       <input
         ref={fileInputRef}
@@ -354,17 +364,11 @@ export function ComposerShell({
         }}
         placeholder={placeholder}
         disabled={inactive}
-        className={`absolute w-auto min-h-0 resize-none border-0 bg-transparent pl-2 py-0 leading-6 shadow-none [field-sizing:fixed] focus-visible:ring-0 ${isMultiline ? "right-3" : "right-[224px]"}`}
-        style={
-          isMultiline
-            ? { top: 8 + attachmentOffset, left: 12, height: currentHeight }
-            : {
-                top: lowerAreaCenterY,
-                left: 52,
-                height: singleLineHeight,
-                transform: "translateY(-50%)",
-              }
-        }
+        className={cn(
+          "absolute left-3 right-3 top-[var(--composer-mobile-input-top)] w-auto min-h-0 translate-y-0 resize-none border-0 bg-transparent py-0 pl-2 leading-6 shadow-none [field-sizing:fixed] focus-visible:ring-0 md:top-[var(--composer-desktop-input-top)]",
+          !isMultiline && "md:left-[52px] md:right-[224px] md:-translate-y-1/2",
+        )}
+        style={textareaStyle}
         autoFocus={autoFocus}
       />
 

@@ -174,7 +174,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <header className="grid h-14 shrink-0 grid-cols-[2.25rem_minmax(0,1fr)_2.25rem] items-center border-b px-2 md:hidden">
+          <header className="grid h-14 shrink-0 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center border-b px-2 md:hidden">
             <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
               <SheetTrigger
                 render={<Button variant="ghost" size="icon-sm" className="rounded-lg" />}
@@ -207,7 +207,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
             <h1 className="truncate px-2 text-center text-sm font-medium">{mobileHeaderTitle}</h1>
 
-            {mobileHeaderAction ? (
+            {!user && !isLoading ? (
+              <div className="flex items-center justify-end gap-1">
+                <Button variant="ghost" size="xs" onClick={() => openAuthDialog("login")}>
+                  登录
+                </Button>
+                <Button size="xs" onClick={() => openAuthDialog("register")}>
+                  注册
+                </Button>
+              </div>
+            ) : mobileHeaderAction ? (
               <Button
                 variant="ghost"
                 size="icon-sm"
