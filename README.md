@@ -92,7 +92,7 @@ cd frontend && pnpm install && pnpm dev
 docker compose up -d --build
 ```
 
-默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`frontend`、`worker`。前端监听 `http://localhost:3000`，API 监听 `http://localhost:8080`。部署到其他域名时，构建前必须将 `NEXT_PUBLIC_API_BASE_URL` 设置为浏览器可访问的 API 地址，并将 `WEB_ORIGIN` 设置为前端来源；修改 `NEXT_PUBLIC_API_BASE_URL` 后需要重新构建前端镜像。
+默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`frontend`、`worker`。前端监听 `http://localhost:3000`，API 监听 `http://localhost:8080`。浏览器统一请求前端同源的 `/api/v1`，由 Next.js rewrites 代理到 `FRONTEND_BACKEND_URL`（默认 `http://api:8080`）；该地址只在服务端使用，不会进入浏览器 bundle。部署到其他域名时，将 `WEB_ORIGIN` 设置为前端来源；修改 `FRONTEND_BACKEND_URL` 后需要重新构建前端镜像。
 
 Compose 不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 进程默认提供 4 个 request slot，但只建立一个 Kafka group consumer；同一 conversation 在分区稳定期间固定命中同一进程。
 

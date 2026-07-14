@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   applyAdminBillingAdjustment,
+  getStreamUrl,
   handleSessionUnauthorized,
   isSessionUnauthorizedError,
 } from "./api";
@@ -72,5 +73,13 @@ describe("billing idempotency", () => {
     expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe(
       "billing-operation-1",
     );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/billing/accounts/user-1/topups");
+  });
+});
+
+describe("same-origin API routing", () => {
+  it("routes backend stream paths through the frontend proxy", () => {
+    expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
+    expect(getStreamUrl("/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
   });
 });
