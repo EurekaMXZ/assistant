@@ -270,6 +270,12 @@ export const timelineItemSchema = z.object({
   input_label: z.string().optional(),
   input_text: z.string().optional(),
   links: z.array(z.object({ url: z.string(), label: z.string() })).optional(),
+  command: z.string().optional(),
+  working_directory: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+  exit_code: z.number().int().optional(),
+  timed_out: z.boolean().optional(),
   metadata: metadata.optional(),
   created_at: dateTime,
 });

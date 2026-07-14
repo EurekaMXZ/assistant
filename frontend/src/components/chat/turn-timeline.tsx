@@ -9,12 +9,14 @@ import { TimelineMarkdownRenderer } from "./markdown-renderer";
 import {
   AlertCircle,
   Bot,
+  Box,
   Brain,
   Check,
   ImageIcon,
   Info,
   Loader2,
   Sparkles,
+  Terminal,
   Wrench,
   X,
 } from "lucide-react";
@@ -171,6 +173,10 @@ function thoughtButtonLabel(
 }
 
 function TimelineToolPayload({ item }: { item: TimelineItem }) {
+  if (getMetadataString(item, "tool_name") === "sandbox.exec") {
+    return <SandboxCommandPayload item={item} />;
+  }
+
   const inputText = item.input_text?.trim();
   const inputLabel = item.input_label?.trim();
   const links = item.links?.filter((link) => link.url && link.label) ?? [];
@@ -215,6 +221,66 @@ function TimelineToolPayload({ item }: { item: TimelineItem }) {
   );
 }
 
+function SandboxCommandPayload({ item }: { item: TimelineItem }) {
+  const hasOutput = item.stdout !== undefined || item.stderr !== undefined;
+  const running = item.status === "started" || item.status === "streaming";
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-muted/20 text-xs">
+      <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-3 py-2 text-muted-foreground">
+        <span className="font-medium text-foreground">命令</span>
+        {item.working_directory ? (
+          <span className="min-w-0 truncate font-mono" title={item.working_directory}>
+            {item.working_directory}
+          </span>
+        ) : null}
+      </div>
+      <div className="overflow-x-auto px-3 py-2.5">
+        <pre className="w-max min-w-full whitespace-pre font-mono leading-5 text-foreground">
+          <code>{`$ ${item.command || "..."}`}</code>
+        </pre>
+      </div>
+
+      <div className="border-t">
+        <div className="flex items-center justify-between gap-3 bg-muted/30 px-3 py-2 text-muted-foreground">
+          <span className="font-medium text-foreground">原始输出</span>
+          <span className="flex shrink-0 items-center gap-2 font-mono">
+            {item.timed_out ? <span>已超时</span> : null}
+            {item.exit_code !== undefined ? <span>exit {item.exit_code}</span> : null}
+          </span>
+        </div>
+
+        {hasOutput ? (
+          <div className="divide-y">
+            {item.stdout !== undefined && item.stdout !== "" ? (
+              <div className="overflow-x-auto px-3 py-2.5">
+                <pre className="w-max min-w-full whitespace-pre font-mono leading-5 text-foreground">
+                  {item.stdout}
+                </pre>
+              </div>
+            ) : null}
+            {item.stderr !== undefined && item.stderr !== "" ? (
+              <div className="overflow-x-auto px-3 py-2.5">
+                <div className="mb-1 font-medium text-destructive">stderr</div>
+                <pre className="w-max min-w-full whitespace-pre font-mono leading-5 text-destructive">
+                  {item.stderr}
+                </pre>
+              </div>
+            ) : null}
+            {item.stdout === "" && item.stderr === "" ? (
+              <p className="px-3 py-2.5 text-muted-foreground">无输出</p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="px-3 py-2.5 text-muted-foreground">
+            {running ? "等待命令完成…" : "未提供命令输出"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TimelineReasoningPayload({
   item,
   isStreaming,
@@ -250,7 +316,13 @@ function TimelineStep({
   isLast: boolean;
   isStreaming?: boolean;
 }) {
-  const Icon = timelineIcons[item.type as keyof typeof timelineIcons] ?? Sparkles;
+  const toolName = getMetadataString(item, "tool_name");
+  const Icon =
+    toolName === "sandbox.exec"
+      ? Terminal
+      : toolName.startsWith("sandbox.")
+        ? Box
+        : (timelineIcons[item.type as keyof typeof timelineIcons] ?? Sparkles);
 
   return (
     <div className={cn("relative pl-7", !isLast && "pb-5")}>

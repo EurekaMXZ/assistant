@@ -122,6 +122,7 @@ func filterReasoningPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 }
 
 func filterToolPresentationItem(item TurnTimelineItem) TurnTimelineItem {
+	toolName := strings.TrimSpace(item.Title)
 	presentation := tool.BuildPublicToolPresentation(
 		"",
 		"",
@@ -149,16 +150,25 @@ func filterToolPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 		details = nil
 	}
 	return TurnTimelineItem{
-		ID:         item.ID,
-		Type:       turnTimelineItemToolCall,
-		Title:      title,
-		Status:     item.Status,
-		Summary:    summary,
-		Details:    details,
-		InputLabel: presentation.InputLabel,
-		InputText:  presentation.InputText,
-		Links:      links,
-		CreatedAt:  item.CreatedAt,
+		ID:               item.ID,
+		Type:             turnTimelineItemToolCall,
+		Title:            title,
+		Status:           item.Status,
+		Summary:          summary,
+		Details:          details,
+		InputLabel:       presentation.InputLabel,
+		InputText:        presentation.InputText,
+		Links:            links,
+		Command:          presentation.Command,
+		WorkingDirectory: presentation.WorkingDirectory,
+		Stdout:           presentation.Stdout,
+		Stderr:           presentation.Stderr,
+		ExitCode:         presentation.ExitCode,
+		TimedOut:         presentation.TimedOut,
+		Metadata: compactMetadata(map[string]any{
+			"tool_name": toolName,
+		}),
+		CreatedAt: item.CreatedAt,
 	}
 }
 

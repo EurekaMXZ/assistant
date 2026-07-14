@@ -58,6 +58,35 @@ func TestPresentationItemRegistryFiltersToolFields(t *testing.T) {
 	}
 }
 
+func TestPresentationItemRegistryAllowsSandboxCommandOutputOnly(t *testing.T) {
+	item, ok := newPresentationItemRegistry().Filter(TurnTimelineItem{
+		ID:        "tool:sandbox",
+		Type:      turnTimelineItemToolCall,
+		Title:     "sandbox.exec",
+		Status:    "completed",
+		Arguments: json.RawMessage(`{"command":"printf","args":["hello"]}`),
+		Output:    json.RawMessage(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-secret","command":"printf","args":["hello"],"stdout":"hello","stderr":"","exit_code":0}}`),
+		Metadata:  map[string]any{"error": "private-error"},
+	})
+	if !ok {
+		t.Fatal("sandbox command item was dropped")
+	}
+	if item.Title != "命令执行完成" || item.Command != "printf hello" || item.Stdout != "hello" {
+		t.Fatalf("unexpected sandbox command presentation: %#v", item)
+	}
+	if item.ExitCode == nil || *item.ExitCode != 0 {
+		t.Fatalf("ExitCode = %#v", item.ExitCode)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, "runtime-secret") || strings.Contains(text, "private-error") || strings.Contains(text, `"arguments"`) || strings.Contains(text, `"output"`) {
+		t.Fatalf("sandbox presentation leaked non-public fields: %s", text)
+	}
+}
+
 func TestPresentationOutputDeclarationDoesNotConsumeDeltaSequence(t *testing.T) {
 	state := newPresentationStreamState(
 		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},

@@ -116,21 +116,27 @@ type TurnStreamDone struct {
 }
 
 type TurnTimelineItem struct {
-	ID          string             `json:"id"`
-	Type        string             `json:"type"`
-	Title       string             `json:"title,omitempty"`
-	Status      string             `json:"status,omitempty"`
-	Summary     string             `json:"summary,omitempty"`
-	ContentText string             `json:"content_text,omitempty"`
-	Details     []string           `json:"details,omitempty"`
-	InputLabel  string             `json:"input_label,omitempty"`
-	InputText   string             `json:"input_text,omitempty"`
-	Links       []TurnTimelineLink `json:"links,omitempty"`
-	Raw         json.RawMessage    `json:"raw,omitempty"`
-	Arguments   json.RawMessage    `json:"arguments,omitempty"`
-	Output      json.RawMessage    `json:"output,omitempty"`
-	Metadata    map[string]any     `json:"metadata,omitempty"`
-	CreatedAt   time.Time          `json:"created_at"`
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	Title            string             `json:"title,omitempty"`
+	Status           string             `json:"status,omitempty"`
+	Summary          string             `json:"summary,omitempty"`
+	ContentText      string             `json:"content_text,omitempty"`
+	Details          []string           `json:"details,omitempty"`
+	InputLabel       string             `json:"input_label,omitempty"`
+	InputText        string             `json:"input_text,omitempty"`
+	Links            []TurnTimelineLink `json:"links,omitempty"`
+	Command          string             `json:"command,omitempty"`
+	WorkingDirectory string             `json:"working_directory,omitempty"`
+	Stdout           string             `json:"stdout,omitempty"`
+	Stderr           string             `json:"stderr,omitempty"`
+	ExitCode         *int               `json:"exit_code,omitempty"`
+	TimedOut         bool               `json:"timed_out,omitempty"`
+	Raw              json.RawMessage    `json:"raw,omitempty"`
+	Arguments        json.RawMessage    `json:"arguments,omitempty"`
+	Output           json.RawMessage    `json:"output,omitempty"`
+	Metadata         map[string]any     `json:"metadata,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
 }
 
 type TurnTimelineLink struct {

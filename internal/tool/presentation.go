@@ -14,12 +14,18 @@ type PublicToolLink struct {
 }
 
 type PublicToolPresentation struct {
-	Title      string
-	Summary    string
-	Details    []string
-	InputLabel string
-	InputText  string
-	Links      []PublicToolLink
+	Title            string
+	Summary          string
+	Details          []string
+	InputLabel       string
+	InputText        string
+	Links            []PublicToolLink
+	Command          string
+	WorkingDirectory string
+	Stdout           string
+	Stderr           string
+	ExitCode         *int
+	TimedOut         bool
 }
 
 func BuildPublicToolPresentation(namespace string, serverLabel string, name string, status string, arguments json.RawMessage, output []byte, errorMessage string) PublicToolPresentation {
@@ -45,7 +51,34 @@ func BuildPublicToolPresentation(namespace string, serverLabel string, name stri
 		Details: compactDetails(details),
 	}
 	applyTavilyPublicPresentation(&presentation, toolName, args, result)
+	applySandboxPublicPresentation(&presentation, toolName, status, args, result)
 	return presentation
+}
+
+func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolName string, status string, args map[string]any, result any) {
+	if presentation == nil {
+		return
+	}
+	switch toolName {
+	case SandboxCreate:
+		presentation.Title = statusSummary(status, "正在创建沙箱", "沙箱已创建", "创建沙箱失败")
+	case SandboxDestroy:
+		presentation.Title = statusSummary(status, "正在销毁沙箱", "沙箱已销毁", "销毁沙箱失败")
+	case SandboxExec:
+		presentation.Title = statusSummary(status, "正在执行命令", "命令执行完成", "命令执行失败")
+		commandSource := args
+		if output := nestedObject(result, "result"); output != nil {
+			commandSource = output
+			presentation.Stdout = rawStringField(output, "stdout")
+			presentation.Stderr = rawStringField(output, "stderr")
+			if exitCode, ok := intField(output, "exit_code"); ok {
+				presentation.ExitCode = &exitCode
+			}
+			presentation.TimedOut, _ = output["timed_out"].(bool)
+		}
+		presentation.Command = commandLineRaw(commandSource)
+		presentation.WorkingDirectory = strings.TrimSpace(rawStringField(commandSource, "working_directory"))
+	}
 }
 
 func applyTavilyPublicPresentation(presentation *PublicToolPresentation, toolName string, args map[string]any, result any) {
@@ -324,6 +357,35 @@ func stringField(object map[string]any, key string) string {
 	}
 }
 
+func rawStringField(object map[string]any, key string) string {
+	if object == nil {
+		return ""
+	}
+	value, _ := object[key].(string)
+	return value
+}
+
+func nestedObject(value any, key string) map[string]any {
+	object, _ := value.(map[string]any)
+	nested, _ := object[key].(map[string]any)
+	return nested
+}
+
+func intField(object map[string]any, key string) (int, bool) {
+	if object == nil {
+		return 0, false
+	}
+	switch value := object[key].(type) {
+	case json.Number:
+		parsed, err := value.Int64()
+		return int(parsed), err == nil
+	case float64:
+		return int(value), value == float64(int(value))
+	default:
+		return 0, false
+	}
+}
+
 func resultCount(value any) (int, bool) {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -379,6 +441,35 @@ func commandLine(args map[string]any) string {
 		parts = append(parts, text)
 	}
 	return truncateDisplayValue(strings.Join(parts, " "), 240)
+}
+
+func commandLineRaw(args map[string]any) string {
+	command := strings.TrimSpace(rawStringField(args, "command"))
+	if command == "" {
+		return ""
+	}
+	parts := []string{shellQuote(command)}
+	values, _ := args["args"].([]any)
+	for _, value := range values {
+		text, ok := value.(string)
+		if ok {
+			parts = append(parts, shellQuote(text))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("_@%+=:,./-", r) {
+			continue
+		}
+		return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	}
+	return value
 }
 
 func compactDetails(values []string) []string {

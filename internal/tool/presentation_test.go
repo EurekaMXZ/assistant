@@ -88,3 +88,28 @@ func TestBuildPublicToolPresentationDoesNotTreatContentAsLink(t *testing.T) {
 		t.Fatalf("non-URL result fields became public links: %#v", presentation.Links)
 	}
 }
+
+func TestBuildPublicToolPresentationExposesSandboxCommandResult(t *testing.T) {
+	presentation := BuildPublicToolPresentation(
+		"",
+		"",
+		SandboxExec,
+		"completed",
+		json.RawMessage(`{"command":"bash","args":["-lc","printf 'hello\\n' && printf 'warning\\n' >&2"],"working_directory":"work dir"}`),
+		[]byte(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-1","command":"bash","args":["-lc","printf 'hello\\n' && printf 'warning\\n' >&2"],"working_directory":"work dir","stdout":"hello\n","stderr":"warning\n","exit_code":7}}`),
+		"",
+	)
+
+	if presentation.Title != "命令执行完成" {
+		t.Fatalf("Title = %q", presentation.Title)
+	}
+	if presentation.Command != `bash -lc 'printf '"'"'hello\n'"'"' && printf '"'"'warning\n'"'"' >&2'` {
+		t.Fatalf("Command = %q", presentation.Command)
+	}
+	if presentation.WorkingDirectory != "work dir" || presentation.Stdout != "hello\n" || presentation.Stderr != "warning\n" {
+		t.Fatalf("unexpected command output: %#v", presentation)
+	}
+	if presentation.ExitCode == nil || *presentation.ExitCode != 7 {
+		t.Fatalf("ExitCode = %#v", presentation.ExitCode)
+	}
+}
