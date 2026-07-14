@@ -52,9 +52,10 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
+	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
 
 	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		writeError(c, http.StatusInternalServerError, "streaming is not supported")

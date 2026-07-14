@@ -78,6 +78,15 @@ func TestHandleStreamTurnCompletedWritesTerminalEventWithoutSubscribing(t *testi
 
 	srv.Handler.ServeHTTP(rec, req)
 
+	if got := rec.Header().Get("Content-Type"); got != "text/event-stream; charset=utf-8" {
+		t.Fatalf("content type = %q, want text/event-stream with UTF-8", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache, no-transform" {
+		t.Fatalf("cache control = %q, want no-cache, no-transform", got)
+	}
+	if got := rec.Header().Get("X-Accel-Buffering"); got != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", got)
+	}
 	if streamHub.subscribeHit != 0 {
 		t.Fatalf("expected no subscription for completed turn, got %d", streamHub.subscribeHit)
 	}

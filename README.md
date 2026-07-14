@@ -69,6 +69,9 @@ cp .env.example .env
 # 启动基础设施
 docker compose up -d postgres redis kafka minio
 
+# 配置浏览器直连的后端地址
+cp frontend/.env.local.example frontend/.env.local
+
 # 启动 Firecracker bridge
 go run ./cmd/firecracker-bridge
 
@@ -86,13 +89,21 @@ go run ./cmd/worker   # Worker
 cd frontend && pnpm install && pnpm dev
 ```
 
-### Docker Compose 后端部署
+前端开发服务器不代理 API。默认的 `NEXT_PUBLIC_API_BASE_URL` 为 `http://localhost:8080/api/v1`，Go API 通过 `WEB_ORIGIN=http://localhost:3000` 允许前端跨域访问。
+
+### 前后端分开部署
+
+前端镜像构建时通过 `NEXT_PUBLIC_API_BASE_URL` 指向浏览器可访问的后端地址，例如 `https://api.example.com/api/v1`。该值会进入浏览器 bundle，修改后必须重新构建前端。后端通过 `WEB_ORIGIN` 只允许前端来源，例如 `https://app.example.com`。Next.js 不代理任何后端 API。
+
+### Docker Compose 单机部署
 
 ```bash
 docker compose up -d --build
 ```
 
-默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`frontend`、`worker`。前端监听 `http://localhost:3000`，API 监听 `http://localhost:8080`。浏览器统一请求前端同源的 `/api/v1`，由 Next.js rewrites 代理到 `FRONTEND_BACKEND_URL`（默认 `http://api:8080`）；该地址只在服务端使用，不会进入浏览器 bundle。部署到其他域名时，将 `WEB_ORIGIN` 设置为前端来源；修改 `FRONTEND_BACKEND_URL` 后需要重新构建前端镜像。
+默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。前端监听 `http://localhost:3000`，Nginx 在 `http://localhost:8080` 提供后端 API；Go API 只暴露在 Compose 内部网络，不发布宿主机端口。Nginx 对 SSE 路径关闭压缩、缓存和代理缓冲，其他 API 请求保持正常代理行为。
+
+单机部署到其他域名时，将 `NEXT_PUBLIC_API_BASE_URL` 设置为 Nginx 的公开 API 前缀，将 `WEB_ORIGIN` 设置为前端来源，然后重新构建镜像。Nginx 配置位于 `deploy/nginx/api.conf`，只代理 Go API 和健康检查，不承载 Next.js 前端流量。
 
 Compose 不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 进程默认提供 4 个 request slot，但只建立一个 Kafka group consumer；同一 conversation 在分区稳定期间固定命中同一进程。
 

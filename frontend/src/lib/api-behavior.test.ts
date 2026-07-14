@@ -79,14 +79,20 @@ describe("billing idempotency", () => {
     expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe(
       "billing-operation-1",
     );
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/billing/accounts/user-1/topups");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost:8080/api/v1/admin/billing/accounts/user-1/topups",
+    );
   });
 });
 
-describe("same-origin API routing", () => {
-  it("routes backend stream paths through the frontend proxy", () => {
-    expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
-    expect(getStreamUrl("/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
+describe("backend API routing", () => {
+  it("routes backend stream paths directly to the public API", () => {
+    expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe(
+      "http://localhost:8080/api/v1/turns/turn-1/stream",
+    );
+    expect(getStreamUrl("/turns/turn-1/stream")).toBe(
+      "http://localhost:8080/api/v1/turns/turn-1/stream",
+    );
   });
 });
 
@@ -114,7 +120,9 @@ describe("cursor pagination", () => {
     expect(result.data).toHaveLength(1);
     expect(result.page.next_cursor).toBe("next-users");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/users?limit=50&cursor=current%20users");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost:8080/api/v1/users?limit=50&cursor=current%20users",
+    );
   });
 });
 
@@ -133,7 +141,7 @@ describe("admin overview", () => {
 
     expect(result.users).toBe(12);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/overview");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8080/api/v1/admin/overview");
   });
 });
 
@@ -177,7 +185,7 @@ describe("billing redemptions", () => {
     const result = await redeemBillingCode(code);
 
     expect(result.transaction.kind).toBe("redemption_credit");
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/billing/redemptions");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8080/api/v1/billing/redemptions");
     expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ code }));
   });
 
@@ -205,7 +213,9 @@ describe("billing redemptions", () => {
     const result = await issueAdminBillingRedemptionCodes({ amount: "5.00", quantity: 1 });
 
     expect(result[0].code).toBe("0123456789abcdef0123456789abcdef0123456789abcdef");
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/billing/redemption-codes");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost:8080/api/v1/admin/billing/redemption-codes",
+    );
     expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ amount: "5.00", quantity: 1 }));
   });
 
@@ -231,7 +241,7 @@ describe("billing redemptions", () => {
 
     expect(result.status).toBe("disabled");
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/admin/billing/redemption-codes/code-1/disable",
+      "http://localhost:8080/api/v1/admin/billing/redemption-codes/code-1/disable",
     );
     expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
   });
@@ -281,7 +291,9 @@ describe("tool pricing", () => {
     const result = await updateAdminBillingToolPrices(payload);
 
     expect(result).toHaveLength(4);
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/billing/tool-prices");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost:8080/api/v1/admin/billing/tool-prices",
+    );
     expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
     expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ tool_prices: payload }));
   });

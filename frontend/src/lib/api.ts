@@ -50,7 +50,10 @@ import { normalizeTurnRequest, requestMetadata, type TurnRequestDescriptor } fro
 import { openAuthDialog } from "./auth-dialog-events";
 import { emitAuthStateChange } from "./auth-state-events";
 
-const API_BASE = "/api/v1";
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080/api/v1").replace(
+  /\/$/,
+  "",
+);
 
 const TOKEN_KEY = "assistant_access_token";
 
