@@ -142,12 +142,18 @@ func (a *API) handleEnableModel(c *gin.Context)  { a.handleSetModelEnabled(c, tr
 func (a *API) handleDisableModel(c *gin.Context) { a.handleSetModelEnabled(c, false) }
 
 func (a *API) handleListModelPrices(c *gin.Context) {
-	items, err := a.useCases.Models.ListModelPrices(c.Request.Context(), currentUser(c), c.Param("modelID"))
+	result, err := a.useCases.Models.ListModelPrices(
+		c.Request.Context(),
+		currentUser(c),
+		c.Param("modelID"),
+		parseLimit(c, 50, 200),
+		strings.TrimSpace(c.Query("cursor")),
+	)
 	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"prices": nonNilSlice(items)})
+	c.JSON(http.StatusOK, pagePayload(result.Items, result.NextCursor))
 }
 
 func (a *API) handleCreateModelPrice(c *gin.Context) {

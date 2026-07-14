@@ -8,6 +8,7 @@ import (
 
 	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	"github.com/EurekaMXZ/assistant/internal/pagination"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -122,8 +123,12 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (*dom
 	return user, nil
 }
 
-func (r *UserRepository) ListUsers(ctx context.Context, params assistantauth.ListUsersParams) ([]domain.User, error) {
+func (r *UserRepository) ListUsers(ctx context.Context, params assistantauth.ListUsersParams) ([]domain.User, string, error) {
 	limit := clampLimit(params.Limit, 50, 200)
+	decoded, err := pagination.Decode(strings.TrimSpace(params.Cursor))
+	if err != nil {
+		return nil, "", domain.NewValidationError("invalid cursor")
+	}
 
 	query := `
 		SELECT
@@ -141,8 +146,8 @@ func (r *UserRepository) ListUsers(ctx context.Context, params assistantauth.Lis
 		FROM users
 	`
 
-	conditions := make([]string, 0, 2)
-	args := make([]any, 0, 3)
+	conditions := make([]string, 0, 3)
+	args := make([]any, 0, 5)
 
 	if len(params.Roles) > 0 {
 		conditions = append(conditions, fmt.Sprintf("role = ANY($%d::text[])", len(args)+1))
@@ -152,31 +157,41 @@ func (r *UserRepository) ListUsers(ctx context.Context, params assistantauth.Lis
 		conditions = append(conditions, fmt.Sprintf("id <> $%d::uuid", len(args)+1))
 		args = append(args, userID)
 	}
+	if decoded != nil {
+		args = append(args, decoded.CreatedAt, decoded.ID)
+		conditions = append(conditions, fmt.Sprintf("(created_at, id) < ($%d, $%d::uuid)", len(args)-1, len(args)))
+	}
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args)+1)
-	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit+1)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
+		return nil, "", fmt.Errorf("list users: %w", err)
 	}
 	defer rows.Close()
 
-	users := make([]domain.User, 0, limit)
+	users := make([]domain.User, 0, limit+1)
 	for rows.Next() {
 		user, err := scanUser(rows)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		users = append(users, *user)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate users: %w", err)
+		return nil, "", fmt.Errorf("iterate users: %w", err)
 	}
 
-	return users, nil
+	next := ""
+	if len(users) > limit {
+		users = users[:limit]
+		last := users[len(users)-1]
+		next = pagination.Encode(last.CreatedAt, last.ID)
+	}
+	return users, next, nil
 }
 
 func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.UpdateUserParams) (*domain.User, error) {

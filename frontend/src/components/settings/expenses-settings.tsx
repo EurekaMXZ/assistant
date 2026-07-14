@@ -26,6 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   getBillingAccount,
   isSessionUnauthorizedError,
@@ -59,7 +60,7 @@ function transactionLabel(kind: BillingTransaction["kind"]) {
   const labels: Record<BillingTransaction["kind"], string> = {
     manual_topup: "账户充值",
     manual_refund: "余额扣减",
-    model_usage_charge: "模型用量",
+    model_usage_charge: "模型与工具用量",
     redemption_credit: "兑换码充值",
   };
   return labels[kind];
@@ -69,6 +70,11 @@ function usageAmount(event: BillingUsageEvent) {
   if (!event.currency || event.amount_nanos == null) return "未计价";
   const value = event.amount_nanos / 1_000_000_000;
   return `${event.currency} ${value.toLocaleString("zh-CN", { maximumFractionDigits: 9 })}`;
+}
+
+function toolUsageAmount(event: BillingUsageEvent) {
+  if (!event.currency) return "未计价";
+  return `${event.currency} ${event.tool_amount}`;
 }
 
 export function ExpensesSettings() {
@@ -81,6 +87,8 @@ export function ExpensesSettings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [transactionLoadMoreError, setTransactionLoadMoreError] = useState("");
+  const [usageLoadMoreError, setUsageLoadMoreError] = useState("");
   const [redemptionOpen, setRedemptionOpen] = useState(false);
   const [redemptionCode, setRedemptionCode] = useState("");
   const [redemptionError, setRedemptionError] = useState("");
@@ -89,6 +97,8 @@ export function ExpensesSettings() {
   const loadInitial = async () => {
     setIsLoading(true);
     setError("");
+    setTransactionLoadMoreError("");
+    setUsageLoadMoreError("");
     try {
       const [nextAccount, nextTransactions, nextUsage] = await Promise.all([
         getBillingAccount(),
@@ -117,6 +127,8 @@ export function ExpensesSettings() {
     const page = view === "transactions" ? transactionPage : usagePage;
     if (!page.next_cursor || isLoadingMore) return;
     setIsLoadingMore(true);
+    if (view === "transactions") setTransactionLoadMoreError("");
+    else setUsageLoadMoreError("");
     try {
       if (view === "transactions") {
         const next = await listBillingTransactions(page.next_cursor);
@@ -129,7 +141,9 @@ export function ExpensesSettings() {
       }
     } catch (err) {
       if (!isSessionUnauthorizedError(err)) {
-        setError(err instanceof Error ? err.message : "更多记录加载失败");
+        const message = err instanceof Error ? err.message : "更多记录加载失败";
+        if (view === "transactions") setTransactionLoadMoreError(message);
+        else setUsageLoadMoreError(message);
       }
     } finally {
       setIsLoadingMore(false);
@@ -197,8 +211,6 @@ export function ExpensesSettings() {
     );
   }
 
-  const page = view === "transactions" ? transactionPage : usagePage;
-
   return (
     <div className="space-y-7">
       <header>
@@ -259,7 +271,7 @@ export function ExpensesSettings() {
               onClick={() => setView("usage")}
             >
               <Activity className="size-3.5" />
-              模型用量
+              用量明细
             </Button>
           </div>
         </div>
@@ -267,42 +279,55 @@ export function ExpensesSettings() {
         {view === "transactions" ? (
           transactions.length ? (
             <>
-              <div className="divide-y border-y sm:hidden">
-                {transactions.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-4 py-3">
-                    <div className="min-w-0">
-                      <p className="flex items-center gap-2 truncate text-sm font-medium">
-                        {item.direction === "credit" ? (
-                          <ArrowDownLeft className="size-3.5 shrink-0 text-emerald-600" />
-                        ) : (
-                          <ArrowUpRight className="size-3.5 shrink-0 text-amber-600" />
-                        )}
-                        {transactionLabel(item.kind)}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {formatDate(item.created_at)}
-                      </p>
+              <CursorTableScroll
+                className="max-h-[min(55vh,32rem)] overflow-auto border-y"
+                hasMore={transactionPage.has_more}
+                loadingMore={isLoadingMore}
+                loadMoreError={transactionLoadMoreError}
+                onLoadMore={loadMore}
+                aria-label="资金流水"
+              >
+                <div className="divide-y sm:hidden">
+                  {transactions.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between gap-4 py-3">
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 truncate text-sm font-medium">
+                          {item.direction === "credit" ? (
+                            <ArrowDownLeft className="size-3.5 shrink-0 text-emerald-600" />
+                          ) : (
+                            <ArrowUpRight className="size-3.5 shrink-0 text-amber-600" />
+                          )}
+                          {transactionLabel(item.kind)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatDate(item.created_at)}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p
+                          className={cn(
+                            "whitespace-nowrap font-mono text-sm",
+                            item.direction === "credit" ? "text-emerald-700" : "text-foreground",
+                          )}
+                        >
+                          {item.direction === "credit" ? "+" : "-"}
+                          {item.currency} {item.amount}
+                        </p>
+                        <p className="mt-1 whitespace-nowrap font-mono text-xs text-muted-foreground">
+                          余额 {item.balance_after}
+                        </p>
+                      </div>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <p
-                        className={cn(
-                          "whitespace-nowrap font-mono text-sm",
-                          item.direction === "credit" ? "text-emerald-700" : "text-foreground",
-                        )}
-                      >
-                        {item.direction === "credit" ? "+" : "-"}
-                        {item.currency} {item.amount}
-                      </p>
-                      <p className="mt-1 whitespace-nowrap font-mono text-xs text-muted-foreground">
-                        余额 {item.balance_after}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="hidden overflow-x-auto border-y sm:block">
-                <table className="w-full min-w-[560px] text-left text-sm">
-                  <thead className="text-xs text-muted-foreground">
+                  ))}
+                </div>
+                <table className="hidden w-[44rem] min-w-full table-fixed text-left text-sm sm:table">
+                  <colgroup>
+                    <col className="w-[10rem]" />
+                    <col className="w-[14rem]" />
+                    <col className="w-[10rem]" />
+                    <col className="w-[10rem]" />
+                  </colgroup>
+                  <thead className="sticky top-0 z-10 bg-background text-xs text-muted-foreground">
                     <tr className="border-b">
                       <th className="py-3 pr-4 font-medium">时间</th>
                       <th className="px-4 py-3 font-medium">类型</th>
@@ -316,8 +341,8 @@ export function ExpensesSettings() {
                         <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
                           {formatDate(item.created_at)}
                         </td>
-                        <td className="px-4 py-3">
-                          <span className="inline-flex items-center gap-2 font-medium">
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className="inline-flex items-center gap-2 whitespace-nowrap font-medium">
                             {item.direction === "credit" ? (
                               <ArrowDownLeft className="size-3.5 text-emerald-600" />
                             ) : (
@@ -342,44 +367,64 @@ export function ExpensesSettings() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </CursorTableScroll>
             </>
           ) : (
             <EmptyExpenses icon={ReceiptText} label="暂无资金流水" />
           )
         ) : usageEvents.length ? (
           <>
-            <div className="divide-y border-y sm:hidden">
-              {usageEvents.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-4 py-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium">{item.upstream_model}</p>
-                      <Badge variant={item.status === "failed" ? "destructive" : "secondary"}>
-                        {item.status === "completed" ? "已计费" : "失败"}
-                      </Badge>
+            <CursorTableScroll
+              className="max-h-[min(55vh,32rem)] overflow-auto border-y"
+              hasMore={usagePage.has_more}
+              loadingMore={isLoadingMore}
+              loadMoreError={usageLoadMoreError}
+              onLoadMore={loadMore}
+              aria-label="用量明细"
+            >
+              <div className="divide-y sm:hidden">
+                {usageEvents.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between gap-4 py-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium">{item.upstream_model}</p>
+                        <Badge variant={item.status === "failed" ? "destructive" : "secondary"}>
+                          {item.status === "completed" ? "已计费" : "失败"}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatDate(item.created_at)} · <BillingTokenUsage usage={item} /> tokens ·
+                        {` `}
+                        <BillingToolUsage usage={item} /> tools
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {formatDate(item.created_at)} · <BillingTokenUsage usage={item} /> tokens ·
-                      {` `}
-                      <BillingToolUsage usage={item} /> tools
-                    </p>
+                    <div className="shrink-0 text-right">
+                      <p className="whitespace-nowrap font-mono text-sm">{usageAmount(item)}</p>
+                      <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">
+                        工具 {toolUsageAmount(item)}
+                      </p>
+                    </div>
                   </div>
-                  <p className="shrink-0 whitespace-nowrap font-mono text-sm">
-                    {usageAmount(item)}
-                  </p>
-                </div>
-              ))}
-            </div>
-            <div className="hidden overflow-x-auto border-y sm:block">
-              <table className="w-full min-w-[600px] text-left text-sm">
-                <thead className="text-xs text-muted-foreground">
+                ))}
+              </div>
+              <table className="hidden w-[72rem] min-w-full table-fixed text-left text-sm sm:table">
+                <colgroup>
+                  <col className="w-[10rem]" />
+                  <col className="w-[18rem]" />
+                  <col className="w-[8rem]" />
+                  <col className="w-[6rem]" />
+                  <col className="w-[11rem]" />
+                  <col className="w-[11rem]" />
+                  <col className="w-[8rem]" />
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-background text-xs text-muted-foreground">
                   <tr className="border-b">
                     <th className="py-3 pr-4 font-medium">时间</th>
                     <th className="px-4 py-3 font-medium">模型</th>
                     <th className="px-4 py-3 text-right font-medium">Tokens</th>
                     <th className="px-4 py-3 text-right font-medium">工具</th>
-                    <th className="px-4 py-3 text-right font-medium">费用</th>
+                    <th className="px-4 py-3 text-right font-medium">工具费用</th>
+                    <th className="px-4 py-3 text-right font-medium">总费用</th>
                     <th className="py-3 pl-4 text-right font-medium">状态</th>
                   </tr>
                 </thead>
@@ -389,7 +434,7 @@ export function ExpensesSettings() {
                       <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
                         {formatDate(item.created_at)}
                       </td>
-                      <td className="max-w-48 truncate px-4 py-3 font-medium">
+                      <td className="truncate px-4 py-3 font-medium" title={item.upstream_model}>
                         {item.upstream_model}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
@@ -397,6 +442,9 @@ export function ExpensesSettings() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
                         <BillingToolUsage usage={item} />
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
+                        {toolUsageAmount(item)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
                         {usageAmount(item)}
@@ -410,27 +458,13 @@ export function ExpensesSettings() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </CursorTableScroll>
           </>
         ) : (
-          <EmptyExpenses icon={Activity} label="暂无模型用量" />
+          <EmptyExpenses icon={Activity} label="暂无用量明细" />
         )}
 
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
-        {page.has_more ? (
-          <div className="mt-4 flex justify-center">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isLoadingMore}
-              onClick={loadMore}
-            >
-              {isLoadingMore ? <Loader2 className="animate-spin" /> : null}
-              加载更多
-            </Button>
-          </div>
-        ) : null}
       </section>
 
       <Dialog

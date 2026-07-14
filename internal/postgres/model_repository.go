@@ -241,21 +241,43 @@ func (r *ModelRepository) GetPrice(ctx context.Context, modelID string, priceID 
 	return price, nil
 }
 
-func (r *ModelRepository) ListPrices(ctx context.Context, modelID string) ([]domain.ModelPriceVersion, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+modelPriceColumns+` FROM model_price_versions WHERE model_id = $1::uuid ORDER BY version DESC`, modelID)
+func (r *ModelRepository) ListPrices(ctx context.Context, modelID string, limit int, cursor string) ([]domain.ModelPriceVersion, string, error) {
+	limit = clampLimit(limit, 50, 200)
+	decoded, err := pagination.Decode(strings.TrimSpace(cursor))
 	if err != nil {
-		return nil, fmt.Errorf("list model prices: %w", err)
+		return nil, "", domain.NewValidationError("invalid cursor")
+	}
+	args := []any{modelID}
+	query := `SELECT ` + modelPriceColumns + ` FROM model_price_versions WHERE model_id = $1::uuid`
+	if decoded != nil {
+		args = append(args, decoded.CreatedAt, decoded.ID)
+		query += fmt.Sprintf(` AND (created_at, id) < ($%d, $%d::uuid)`, len(args)-1, len(args))
+	}
+	args = append(args, limit+1)
+	query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, len(args))
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("list model prices: %w", err)
 	}
 	defer rows.Close()
-	items := []domain.ModelPriceVersion{}
+	items := make([]domain.ModelPriceVersion, 0, limit+1)
 	for rows.Next() {
 		item, err := scanModelPrice(rows)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		items = append(items, *item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		next = pagination.Encode(last.CreatedAt, last.ID)
+	}
+	return items, next, nil
 }
 
 func (r *ModelRepository) SetPriceStatus(ctx context.Context, modelID string, priceID string, status string, actorUserID string, effectiveFrom *time.Time) (*domain.ModelPriceVersion, error) {

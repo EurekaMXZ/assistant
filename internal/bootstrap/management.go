@@ -20,12 +20,42 @@ type managementDependencies struct {
 	credentials *postgres.ProviderCredentialRepository
 	billing     *postgres.BillingAccountRepository
 	audit       *postgres.AuditRepository
+	overview    *postgres.AdminOverviewRepository
 	cipher      *credential.Cipher
 	currency    string
 }
 
 func attachManagementUseCases(useCases *server.UseCases, deps managementDependencies) {
 	validator := credential.NewValidator(15 * time.Second)
+	useCases.Overview.GetAdminOverview = func(ctx context.Context, actor *domain.User) (*server.AdminOverviewResult, error) {
+		if actor == nil || !domain.UserRoleSatisfies(actor.Role, domain.UserRoleAdmin) {
+			return nil, domain.NewForbiddenError("insufficient privileges")
+		}
+		includeSystem := actor.Role == domain.UserRoleSystem
+		counts, err := deps.overview.GetCounts(ctx, includeSystem)
+		if err != nil {
+			return nil, err
+		}
+		audit, _, err := deps.audit.List(ctx, postgres.AuditListParams{
+			ViewerUserID: actor.ID,
+			ViewerRole:   actor.Role,
+			Limit:        8,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result := &server.AdminOverviewResult{
+			Users:          counts.Users,
+			ActiveAccounts: counts.ActiveAccounts,
+			AuditEvents:    counts.AuditEvents,
+			Audit:          audit,
+		}
+		if includeSystem {
+			result.EnabledModels = &counts.EnabledModels
+			result.Credentials = &counts.Credentials
+		}
+		return result, nil
+	}
 	useCases.Models.ListModels = func(ctx context.Context, limit int, cursor string) (*server.PageResult[domain.Model], error) {
 		items, next, err := deps.models.List(ctx, true, limit, cursor)
 		if err != nil {
@@ -148,11 +178,12 @@ func attachManagementUseCases(useCases *server.UseCases, deps managementDependen
 			Status: input.Status, ActorUserID: actor.ID,
 		})
 	}
-	useCases.Models.ListModelPrices = func(ctx context.Context, actor *domain.User, modelID string) ([]domain.ModelPriceVersion, error) {
+	useCases.Models.ListModelPrices = func(ctx context.Context, actor *domain.User, modelID string, limit int, cursor string) (*server.PageResult[domain.ModelPriceVersion], error) {
 		if err := requireSystemActor(actor); err != nil {
 			return nil, err
 		}
-		return deps.models.ListPrices(ctx, modelID)
+		items, next, err := deps.models.ListPrices(ctx, modelID, limit, cursor)
+		return &server.PageResult[domain.ModelPriceVersion]{Items: items, NextCursor: next}, err
 	}
 	useCases.Models.GetModelPrice = func(ctx context.Context, actor *domain.User, modelID string, priceID string) (*domain.ModelPriceVersion, error) {
 		if err := requireSystemActor(actor); err != nil {

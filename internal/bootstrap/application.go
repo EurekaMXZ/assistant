@@ -143,7 +143,13 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 			ChangeOwnPassword:       authService.ChangeOwnPassword,
 		},
 		Users: server.UserUseCases{
-			ListManagedUsers:     authService.ListManagedUsers,
+			ListManagedUsers: func(ctx context.Context, actor *domain.User, limit int, cursor string) (*server.PageResult[domain.User], error) {
+				items, next, err := authService.ListManagedUsers(ctx, actor, limit, cursor)
+				if err != nil {
+					return nil, err
+				}
+				return &server.PageResult[domain.User]{Items: items, NextCursor: next}, nil
+			},
 			GetManagedUser:       authService.GetManagedUser,
 			CreateManagedUser:    authService.CreateManagedUser,
 			UpdateManagedUser:    authService.UpdateManagedUser,
@@ -267,7 +273,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	}
 	attachManagementUseCases(&useCases, managementDependencies{
 		models: modelRepository, credentials: providerCredentialRepository, billing: billingAccountRepository,
-		audit: auditRepository, cipher: credentialCipher, currency: billingCurrency,
+		audit: auditRepository, overview: postgres.NewAdminOverviewRepository(pool), cipher: credentialCipher, currency: billingCurrency,
 	})
 	adapters := workflowAdapters{
 		Outbox:               postgres.NewWorkflowOutboxRepository(pool),

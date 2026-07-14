@@ -3,10 +3,12 @@ import {
   ApiError,
   applyAdminBillingAdjustment,
   disableAdminBillingRedemptionCode,
+  getAdminOverview,
   getStreamUrl,
   handleSessionUnauthorized,
   issueAdminBillingRedemptionCodes,
   isSessionUnauthorizedError,
+  listAdminUsersPage,
   redeemBillingCode,
   updateAdminBillingToolPrices,
 } from "./api";
@@ -85,6 +87,53 @@ describe("same-origin API routing", () => {
   it("routes backend stream paths through the frontend proxy", () => {
     expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
     expect(getStreamUrl("/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
+  });
+});
+
+describe("cursor pagination", () => {
+  it("requests only the specified admin user page", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: [
+          {
+            id: "user-1",
+            email: "user@example.com",
+            username: "user",
+            role: "user",
+            status: "active",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+        page: { next_cursor: "next-users", has_more: true },
+      }),
+    );
+
+    const result = await listAdminUsersPage("current users");
+
+    expect(result.data).toHaveLength(1);
+    expect(result.page.next_cursor).toBe("next-users");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/users?limit=50&cursor=current%20users");
+  });
+});
+
+describe("admin overview", () => {
+  it("uses the aggregate endpoint instead of enumerating list pages", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        users: 12,
+        active_accounts: 8,
+        audit_events: 34,
+        audit: [],
+      }),
+    );
+
+    const result = await getAdminOverview();
+
+    expect(result.users).toBe(12);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/overview");
   });
 });
 

@@ -13,7 +13,7 @@ type UserStore interface {
 	CreateUser(ctx context.Context, params CreateUserParams) (*domain.User, error)
 	GetUserByID(ctx context.Context, userID string) (*domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
-	ListUsers(ctx context.Context, params ListUsersParams) ([]domain.User, error)
+	ListUsers(ctx context.Context, params ListUsersParams) ([]domain.User, string, error)
 	UpdateUser(ctx context.Context, params UpdateUserParams) (*domain.User, error)
 	UpdateUserPassword(ctx context.Context, userID string, passwordHash string, allowedCurrentRoles []string) (*domain.User, error)
 	TouchUserLogin(ctx context.Context, userID string) (*domain.User, error)
@@ -67,6 +67,7 @@ type ListUsersParams struct {
 	Roles         []string
 	ExcludeUserID string
 	Limit         int
+	Cursor        string
 }
 
 type UpdateUserParams struct {
@@ -355,19 +356,19 @@ func (s *Service) ResetPassword(ctx context.Context, input ResetPasswordInput) (
 	return user, nil
 }
 
-func (s *Service) ListManagedUsers(ctx context.Context, actor *domain.User, limit int) ([]domain.User, error) {
+func (s *Service) ListManagedUsers(ctx context.Context, actor *domain.User, limit int, cursor string) ([]domain.User, string, error) {
 	if s == nil || s.Users == nil {
-		return nil, errors.New("auth service is not configured")
+		return nil, "", errors.New("auth service is not configured")
 	}
 	if actor == nil {
-		return nil, domain.NewUnauthorizedError("authentication required")
+		return nil, "", domain.NewUnauthorizedError("authentication required")
 	}
 
 	if !domain.UserRoleSatisfies(actor.Role, domain.UserRoleAdmin) {
-		return nil, domain.NewForbiddenError("insufficient privileges")
+		return nil, "", domain.NewForbiddenError("insufficient privileges")
 	}
 
-	return s.Users.ListUsers(ctx, ListUsersParams{Limit: limit})
+	return s.Users.ListUsers(ctx, ListUsersParams{Limit: limit, Cursor: cursor})
 }
 
 func (s *Service) GetManagedUser(ctx context.Context, actor *domain.User, userID string) (*domain.User, error) {

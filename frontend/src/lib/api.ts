@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  AdminOverview,
   BillingAccount,
   BillingRedemptionCode,
   BillingRedemptionCodeIssue,
@@ -213,16 +214,20 @@ async function apiFetch<T>(
   return parsed.data;
 }
 
+async function listCursorPage<T>(path: string, itemSchema: z.ZodType<T>, cursor?: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return apiFetch<CursorPageResponse<T>>(
+    `${path}${cursor ? `${separator}cursor=${encodeURIComponent(cursor)}` : ""}`,
+    {},
+    cursorPageSchema(itemSchema),
+  );
+}
+
 async function listAllCursorItems<T>(path: string, itemSchema: z.ZodType<T>) {
   const items: T[] = [];
   let cursor = "";
   for (let pageNumber = 0; pageNumber < 50; pageNumber += 1) {
-    const separator = path.includes("?") ? "&" : "?";
-    const page = await apiFetch<CursorPageResponse<T>>(
-      `${path}${cursor ? `${separator}cursor=${encodeURIComponent(cursor)}` : ""}`,
-      {},
-      cursorPageSchema(itemSchema),
-    );
+    const page = await listCursorPage(path, itemSchema, cursor);
     items.push(...page.data);
     if (!page.page.has_more || !page.page.next_cursor) return items;
     cursor = page.page.next_cursor;
@@ -368,8 +373,23 @@ export async function listModels() {
 }
 
 // Admin
-export async function listAdminUsers() {
-  return apiFetch<{ users: User[] }>("/users?limit=200").then((result) => result.users);
+export async function listAdminUsersPage(cursor?: string) {
+  return listCursorPage("/users?limit=50", userSchema, cursor);
+}
+
+export async function getAdminOverview() {
+  return apiFetch<AdminOverview>(
+    "/admin/overview",
+    {},
+    z.object({
+      users: z.number(),
+      enabled_models: z.number().optional(),
+      credentials: z.number().optional(),
+      active_accounts: z.number(),
+      audit_events: z.number(),
+      audit: z.array(auditEventSchema),
+    }),
+  );
 }
 
 export async function createAdminUser(payload: {
@@ -403,6 +423,10 @@ export async function resetAdminUserPassword(userId: string, newPassword: string
 
 export async function listAdminModels() {
   return listAllCursorItems("/admin/models?limit=200", modelSchema);
+}
+
+export async function listAdminModelsPage(cursor?: string) {
+  return listCursorPage("/admin/models?limit=50", modelSchema, cursor);
 }
 
 export type AdminModelCreatePayload = {
@@ -468,12 +492,12 @@ export async function updateAdminModelSettings(
   ).then((result) => result.settings);
 }
 
-export async function listAdminModelPrices(modelId: string) {
-  return apiFetch<{ prices: ModelPriceVersion[] }>(
-    `/admin/models/${modelId}/prices`,
-    {},
-    z.object({ prices: z.array(modelPriceVersionSchema) }),
-  ).then((result) => result.prices);
+export async function listAdminModelPrices(modelId: string, cursor?: string) {
+  return listCursorPage(
+    `/admin/models/${modelId}/prices?limit=50`,
+    modelPriceVersionSchema,
+    cursor,
+  );
 }
 
 export async function createAdminModelPrice(
@@ -504,6 +528,10 @@ export async function setAdminModelPriceStatus(
 
 export async function listAdminCredentials() {
   return listAllCursorItems("/admin/provider-credentials?limit=200", providerCredentialSchema);
+}
+
+export async function listAdminCredentialsPage(cursor?: string) {
+  return listCursorPage("/admin/provider-credentials?limit=50", providerCredentialSchema, cursor);
 }
 
 export async function createAdminCredential(payload: {
@@ -552,8 +580,8 @@ export async function revokeAdminCredential(credentialId: string) {
   ).then((result) => result.credential);
 }
 
-export async function listAdminBillingAccounts() {
-  return listAllCursorItems("/admin/billing/accounts?limit=200", billingAccountSchema);
+export async function listAdminBillingAccountsPage(cursor?: string) {
+  return listCursorPage("/admin/billing/accounts?limit=50", billingAccountSchema, cursor);
 }
 
 export async function listAdminBillingToolPrices() {
@@ -636,16 +664,16 @@ export async function applyAdminBillingAdjustment(
   ).then((result) => result.transaction);
 }
 
-export async function listAdminBillingTransactions() {
-  return listAllCursorItems("/admin/billing/transactions?limit=200", billingTransactionSchema);
+export async function listAdminBillingTransactionsPage(cursor?: string) {
+  return listCursorPage("/admin/billing/transactions?limit=50", billingTransactionSchema, cursor);
 }
 
-export async function listAdminBillingUsageEvents() {
-  return listAllCursorItems("/admin/billing/usage-events?limit=200", billingUsageEventSchema);
+export async function listAdminBillingUsageEventsPage(cursor?: string) {
+  return listCursorPage("/admin/billing/usage-events?limit=50", billingUsageEventSchema, cursor);
 }
 
-export async function listAdminAuditEvents() {
-  return listAllCursorItems("/admin/audit-events?limit=200", auditEventSchema);
+export async function listAdminAuditEventsPage(cursor?: string) {
+  return listCursorPage("/admin/audit-events?limit=50", auditEventSchema, cursor);
 }
 
 export async function getAdminMailSettings() {

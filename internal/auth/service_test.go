@@ -13,6 +13,7 @@ type stubUserStore struct {
 	users       map[string]*domain.User
 	emailToID   map[string]string
 	touchedUser string
+	listParams  ListUsersParams
 }
 
 func newStubUserStore(users ...*domain.User) *stubUserStore {
@@ -66,7 +67,8 @@ func (s *stubUserStore) GetUserByEmail(_ context.Context, email string) (*domain
 	return s.GetUserByID(context.Background(), userID)
 }
 
-func (s *stubUserStore) ListUsers(_ context.Context, params ListUsersParams) ([]domain.User, error) {
+func (s *stubUserStore) ListUsers(_ context.Context, params ListUsersParams) ([]domain.User, string, error) {
+	s.listParams = params
 	results := make([]domain.User, 0, len(s.users))
 	for _, user := range s.users {
 		if user.ID == params.ExcludeUserID {
@@ -83,7 +85,7 @@ func (s *stubUserStore) ListUsers(_ context.Context, params ListUsersParams) ([]
 			results = append(results, *user)
 		}
 	}
-	return results, nil
+	return results, "next-users", nil
 }
 
 func (s *stubUserStore) UpdateUser(_ context.Context, params UpdateUserParams) (*domain.User, error) {
@@ -219,9 +221,12 @@ func TestServiceListManagedUsersIncludesEveryRole(t *testing.T) {
 	)
 	service := &Service{Users: store}
 
-	users, err := service.ListManagedUsers(context.Background(), store.users["admin-1"], 50)
-	if err != nil || len(users) != 3 {
-		t.Fatalf("managed users=%#v err=%v", users, err)
+	users, next, err := service.ListManagedUsers(context.Background(), store.users["admin-1"], 50, "cursor-users")
+	if err != nil || len(users) != 3 || next != "next-users" {
+		t.Fatalf("managed users=%#v next=%q err=%v", users, next, err)
+	}
+	if store.listParams.Limit != 50 || store.listParams.Cursor != "cursor-users" {
+		t.Fatalf("list params=%#v", store.listParams)
 	}
 }
 

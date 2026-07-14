@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { KeyRound, MoreHorizontal, Plus, UserRound, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,8 @@ import {
   AdminPageHeader,
   SavingIcon,
   adminSelectClass,
+  adminTableHeadClass,
+  adminTableScrollClass,
   formatAdminDate,
 } from "@/components/admin/admin-shared";
 import { Badge } from "@/components/ui/badge";
@@ -30,14 +32,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   createAdminUser,
-  listAdminUsers,
+  listAdminUsersPage,
   resetAdminUserPassword,
   updateAdminUser,
 } from "@/lib/api";
 import { canManageUser, manageableUserRoles } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
+import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 const roleLabels: Record<UserRole, string> = {
   system: "系统",
@@ -46,9 +50,17 @@ const roleLabels: Record<UserRole, string> = {
 };
 
 export function AdminUsers({ actor }: { actor: User }) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const {
+    items: users,
+    setItems: setUsers,
+    page,
+    loading,
+    loadingMore,
+    error,
+    loadMoreError,
+    loadMore,
+    reload,
+  } = useCursorPagination<User>(listAdminUsersPage, "用户加载失败");
   const [editor, setEditor] = useState<User | "create" | null>(null);
   const [resetUser, setResetUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
@@ -57,22 +69,6 @@ export function AdminUsers({ actor }: { actor: User }) {
   const [role, setRole] = useState<Exclude<UserRole, "system">>("user");
   const [saving, setSaving] = useState(false);
   const manageableRoles = manageableUserRoles(actor);
-
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setUsers(await listAdminUsers());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "用户加载失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
 
   const openEditor = (item: User | "create") => {
     setEditor(item);
@@ -154,12 +150,26 @@ export function AdminUsers({ actor }: { actor: User }) {
         }
       />
       {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={load} /> : null}
+      {!loading && error ? <AdminError message={error} onRetry={reload} /> : null}
       {!loading && !error && !users.length ? <AdminEmpty icon={Users} title="暂无用户" /> : null}
       {!loading && !error && users.length ? (
-        <div className="mt-6 overflow-x-auto border-y">
-          <table className="w-full min-w-[780px] text-left text-sm">
-            <thead className="text-xs text-muted-foreground">
+        <CursorTableScroll
+          className={`${adminTableScrollClass} mt-6`}
+          hasMore={page.has_more}
+          loadingMore={loadingMore}
+          loadMoreError={loadMoreError}
+          onLoadMore={loadMore}
+          aria-label="用户列表"
+        >
+          <table className="w-[64rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[26rem]" />
+              <col className="w-[9rem]" />
+              <col className="w-[13rem]" />
+              <col className="w-[9rem]" />
+              <col className="w-[7rem]" />
+            </colgroup>
+            <thead className={adminTableHeadClass}>
               <tr className="border-b">
                 <th className="py-3 pr-4 font-medium">用户</th>
                 <th className="px-4 py-3 font-medium">角色</th>
@@ -174,13 +184,20 @@ export function AdminUsers({ actor }: { actor: User }) {
                 return (
                   <tr key={item.id}>
                     <td className="py-3 pr-4">
-                      <div className="flex items-center gap-3">
-                        <span className="grid size-8 place-items-center rounded-md bg-muted">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
                           <UserRound className="size-4" />
                         </span>
-                        <div>
-                          <p className="font-medium">{item.username}</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">{item.email}</p>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium" title={item.username}>
+                            {item.username}
+                          </p>
+                          <p
+                            className="mt-0.5 truncate text-xs text-muted-foreground"
+                            title={item.email}
+                          >
+                            {item.email}
+                          </p>
                         </div>
                       </div>
                     </td>
@@ -229,7 +246,7 @@ export function AdminUsers({ actor }: { actor: User }) {
               })}
             </tbody>
           </table>
-        </div>
+        </CursorTableScroll>
       ) : null}
 
       <Dialog open={editor !== null} onOpenChange={(open) => !open && setEditor(null)}>

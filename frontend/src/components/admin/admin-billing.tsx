@@ -21,6 +21,8 @@ import {
   AdminPageHeader,
   SavingIcon,
   adminSelectClass,
+  adminTableHeadClass,
+  adminTableScrollClass,
   formatAdminDate,
 } from "@/components/admin/admin-shared";
 import { Badge } from "@/components/ui/badge";
@@ -43,28 +45,40 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   applyAdminBillingAdjustment,
-  listAdminBillingAccounts,
-  listAdminBillingTransactions,
-  listAdminBillingUsageEvents,
-  listAdminUsers,
+  listAdminBillingAccountsPage,
+  listAdminBillingTransactionsPage,
+  listAdminBillingUsageEventsPage,
+  listAdminUsersPage,
   updateAdminBillingAccount,
 } from "@/lib/api";
 import { parseDecimalNanos } from "@/lib/decimal-nanos";
 import { createIdempotencyKey } from "@/lib/idempotency-key";
 import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from "@/lib/types";
+import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 type BillingView = "accounts" | "transactions" | "usage" | "tool-prices" | "codes";
 
 export function AdminBilling() {
   const [view, setView] = useState<BillingView>("accounts");
-  const [accounts, setAccounts] = useState<BillingAccount[]>([]);
-  const [transactions, setTransactions] = useState<BillingTransaction[]>([]);
-  const [usage, setUsage] = useState<BillingUsageEvent[]>([]);
+  const accountState = useCursorPagination<BillingAccount>(
+    listAdminBillingAccountsPage,
+    "计费账户加载失败",
+  );
+  const transactionState = useCursorPagination<BillingTransaction>(
+    listAdminBillingTransactionsPage,
+    "资金流水加载失败",
+  );
+  const usageState = useCursorPagination<BillingUsageEvent>(
+    listAdminBillingUsageEventsPage,
+    "用量明细加载失败",
+  );
+  const { items: accounts, setItems: setAccounts } = accountState;
+  const { items: transactions, setItems: setTransactions } = transactionState;
+  const { items: usage } = usageState;
   const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [editing, setEditing] = useState<BillingAccount | null>(null);
   const [adjusting, setAdjusting] = useState<{
     account: BillingAccount;
@@ -77,29 +91,18 @@ export function AdminBilling() {
   const [adjustmentKey, setAdjustmentKey] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [nextAccounts, nextTransactions, nextUsage, nextUsers] = await Promise.all([
-        listAdminBillingAccounts(),
-        listAdminBillingTransactions(),
-        listAdminBillingUsageEvents(),
-        listAdminUsers(),
-      ]);
-      setAccounts(nextAccounts);
-      setTransactions(nextTransactions);
-      setUsage(nextUsage);
-      setUsers(nextUsers);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "计费数据加载失败");
-    } finally {
-      setLoading(false);
-    }
-  };
   useEffect(() => {
-    void load();
+    void listAdminUsersPage()
+      .then((result) => setUsers(result.data))
+      .catch((err: unknown) =>
+        toast.error(err instanceof Error ? err.message : "用户信息加载失败"),
+      );
   }, []);
+  const activeState =
+    view === "accounts" ? accountState : view === "transactions" ? transactionState : usageState;
+  const loading = activeState.loading;
+  const error = activeState.error;
+  const load = activeState.reload;
   const userMap = new Map(users.map((user) => [user.id, user]));
 
   const openEdit = (account: BillingAccount) => {
@@ -204,9 +207,24 @@ export function AdminBilling() {
       ) : null}
       {!loading && !error && view === "accounts" ? (
         accounts.length ? (
-          <div className="mt-5 overflow-x-auto border-y">
-            <table className="w-full min-w-[820px] text-left text-sm">
-              <thead className="text-xs text-muted-foreground">
+          <CursorTableScroll
+            className={`${adminTableScrollClass} mt-5`}
+            hasMore={accountState.page.has_more}
+            loadingMore={accountState.loadingMore}
+            loadMoreError={accountState.loadMoreError}
+            onLoadMore={accountState.loadMore}
+            aria-label="计费账户"
+          >
+            <table className="w-[72rem] min-w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[24rem]" />
+                <col className="w-[8rem]" />
+                <col className="w-[12rem]" />
+                <col className="w-[8rem]" />
+                <col className="w-[14rem]" />
+                <col className="w-[6rem]" />
+              </colgroup>
+              <thead className={adminTableHeadClass}>
                 <tr className="border-b">
                   <th className="py-3 pr-4 font-medium">用户</th>
                   <th className="px-4 py-3 font-medium">模式</th>
@@ -222,10 +240,16 @@ export function AdminBilling() {
                   return (
                     <tr key={account.id}>
                       <td className="py-3 pr-4">
-                        <p className="font-medium">
+                        <p
+                          className="truncate font-medium"
+                          title={user?.username || account.user_id}
+                        >
                           {user?.username || account.user_id.slice(0, 8)}
                         </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
+                        <p
+                          className="mt-0.5 truncate text-xs text-muted-foreground"
+                          title={user?.email || account.user_id}
+                        >
                           {user?.email || account.user_id}
                         </p>
                       </td>
@@ -271,7 +295,7 @@ export function AdminBilling() {
                 })}
               </tbody>
             </table>
-          </div>
+          </CursorTableScroll>
         ) : (
           <AdminEmpty icon={WalletCards} title="暂无计费账户" />
         )
@@ -279,9 +303,24 @@ export function AdminBilling() {
 
       {!loading && !error && view === "transactions" ? (
         transactions.length ? (
-          <div className="mt-5 overflow-x-auto border-y">
-            <table className="w-full min-w-[860px] text-left text-sm">
-              <thead className="text-xs text-muted-foreground">
+          <CursorTableScroll
+            className={`${adminTableScrollClass} mt-5`}
+            hasMore={transactionState.page.has_more}
+            loadingMore={transactionState.loadingMore}
+            loadMoreError={transactionState.loadMoreError}
+            onLoadMore={transactionState.loadMore}
+            aria-label="资金流水"
+          >
+            <table className="w-[78rem] min-w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[11rem]" />
+                <col className="w-[18rem]" />
+                <col className="w-[14rem]" />
+                <col className="w-[12rem]" />
+                <col className="w-[10rem]" />
+                <col className="w-[13rem]" />
+              </colgroup>
+              <thead className={adminTableHeadClass}>
                 <tr className="border-b">
                   <th className="py-3 pr-4 font-medium">时间</th>
                   <th className="px-4 py-3 font-medium">用户</th>
@@ -297,15 +336,18 @@ export function AdminBilling() {
                     <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
                       {formatAdminDate(item.created_at)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td
+                      className="truncate px-4 py-3"
+                      title={userMap.get(item.user_id)?.username || item.user_id}
+                    >
                       {userMap.get(item.user_id)?.username || item.user_id.slice(0, 8)}
                     </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-2">
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className="inline-flex items-center gap-2 whitespace-nowrap">
                         {item.direction === "credit" ? (
-                          <ArrowDownLeft className="size-3.5 text-emerald-600" />
+                          <ArrowDownLeft className="size-4 shrink-0 stroke-[1.75] text-emerald-600" />
                         ) : (
-                          <ArrowUpRight className="size-3.5 text-amber-600" />
+                          <ArrowUpRight className="size-4 shrink-0 stroke-[1.75] text-amber-600" />
                         )}
                         {transactionName(item.kind)}
                       </span>
@@ -317,14 +359,17 @@ export function AdminBilling() {
                     <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
                       {item.balance_after}
                     </td>
-                    <td className="max-w-52 truncate py-3 pl-4 text-muted-foreground">
+                    <td
+                      className="truncate py-3 pl-4 text-muted-foreground"
+                      title={item.reason || ""}
+                    >
                       {item.reason || "-"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </CursorTableScroll>
         ) : (
           <AdminEmpty icon={ReceiptText} title="暂无资金流水" />
         )
@@ -332,9 +377,25 @@ export function AdminBilling() {
 
       {!loading && !error && view === "usage" ? (
         usage.length ? (
-          <div className="mt-5 overflow-x-auto border-y">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="text-xs text-muted-foreground">
+          <CursorTableScroll
+            className={`${adminTableScrollClass} mt-5`}
+            hasMore={usageState.page.has_more}
+            loadingMore={usageState.loadingMore}
+            loadMoreError={usageState.loadMoreError}
+            onLoadMore={usageState.loadMore}
+            aria-label="用量明细"
+          >
+            <table className="w-[80rem] min-w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[11rem]" />
+                <col className="w-[16rem]" />
+                <col className="w-[18rem]" />
+                <col className="w-[9rem]" />
+                <col className="w-[7rem]" />
+                <col className="w-[12rem]" />
+                <col className="w-[7rem]" />
+              </colgroup>
+              <thead className={adminTableHeadClass}>
                 <tr className="border-b">
                   <th className="py-3 pr-4 font-medium">时间</th>
                   <th className="px-4 py-3 font-medium">用户</th>
@@ -351,13 +412,22 @@ export function AdminBilling() {
                     <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
                       {formatAdminDate(item.created_at)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td
+                      className="truncate px-4 py-3"
+                      title={
+                        item.owner_user_id
+                          ? userMap.get(item.owner_user_id)?.username || item.owner_user_id
+                          : ""
+                      }
+                    >
                       {item.owner_user_id
                         ? userMap.get(item.owner_user_id)?.username ||
                           item.owner_user_id.slice(0, 8)
                         : "-"}
                     </td>
-                    <td className="px-4 py-3 font-medium">{item.upstream_model}</td>
+                    <td className="truncate px-4 py-3 font-medium" title={item.upstream_model}>
+                      {item.upstream_model}
+                    </td>
                     <td className="px-4 py-3 text-right font-mono">
                       <BillingTokenUsage usage={item} />
                     </td>
@@ -378,7 +448,7 @@ export function AdminBilling() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </CursorTableScroll>
         ) : (
           <AdminEmpty icon={CreditCard} title="暂无模型用量" />
         )

@@ -21,6 +21,7 @@ func authenticatedUser(role string) func(context.Context, string) (*domain.User,
 func TestAdminManagementRoutesRejectRegularUser(t *testing.T) {
 	srv := newTestServer(UseCases{Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)}})
 	for _, route := range []string{
+		"/api/v1/admin/overview",
 		"/api/v1/admin/provider-credentials",
 		"/api/v1/admin/models",
 		"/api/v1/admin/billing/accounts",
@@ -35,6 +36,89 @@ func TestAdminManagementRoutesRejectRegularUser(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("GET %s status = %d, want %d", route, rec.Code, http.StatusForbidden)
 		}
+	}
+}
+
+func TestGetAdminOverviewReturnsAggregateData(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleAdmin)},
+		Overview: AdminOverviewUseCases{GetAdminOverview: func(_ context.Context, actor *domain.User) (*AdminOverviewResult, error) {
+			if actor.ID != "user-1" {
+				t.Fatalf("unexpected overview actor: %q", actor.ID)
+			}
+			return &AdminOverviewResult{
+				Users:          12,
+				ActiveAccounts: 8,
+				AuditEvents:    34,
+				Audit:          []domain.AuditEvent{{ID: "audit-1", Action: "user.updated"}},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"users":12`) || !strings.Contains(body, `"active_accounts":8`) || !strings.Contains(body, `"audit":[`) {
+		t.Fatalf("unexpected overview response: %s", body)
+	}
+}
+
+func TestListManagedUsersPassesCursorAndReturnsPage(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleAdmin)},
+		Users: UserUseCases{ListManagedUsers: func(_ context.Context, actor *domain.User, limit int, cursor string) (*PageResult[domain.User], error) {
+			if actor.ID != "user-1" || limit != 25 || cursor != "current-users" {
+				t.Fatalf("unexpected users request: actor=%q limit=%d cursor=%q", actor.ID, limit, cursor)
+			}
+			return &PageResult[domain.User]{
+				Items:      []domain.User{{ID: "user-2", Role: domain.UserRoleUser}},
+				NextCursor: "next-users",
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users?limit=25&cursor=%20current-users%20", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"data":[`) || !strings.Contains(body, `"next_cursor":"next-users"`) || !strings.Contains(body, `"has_more":true`) {
+		t.Fatalf("unexpected users page: %s", body)
+	}
+}
+
+func TestListModelPricesPassesCursorAndReturnsPage(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleSystem)},
+		Models: ModelUseCases{ListModelPrices: func(_ context.Context, actor *domain.User, modelID string, limit int, cursor string) (*PageResult[domain.ModelPriceVersion], error) {
+			if actor.ID != "user-1" || modelID != "model-1" || limit != 20 || cursor != "current-prices" {
+				t.Fatalf("unexpected prices request: actor=%q model=%q limit=%d cursor=%q", actor.ID, modelID, limit, cursor)
+			}
+			return &PageResult[domain.ModelPriceVersion]{
+				Items:      []domain.ModelPriceVersion{{ID: "price-1", ModelID: modelID}},
+				NextCursor: "next-prices",
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/models/model-1/prices?limit=20&cursor=current-prices", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"next_cursor":"next-prices"`) || !strings.Contains(body, `"has_more":true`) {
+		t.Fatalf("unexpected prices page: %s", body)
 	}
 }
 

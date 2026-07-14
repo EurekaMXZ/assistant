@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
 	assistantbilling "github.com/EurekaMXZ/assistant/internal/billing"
 	"github.com/EurekaMXZ/assistant/internal/credential"
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -30,6 +31,18 @@ func TestManagementBillingAndAuditIntegration(t *testing.T) {
 	adminID := insertIntegrationUser(t, pool, domain.UserRoleAdmin)
 	userID := insertIntegrationUser(t, pool, domain.UserRoleUser)
 	otherUserID := insertIntegrationUser(t, pool, domain.UserRoleUser)
+	users := NewUserRepository(pool)
+	firstUsers, nextUsers, err := users.ListUsers(t.Context(), assistantauth.ListUsersParams{Limit: 2})
+	if err != nil || len(firstUsers) != 2 || nextUsers == "" {
+		t.Fatalf("first users page: users=%#v next=%q err=%v", firstUsers, nextUsers, err)
+	}
+	secondUsers, _, err := users.ListUsers(t.Context(), assistantauth.ListUsersParams{Limit: 2, Cursor: nextUsers})
+	if err != nil || len(secondUsers) == 0 || secondUsers[0].ID == firstUsers[0].ID || secondUsers[0].ID == firstUsers[1].ID {
+		t.Fatalf("second users page: users=%#v err=%v", secondUsers, err)
+	}
+	if _, _, err := users.ListUsers(t.Context(), assistantauth.ListUsersParams{Cursor: "invalid"}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("invalid users cursor error = %v", err)
+	}
 
 	cipher, err := credential.NewCipher(base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
 	if err != nil {
@@ -101,6 +114,22 @@ func TestManagementBillingAndAuditIntegration(t *testing.T) {
 	price, err = models.SetPriceStatus(t.Context(), model.ID, price.ID, domain.ModelPriceStatusPublished, adminID, nil)
 	if err != nil {
 		t.Fatalf("publish price: %v", err)
+	}
+	for range 2 {
+		if _, err := models.CreatePrice(t.Context(), CreateModelPriceParams{
+			ModelID: model.ID, Currency: "USD", InputPerMillionNanos: 2_000_000_000,
+			OutputPerMillionNanos: 3_000_000_000, ActorUserID: adminID,
+		}); err != nil {
+			t.Fatalf("create paginated price: %v", err)
+		}
+	}
+	firstPrices, nextPrices, err := models.ListPrices(t.Context(), model.ID, 1, "")
+	if err != nil || len(firstPrices) != 1 || nextPrices == "" {
+		t.Fatalf("first prices page: prices=%#v next=%q err=%v", firstPrices, nextPrices, err)
+	}
+	secondPrices, _, err := models.ListPrices(t.Context(), model.ID, 1, nextPrices)
+	if err != nil || len(secondPrices) != 1 || secondPrices[0].ID == firstPrices[0].ID {
+		t.Fatalf("second prices page: prices=%#v err=%v", secondPrices, err)
 	}
 	if _, err := models.UpdateSettings(t.Context(), &model.ID, &model.ID, adminID); err != nil {
 		t.Fatalf("update model settings: %v", err)
@@ -355,6 +384,11 @@ func TestManagementBillingAndAuditIntegration(t *testing.T) {
 	}
 	if _, err := pool.Exec(t.Context(), `DELETE FROM audit_events WHERE id = $1::uuid`, unrelated.ID); err == nil {
 		t.Fatal("append-only audit event allowed delete")
+	}
+	overview := NewAdminOverviewRepository(pool)
+	counts, err := overview.GetCounts(t.Context(), false)
+	if err != nil || counts.Users < 3 || counts.EnabledModels < 1 || counts.ActiveAccounts < 1 || counts.AuditEvents < 1 {
+		t.Fatalf("admin overview counts=%#v err=%v", counts, err)
 	}
 }
 

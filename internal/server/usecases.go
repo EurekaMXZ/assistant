@@ -228,7 +228,7 @@ type AuthUseCases struct {
 }
 
 type UserUseCases struct {
-	ListManagedUsers     func(ctx context.Context, actor *domain.User, limit int) ([]domain.User, error)
+	ListManagedUsers     func(ctx context.Context, actor *domain.User, limit int, cursor string) (*PageResult[domain.User], error)
 	GetManagedUser       func(ctx context.Context, actor *domain.User, userID string) (*domain.User, error)
 	CreateManagedUser    func(ctx context.Context, actor *domain.User, input assistantauth.CreateManagedUserInput) (*domain.User, error)
 	UpdateManagedUser    func(ctx context.Context, actor *domain.User, input assistantauth.UpdateManagedUserInput) (*domain.User, error)
@@ -270,7 +270,7 @@ type ModelUseCases struct {
 	GetAdminModel       func(ctx context.Context, actor *domain.User, modelID string) (*domain.Model, error)
 	CreateModel         func(ctx context.Context, actor *domain.User, input CreateModelInput) (*domain.Model, error)
 	UpdateModel         func(ctx context.Context, actor *domain.User, input UpdateModelInput) (*domain.Model, error)
-	ListModelPrices     func(ctx context.Context, actor *domain.User, modelID string) ([]domain.ModelPriceVersion, error)
+	ListModelPrices     func(ctx context.Context, actor *domain.User, modelID string, limit int, cursor string) (*PageResult[domain.ModelPriceVersion], error)
 	GetModelPrice       func(ctx context.Context, actor *domain.User, modelID string, priceID string) (*domain.ModelPriceVersion, error)
 	CreateModelPrice    func(ctx context.Context, actor *domain.User, input CreateModelPriceInput) (*domain.ModelPriceVersion, error)
 	PublishModelPrice   func(ctx context.Context, actor *domain.User, modelID string, priceID string, effectiveFrom *time.Time) (*domain.ModelPriceVersion, error)
@@ -313,6 +313,19 @@ type AuditUseCases struct {
 	RecordAudit     func(ctx context.Context, input RecordAuditInput) error
 }
 
+type AdminOverviewResult struct {
+	Users          int64               `json:"users"`
+	EnabledModels  *int64              `json:"enabled_models,omitempty"`
+	Credentials    *int64              `json:"credentials,omitempty"`
+	ActiveAccounts int64               `json:"active_accounts"`
+	AuditEvents    int64               `json:"audit_events"`
+	Audit          []domain.AuditEvent `json:"audit"`
+}
+
+type AdminOverviewUseCases struct {
+	GetAdminOverview func(ctx context.Context, actor *domain.User) (*AdminOverviewResult, error)
+}
+
 type MailUseCases struct {
 	GetMailSettings    func(ctx context.Context, actor *domain.User) (*assistantmail.Settings, error)
 	UpdateMailSettings func(ctx context.Context, actor *domain.User, input assistantmail.UpdateSettingsInput) (*assistantmail.Settings, error)
@@ -330,6 +343,7 @@ type UseCases struct {
 	Credentials   CredentialUseCases
 	Billing       BillingUseCases
 	Audit         AuditUseCases
+	Overview      AdminOverviewUseCases
 	Mail          MailUseCases
 }
 

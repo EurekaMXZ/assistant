@@ -369,6 +369,7 @@ List the current user's conversations.
 Query params:
 
 - `limit`: default `50`, max `200`
+- `cursor`: opaque cursor returned by the previous page
 
 Response: `200 OK`
 
@@ -1211,6 +1212,10 @@ Returns one event only when it is visible to the authenticated user.
 
 User management, admin billing, and admin audit routes require at least the `admin` role, so both `admin` and `system` users are authorized. Provider credential, model, model price, model settings, and mail settings routes require the exact `system` role; an `admin` user is not authorized for them.
 
+### GET `/admin/overview`
+
+Returns aggregate user, active billing account, and visible audit counts plus the eight most recent visible audit events. System users also receive enabled model and active credential counts. This endpoint does not enumerate the underlying lists.
+
 ### GET `/users`
 
 Query params:
@@ -1221,9 +1226,11 @@ Response:
 
 ```json
 {
-  "users": [
-    {}
-  ]
+  "data": [{}],
+  "page": {
+    "next_cursor": "opaque-cursor",
+    "has_more": true
+  }
 }
 ```
 
@@ -1408,7 +1415,7 @@ Enable or disable selection for new turns.
 
 ### GET `/admin/models/:modelID/prices`
 
-Lists all immutable draft, published, and archived price versions.
+Lists immutable draft, published, and archived price versions. Query params: `limit` (default `50`, max `200`) and the opaque `cursor` returned by the previous page. The response uses the standard `{ "data": [], "page": {} }` cursor envelope.
 
 ### POST `/admin/models/:modelID/prices`
 

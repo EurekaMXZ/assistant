@@ -6,28 +6,15 @@ import {
   AdminError,
   AdminLoading,
   AdminPageHeader,
+  adminTableHeadClass,
+  adminTableScrollClass,
   formatAdminDate,
 } from "@/components/admin/admin-shared";
 import type { AdminSection } from "@/components/admin/admin-sections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  listAdminAuditEvents,
-  listAdminBillingAccounts,
-  listAdminCredentials,
-  listAdminModels,
-  listAdminUsers,
-} from "@/lib/api";
-import type { AuditEvent, User } from "@/lib/types";
-
-type OverviewData = {
-  users: number;
-  enabledModels?: number;
-  credentials?: number;
-  activeAccounts: number;
-  auditEvents: number;
-  audit: AuditEvent[];
-};
+import { getAdminOverview } from "@/lib/api";
+import type { AdminOverview as OverviewData, User } from "@/lib/types";
 
 export function AdminOverview({
   actor,
@@ -42,31 +29,7 @@ export function AdminOverview({
   const load = async () => {
     setError("");
     try {
-      const [users, accounts, audit] = await Promise.all([
-        listAdminUsers(),
-        listAdminBillingAccounts(),
-        listAdminAuditEvents(),
-      ]);
-
-      if (actor.role !== "system") {
-        setData({
-          users: users.length,
-          activeAccounts: accounts.filter((item) => item.status === "active").length,
-          auditEvents: audit.length,
-          audit: audit.slice(0, 8),
-        });
-        return;
-      }
-
-      const [models, credentials] = await Promise.all([listAdminModels(), listAdminCredentials()]);
-      setData({
-        users: users.length,
-        enabledModels: models.filter((item) => item.status === "enabled").length,
-        credentials: credentials.filter((item) => item.status !== "revoked").length,
-        activeAccounts: accounts.filter((item) => item.status === "active").length,
-        auditEvents: audit.length,
-        audit: audit.slice(0, 8),
-      });
+      setData(await getAdminOverview());
     } catch (err) {
       setError(err instanceof Error ? err.message : "管理数据加载失败");
     }
@@ -82,12 +45,12 @@ export function AdminOverview({
         { label: "用户", value: data.users },
         ...(actor.role === "system"
           ? [
-              { label: "启用模型", value: data.enabledModels ?? 0 },
+              { label: "启用模型", value: data.enabled_models ?? 0 },
               { label: "有效凭据", value: data.credentials ?? 0 },
             ]
           : []),
-        { label: "活跃账户", value: data.activeAccounts },
-        { label: "审计记录", value: data.auditEvents },
+        { label: "活跃账户", value: data.active_accounts },
+        { label: "审计记录", value: data.audit_events },
       ]
     : [];
 
@@ -121,9 +84,15 @@ export function AdminOverview({
                   查看全部 <ArrowRight />
                 </Button>
               </div>
-              <div className="overflow-x-auto border-y">
-                <table className="w-full min-w-[620px] text-left text-sm">
-                  <thead className="text-xs text-muted-foreground">
+              <div className={adminTableScrollClass}>
+                <table className="w-[50rem] min-w-full table-fixed text-left text-sm">
+                  <colgroup>
+                    <col className="w-[11rem]" />
+                    <col className="w-[20rem]" />
+                    <col className="w-[12rem]" />
+                    <col className="w-[7rem]" />
+                  </colgroup>
+                  <thead className={adminTableHeadClass}>
                     <tr className="border-b">
                       <th className="py-3 pr-4 font-medium">时间</th>
                       <th className="px-4 py-3 font-medium">操作</th>
@@ -137,8 +106,13 @@ export function AdminOverview({
                         <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
                           {formatAdminDate(item.created_at)}
                         </td>
-                        <td className="px-4 py-3 font-medium">{item.action}</td>
-                        <td className="px-4 py-3 text-muted-foreground">
+                        <td className="truncate px-4 py-3 font-medium" title={item.action}>
+                          {item.action}
+                        </td>
+                        <td
+                          className="truncate px-4 py-3 text-muted-foreground"
+                          title={item.resource_type || ""}
+                        >
                           {item.resource_type || "-"}
                         </td>
                         <td className="py-3 pl-4 text-right">

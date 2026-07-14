@@ -113,6 +113,7 @@ func (a *API) registerRoutes(router *gin.Engine) {
 	adminRoutes.GET("/users/:userID", a.handleGetManagedUser)
 	adminRoutes.PATCH("/users/:userID", a.handleUpdateManagedUser)
 	adminRoutes.POST("/users/:userID/reset-password", a.handleResetManagedUserPassword)
+	adminRoutes.GET("/admin/overview", a.handleGetAdminOverview)
 	adminRoutes.GET("/admin/billing/accounts", a.handleListBillingAccounts)
 	adminRoutes.GET("/admin/billing/accounts/:userID", a.handleGetAdminBillingAccount)
 	adminRoutes.PATCH("/admin/billing/accounts/:userID", a.handleUpdateAdminBillingAccount)

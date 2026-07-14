@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { KeyRound, MoreHorizontal, Plus, RotateCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -9,6 +9,8 @@ import {
   AdminLoading,
   AdminPageHeader,
   SavingIcon,
+  adminTableHeadClass,
+  adminTableScrollClass,
   formatAdminDate,
 } from "@/components/admin/admin-shared";
 import { Badge } from "@/components/ui/badge";
@@ -32,20 +34,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   createAdminCredential,
-  listAdminCredentials,
+  listAdminCredentialsPage,
   revokeAdminCredential,
   rotateAdminCredential,
   runAdminCredentialAction,
   updateAdminCredential,
 } from "@/lib/api";
 import type { ProviderCredential } from "@/lib/types";
+import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 export function AdminCredentials() {
-  const [items, setItems] = useState<ProviderCredential[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { items, setItems, page, loading, loadingMore, error, loadMoreError, loadMore, reload } =
+    useCursorPagination<ProviderCredential>(listAdminCredentialsPage, "凭据加载失败");
   const [editor, setEditor] = useState<ProviderCredential | "create" | null>(null);
   const [rotateItem, setRotateItem] = useState<ProviderCredential | null>(null);
   const [revokeItem, setRevokeItem] = useState<ProviderCredential | null>(null);
@@ -54,21 +57,6 @@ export function AdminCredentials() {
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState("");
-
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setItems(await listAdminCredentials());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "凭据加载失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => {
-    void load();
-  }, []);
 
   const openEditor = (item: ProviderCredential | "create") => {
     setEditor(item);
@@ -164,12 +152,26 @@ export function AdminCredentials() {
         }
       />
       {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={load} /> : null}
+      {!loading && error ? <AdminError message={error} onRetry={reload} /> : null}
       {!loading && !error && !items.length ? <AdminEmpty icon={KeyRound} title="暂无凭据" /> : null}
       {!loading && !error && items.length ? (
-        <div className="mt-6 overflow-x-auto border-y">
-          <table className="w-full min-w-[840px] text-left text-sm">
-            <thead className="text-xs text-muted-foreground">
+        <CursorTableScroll
+          className={`${adminTableScrollClass} mt-6`}
+          hasMore={page.has_more}
+          loadingMore={loadingMore}
+          loadMoreError={loadMoreError}
+          onLoadMore={loadMore}
+          aria-label="提供方凭据"
+        >
+          <table className="w-[72rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[22rem]" />
+              <col className="w-[22rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[8rem]" />
+              <col className="w-[6rem]" />
+            </colgroup>
+            <thead className={adminTableHeadClass}>
               <tr className="border-b">
                 <th className="py-3 pr-4 font-medium">凭据</th>
                 <th className="px-4 py-3 font-medium">地址</th>
@@ -182,25 +184,36 @@ export function AdminCredentials() {
               {items.map((item) => (
                 <tr key={item.id}>
                   <td className="py-3 pr-4">
-                    <div className="flex items-center gap-3">
-                      <span className="grid size-8 place-items-center rounded-md bg-muted">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
                         <KeyRound className="size-4" />
                       </span>
-                      <div>
-                        <p className="font-medium">{item.name}</p>
-                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium" title={item.name}>
+                          {item.name}
+                        </p>
+                        <p
+                          className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                          title={item.masked_key}
+                        >
                           {item.masked_key}
                         </p>
                       </div>
                     </div>
                   </td>
-                  <td className="max-w-72 truncate px-4 py-3 font-mono text-xs text-muted-foreground">
+                  <td
+                    className="truncate px-4 py-3 font-mono text-xs text-muted-foreground"
+                    title={item.base_url}
+                  >
                     {item.base_url}
                   </td>
                   <td className="px-4 py-3">
                     <p className="text-xs">{formatAdminDate(item.last_validated_at)}</p>
                     {item.last_validation_error ? (
-                      <p className="mt-1 max-w-56 truncate text-xs text-destructive">
+                      <p
+                        className="mt-1 truncate text-xs text-destructive"
+                        title={item.last_validation_error}
+                      >
                         {item.last_validation_error}
                       </p>
                     ) : null}
@@ -281,7 +294,7 @@ export function AdminCredentials() {
               ))}
             </tbody>
           </table>
-        </div>
+        </CursorTableScroll>
       ) : null}
 
       <Dialog open={editor !== null} onOpenChange={(open) => !open && setEditor(null)}>

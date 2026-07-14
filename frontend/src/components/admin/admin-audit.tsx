@@ -1,43 +1,32 @@
 "use client";
 
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useState } from "react";
 import { Activity, Eye, Search } from "lucide-react";
 import {
   AdminEmpty,
   AdminError,
   AdminLoading,
   AdminPageHeader,
+  adminTableHeadClass,
+  adminTableScrollClass,
   formatAdminDate,
 } from "@/components/admin/admin-shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { listAdminAuditEvents } from "@/lib/api";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
+import { listAdminAuditEventsPage } from "@/lib/api";
 import type { AuditEvent } from "@/lib/types";
+import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 export function AdminAudit() {
-  const [items, setItems] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { items, page, loading, loadingMore, error, loadMoreError, loadMore, reload } =
+    useCursorPagination<AuditEvent>(listAdminAuditEventsPage, "审计日志加载失败");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<AuditEvent | null>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setItems(await listAdminAuditEvents());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "审计日志加载失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => {
-    void load();
-  }, []);
   const filtered = deferredQuery
     ? items.filter((item) =>
         [
@@ -66,14 +55,30 @@ export function AdminAudit() {
         </div>
       </div>
       {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={load} /> : null}
+      {!loading && error ? <AdminError message={error} onRetry={reload} /> : null}
       {!loading && !error && !filtered.length ? (
         <AdminEmpty icon={Activity} title={query ? "没有匹配的审计记录" : "暂无审计记录"} />
       ) : null}
       {!loading && !error && filtered.length ? (
-        <div className="mt-5 overflow-x-auto border-y">
-          <table className="w-full min-w-[960px] text-left text-sm">
-            <thead className="text-xs text-muted-foreground">
+        <CursorTableScroll
+          className={`${adminTableScrollClass} mt-5`}
+          hasMore={page.has_more}
+          loadingMore={loadingMore}
+          loadMoreError={loadMoreError}
+          onLoadMore={loadMore}
+          aria-label="审计日志"
+        >
+          <table className="w-[86rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[11rem]" />
+              <col className="w-[18rem]" />
+              <col className="w-[17rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[13rem]" />
+              <col className="w-[8rem]" />
+              <col className="w-[5rem]" />
+            </colgroup>
+            <thead className={adminTableHeadClass}>
               <tr className="border-b">
                 <th className="py-3 pr-4 font-medium">时间</th>
                 <th className="px-4 py-3 font-medium">操作</th>
@@ -90,16 +95,26 @@ export function AdminAudit() {
                   <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
                     {formatAdminDate(item.created_at)}
                   </td>
-                  <td className="px-4 py-3 font-medium">{item.action}</td>
+                  <td className="truncate px-4 py-3 font-medium" title={item.action}>
+                    {item.action}
+                  </td>
                   <td className="px-4 py-3">
-                    <p>{item.resource_type || "-"}</p>
-                    <p className="mt-0.5 max-w-40 truncate font-mono text-xs text-muted-foreground">
+                    <p className="truncate" title={item.resource_type || ""}>
+                      {item.resource_type || "-"}
+                    </p>
+                    <p
+                      className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                      title={item.resource_id || ""}
+                    >
                       {item.resource_id || ""}
                     </p>
                   </td>
                   <td className="px-4 py-3">
                     <p>{item.actor_role || "-"}</p>
-                    <p className="mt-0.5 max-w-32 truncate font-mono text-xs text-muted-foreground">
+                    <p
+                      className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                      title={item.actor_user_id || ""}
+                    >
                       {item.actor_user_id || ""}
                     </p>
                   </td>
@@ -124,7 +139,7 @@ export function AdminAudit() {
               ))}
             </tbody>
           </table>
-        </div>
+        </CursorTableScroll>
       ) : null}
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>

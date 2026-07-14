@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { Box, FileText, ImageIcon, Search } from "lucide-react";
 import { toast } from "sonner";
-import { AdminError, AdminLoading, SavingIcon, formatAdminDate } from "./admin-shared";
+import {
+  AdminError,
+  AdminLoading,
+  SavingIcon,
+  adminTableHeadClass,
+  adminTableScrollClass,
+  formatAdminDate,
+} from "./admin-shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { listAdminBillingToolPrices, updateAdminBillingToolPrices } from "@/lib/api";
@@ -94,9 +101,16 @@ export function AdminToolPrices() {
 
   return (
     <form className="mt-5" onSubmit={save}>
-      <div className="overflow-x-auto border-y">
-        <table className="w-full min-w-[720px] text-left text-sm">
-          <thead className="text-xs text-muted-foreground">
+      <div className={adminTableScrollClass}>
+        <table className="w-[62rem] min-w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[18rem]" />
+            <col className="w-[16rem]" />
+            <col className="w-[8rem]" />
+            <col className="w-[12rem]" />
+            <col className="w-[8rem]" />
+          </colgroup>
+          <thead className={adminTableHeadClass}>
             <tr className="border-b">
               <th className="py-3 pr-4 font-medium">工具</th>
               <th className="px-4 py-3 font-medium">计费键</th>

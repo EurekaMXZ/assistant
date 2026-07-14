@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Boxes, CircleDollarSign, MoreHorizontal, Plus, Settings2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,8 @@ import {
   AdminPageHeader,
   SavingIcon,
   adminSelectClass,
+  adminTableHeadClass,
+  adminTableScrollClass,
   formatAdminDate,
 } from "@/components/admin/admin-shared";
 import { Badge } from "@/components/ui/badge";
@@ -32,13 +34,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   createAdminModel,
   createAdminModelPrice,
   getAdminModelSettings,
   listAdminCredentials,
+  listAdminCredentialsPage,
   listAdminModelPrices,
   listAdminModels,
+  listAdminModelsPage,
   setAdminModelEnabled,
   setAdminModelPriceStatus,
   updateAdminModel,
@@ -55,7 +60,9 @@ import type {
   ModelSettings,
   ProviderCredential,
   ReasoningEffort,
+  CursorPage,
 } from "@/lib/types";
+import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 const efforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
 
@@ -104,11 +111,22 @@ function modelFormFrom(item: Model): ModelForm {
 }
 
 export function AdminModels() {
-  const [models, setModels] = useState<Model[]>([]);
+  const {
+    items: models,
+    setItems: setModels,
+    page,
+    loading: modelsLoading,
+    loadingMore,
+    error: modelsError,
+    loadMoreError,
+    loadMore,
+    reload: reloadModels,
+  } = useCursorPagination<Model>(listAdminModelsPage, "模型目录加载失败");
   const [credentials, setCredentials] = useState<ProviderCredential[]>([]);
   const [settings, setSettings] = useState<ModelSettings | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [metadataLoading, setMetadataLoading] = useState(true);
+  const [metadataError, setMetadataError] = useState("");
+  const [settingsModels, setSettingsModels] = useState<Model[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Model | null>(null);
   const [form, setForm] = useState<ModelForm>(emptyModelForm);
@@ -118,30 +136,54 @@ export function AdminModels() {
   const [compactionModelId, setCompactionModelId] = useState("");
   const [priceModel, setPriceModel] = useState<Model | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    setError("");
+  const loadMetadata = async () => {
+    setMetadataLoading(true);
+    setMetadataError("");
     try {
-      const [nextModels, nextCredentials, nextSettings] = await Promise.all([
-        listAdminModels(),
-        listAdminCredentials(),
+      const [nextCredentials, nextSettings] = await Promise.all([
+        listAdminCredentialsPage(),
         getAdminModelSettings(),
       ]);
-      setModels(nextModels);
-      setCredentials(nextCredentials);
+      setCredentials(nextCredentials.data);
       setSettings(nextSettings);
       setDefaultChatModelId(nextSettings.default_chat_model_id || "");
       setCompactionModelId(nextSettings.compaction_model_id || "");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "模型目录加载失败");
+      setMetadataError(err instanceof Error ? err.message : "模型配置加载失败");
     } finally {
-      setLoading(false);
+      setMetadataLoading(false);
     }
   };
 
+  const loadMetadataEffect = useEffectEvent(loadMetadata);
   useEffect(() => {
-    void load();
+    void loadMetadataEffect();
   }, []);
+
+  const loading = modelsLoading || metadataLoading;
+  const error = modelsError || metadataError;
+  const retry = () => {
+    void reloadModels();
+    void loadMetadata();
+  };
+
+  const openSettings = async () => {
+    setSettingsModels(models);
+    setSettingsOpen(true);
+    try {
+      setSettingsModels(await listAdminModels());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "模型选项加载失败");
+    }
+  };
+
+  const loadCredentialOptions = async () => {
+    try {
+      setCredentials(await listAdminCredentials());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "凭据选项加载失败");
+    }
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -150,12 +192,14 @@ export function AdminModels() {
       credentialId: credentials.find((item) => item.status === "enabled")?.id || "",
     });
     setEditorOpen(true);
+    void loadCredentialOptions();
   };
 
   const openEdit = (item: Model) => {
     setEditing(item);
     setForm(modelFormFrom(item));
     setEditorOpen(true);
+    void loadCredentialOptions();
   };
 
   const saveModel = async () => {
@@ -220,7 +264,7 @@ export function AdminModels() {
         title="模型"
         action={
           <>
-            <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
+            <Button variant="outline" size="sm" onClick={() => void openSettings()}>
               <Settings2 /> 默认模型
             </Button>
             <Button size="sm" onClick={openCreate}>
@@ -231,12 +275,27 @@ export function AdminModels() {
       />
 
       {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={load} /> : null}
+      {!loading && error ? <AdminError message={error} onRetry={retry} /> : null}
       {!loading && !error && !models.length ? <AdminEmpty icon={Boxes} title="暂无模型" /> : null}
       {!loading && !error && models.length ? (
-        <div className="mt-6 overflow-x-auto border-y">
-          <table className="w-full min-w-[900px] text-left text-sm">
-            <thead className="text-xs text-muted-foreground">
+        <CursorTableScroll
+          className={`${adminTableScrollClass} mt-6`}
+          hasMore={page.has_more}
+          loadingMore={loadingMore}
+          loadMoreError={loadMoreError}
+          onLoadMore={loadMore}
+          aria-label="模型列表"
+        >
+          <table className="w-[76rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[28rem]" />
+              <col className="w-[16rem]" />
+              <col className="w-[10rem]" />
+              <col className="w-[7rem]" />
+              <col className="w-[9rem]" />
+              <col className="w-[6rem]" />
+            </colgroup>
+            <thead className={adminTableHeadClass}>
               <tr className="border-b">
                 <th className="py-3 pr-4 font-medium">模型</th>
                 <th className="px-4 py-3 font-medium">推理档位</th>
@@ -256,12 +315,17 @@ export function AdminModels() {
                       </span>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className="truncate font-medium">{item.display_name}</p>
+                          <p className="truncate font-medium" title={item.display_name}>
+                            {item.display_name}
+                          </p>
                           {settings?.default_chat_model_id === item.id ? (
                             <Badge variant="secondary">默认</Badge>
                           ) : null}
                         </div>
-                        <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                        <p
+                          className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                          title={item.upstream_model}
+                        >
                           {item.upstream_model}
                         </p>
                       </div>
@@ -316,7 +380,7 @@ export function AdminModels() {
               ))}
             </tbody>
           </table>
-        </div>
+        </CursorTableScroll>
       ) : null}
 
       <ModelEditorDialog
@@ -344,7 +408,7 @@ export function AdminModels() {
                 value={defaultChatModelId}
                 onChange={(event) => setDefaultChatModelId(event.target.value)}
               >
-                {models
+                {(settingsModels.length ? settingsModels : models)
                   .filter((item) => item.status === "enabled")
                   .map((item) => (
                     <option key={item.id} value={item.id}>
@@ -361,7 +425,7 @@ export function AdminModels() {
                 value={compactionModelId}
                 onChange={(event) => setCompactionModelId(event.target.value)}
               >
-                {models
+                {(settingsModels.length ? settingsModels : models)
                   .filter((item) => item.status === "enabled")
                   .map((item) => (
                     <option key={item.id} value={item.id}>
@@ -577,7 +641,10 @@ function PriceDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [prices, setPrices] = useState<ModelPriceVersion[]>([]);
+  const [page, setPage] = useState<CursorPage>({ has_more: false });
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [currency, setCurrency] = useState("USD");
@@ -585,25 +652,54 @@ function PriceDialog({
   const [cacheRead, setCacheRead] = useState("");
   const [cacheCreation, setCacheCreation] = useState("");
   const [output, setOutput] = useState("");
+  const priceRequestIDRef = useRef(0);
 
   useEffect(() => {
     if (!model) return;
+    const requestID = ++priceRequestIDRef.current;
     let cancelled = false;
     setLoading(true);
+    setLoadingMore(false);
+    setLoadMoreError("");
+    setPrices([]);
+    setPage({ has_more: false });
     void listAdminModelPrices(model.id)
-      .then((items) => {
-        if (!cancelled) setPrices(items);
+      .then((result) => {
+        if (!cancelled && requestID === priceRequestIDRef.current) {
+          setPrices(result.data);
+          setPage(result.page);
+        }
       })
       .catch((err) => {
-        if (!cancelled) toast.error(err instanceof Error ? err.message : "价格加载失败");
+        if (!cancelled && requestID === priceRequestIDRef.current) {
+          toast.error(err instanceof Error ? err.message : "价格加载失败");
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && requestID === priceRequestIDRef.current) setLoading(false);
       });
     return () => {
       cancelled = true;
+      if (requestID === priceRequestIDRef.current) priceRequestIDRef.current += 1;
     };
   }, [model]);
+  const loadMorePrices = async () => {
+    if (!model || !page.next_cursor || loadingMore) return;
+    const requestID = priceRequestIDRef.current;
+    setLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const result = await listAdminModelPrices(model.id, page.next_cursor);
+      if (requestID !== priceRequestIDRef.current) return;
+      setPrices((items) => [...items, ...result.data]);
+      setPage(result.page);
+    } catch (err) {
+      if (requestID !== priceRequestIDRef.current) return;
+      setLoadMoreError(err instanceof Error ? err.message : "更多价格版本加载失败");
+    } finally {
+      if (requestID === priceRequestIDRef.current) setLoadingMore(false);
+    }
+  };
   const createPrice = async () => {
     if (!model) return;
     setSaving(true);
@@ -709,9 +805,25 @@ function PriceDialog({
         {loading ? (
           <AdminLoading />
         ) : prices.length ? (
-          <div className="overflow-x-auto border-y">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="text-xs text-muted-foreground">
+          <CursorTableScroll
+            className="max-h-[min(45vh,28rem)] overflow-auto border-y"
+            hasMore={page.has_more}
+            loadingMore={loadingMore}
+            loadMoreError={loadMoreError}
+            onLoadMore={loadMorePrices}
+            aria-label="模型价格版本"
+          >
+            <table className="w-[60rem] min-w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[9rem]" />
+                <col className="w-[9rem]" />
+                <col className="w-[9rem]" />
+                <col className="w-[9rem]" />
+                <col className="w-[9rem]" />
+                <col className="w-[8rem]" />
+                <col className="w-[7rem]" />
+              </colgroup>
+              <thead className={adminTableHeadClass}>
                 <tr className="border-b">
                   <th className="py-3 pr-3 font-medium">版本</th>
                   <th className="px-3 py-3 text-right font-medium">输入</th>
@@ -771,7 +883,7 @@ function PriceDialog({
                 ))}
               </tbody>
             </table>
-          </div>
+          </CursorTableScroll>
         ) : (
           <AdminEmpty icon={CircleDollarSign} title="暂无价格版本" />
         )}

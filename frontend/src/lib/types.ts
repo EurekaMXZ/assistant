@@ -224,6 +224,15 @@ export interface AuditEvent {
   created_at: string;
 }
 
+export interface AdminOverview {
+  users: number;
+  enabled_models?: number;
+  credentials?: number;
+  active_accounts: number;
+  audit_events: number;
+  audit: AuditEvent[];
+}
+
 export interface Conversation {
   id: string;
   owner_user_id?: string;

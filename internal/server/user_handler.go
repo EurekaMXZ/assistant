@@ -2,19 +2,25 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
 	"github.com/gin-gonic/gin"
 )
 
 func (a *API) handleListManagedUsers(c *gin.Context) {
-	users, err := a.useCases.Users.ListManagedUsers(c.Request.Context(), currentUser(c), parseLimit(c, 50, 200))
+	result, err := a.useCases.Users.ListManagedUsers(
+		c.Request.Context(),
+		currentUser(c),
+		parseLimit(c, 50, 200),
+		strings.TrimSpace(c.Query("cursor")),
+	)
 	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"users": nonNilSlice(users)})
+	c.JSON(http.StatusOK, pagePayload(result.Items, result.NextCursor))
 }
 
 func (a *API) handleGetManagedUser(c *gin.Context) {

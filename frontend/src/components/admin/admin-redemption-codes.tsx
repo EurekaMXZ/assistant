@@ -3,7 +3,15 @@
 import { useEffect, useState } from "react";
 import { Ban, Check, Copy, Gift, Loader2, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { AdminEmpty, AdminError, AdminLoading, SavingIcon, formatAdminDate } from "./admin-shared";
+import {
+  AdminEmpty,
+  AdminError,
+  AdminLoading,
+  SavingIcon,
+  adminTableHeadClass,
+  adminTableScrollClass,
+  formatAdminDate,
+} from "./admin-shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -18,6 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   disableAdminBillingRedemptionCode,
   issueAdminBillingRedemptionCodes,
@@ -40,6 +49,7 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
   const [page, setPage] = useState<CursorPage>({ has_more: false });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
   const [error, setError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -56,6 +66,7 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
   const load = async () => {
     setLoading(true);
     setError("");
+    setLoadMoreError("");
     try {
       const result = await listAdminBillingRedemptionCodes();
       setCodes(result.data);
@@ -70,12 +81,13 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
   const loadMore = async () => {
     if (!page.next_cursor || loadingMore) return;
     setLoadingMore(true);
+    setLoadMoreError("");
     try {
       const result = await listAdminBillingRedemptionCodes(page.next_cursor);
       setCodes((items) => [...items, ...result.data]);
       setPage(result.page);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "更多兑换码加载失败");
+      setLoadMoreError(err instanceof Error ? err.message : "更多兑换码加载失败");
     } finally {
       setLoadingMore(false);
     }
@@ -191,9 +203,25 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
       </div>
 
       {codes.length ? (
-        <div className="overflow-x-auto border-y">
-          <table className="w-full min-w-[900px] text-left text-sm">
-            <thead className="text-xs text-muted-foreground">
+        <CursorTableScroll
+          className={adminTableScrollClass}
+          hasMore={page.has_more}
+          loadingMore={loadingMore}
+          loadMoreError={loadMoreError}
+          onLoadMore={loadMore}
+          aria-label="兑换码"
+        >
+          <table className="w-[87rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[18rem]" />
+              <col className="w-[12rem]" />
+              <col className="w-[8rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[7rem]" />
+            </colgroup>
+            <thead className={adminTableHeadClass}>
               <tr className="border-b">
                 <th className="py-3 pr-4 font-medium">兑换码</th>
                 <th className="px-4 py-3 text-right font-medium">金额</th>
@@ -232,7 +260,15 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
                               : "已兑换"}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3">
+                    <td
+                      className="truncate px-4 py-3"
+                      title={
+                        item.redeemed_by_user_id
+                          ? userMap.get(item.redeemed_by_user_id)?.username ||
+                            item.redeemed_by_user_id
+                          : ""
+                      }
+                    >
                       {item.redeemed_by_user_id
                         ? userMap.get(item.redeemed_by_user_id)?.username ||
                           item.redeemed_by_user_id.slice(0, 8)
@@ -270,24 +306,10 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
               })}
             </tbody>
           </table>
-        </div>
+        </CursorTableScroll>
       ) : (
         <AdminEmpty icon={Gift} title="暂无兑换码" />
       )}
-
-      {page.has_more ? (
-        <div className="mt-4 flex justify-center">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={loadingMore}
-            onClick={() => void loadMore()}
-          >
-            {loadingMore ? <Loader2 className="animate-spin" /> : null}
-            加载更多
-          </Button>
-        </div>
-      ) : null}
 
       <Dialog open={createOpen} onOpenChange={(open) => !saving && setCreateOpen(open)}>
         <DialogContent>
