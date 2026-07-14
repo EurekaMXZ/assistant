@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { Message, Turn } from "@/lib/types";
 import { isViewportNearBottom } from "@/lib/scroll-follow";
+import { cn } from "@/lib/utils";
 
 interface MessageListProps {
   activityLabels?: Record<string, string | null>;
+  dimmed?: boolean;
   messages: Message[];
   onEditMessage: (message: Message) => void;
   onOpenTimeline: (turnId: string) => void;
@@ -18,35 +20,68 @@ interface MessageListProps {
 
 type MessageListEntry =
   | { kind: "message"; message: Message }
-  | { kind: "assistant-turn"; messages: Message[]; turnId: string };
+  | {
+      kind: "turn";
+      rootTurnId: string;
+      variants: {
+        assistantMessages: Message[];
+        turnId: string;
+        userMessage?: Message;
+        variantIndex: number;
+      }[];
+    };
 
-function groupMessageEntries(messages: Message[]) {
+export function groupMessageEntries(messages: Message[], turnsById: Record<string, Turn> = {}) {
+  const groups = new Map<
+    string,
+    Map<string, { assistantMessages: Message[]; userMessage?: Message }>
+  >();
+  for (const message of messages) {
+    if (!message.turn_id || !["user", "assistant"].includes(message.role)) continue;
+    const turn = turnsById[message.turn_id];
+    const rootTurnId = turn?.retry_of_turn_id || message.turn_id;
+    const variants =
+      groups.get(rootTurnId) ||
+      new Map<string, { assistantMessages: Message[]; userMessage?: Message }>();
+    const variant = variants.get(message.turn_id) || { assistantMessages: [] };
+    if (message.role === "user") {
+      variant.userMessage = message;
+    } else {
+      variant.assistantMessages.push(message);
+    }
+    variants.set(message.turn_id, variant);
+    groups.set(rootTurnId, variants);
+  }
+
   const entries: MessageListEntry[] = [];
-  for (let index = 0; index < messages.length;) {
-    const message = messages[index];
-    if (message.role !== "assistant" || !message.turn_id) {
+  const renderedRoots = new Set<string>();
+  for (const message of messages) {
+    if (!message.turn_id || !["user", "assistant"].includes(message.role)) {
       entries.push({ kind: "message", message });
-      index += 1;
       continue;
     }
 
-    const turnId = message.turn_id;
-    const turnMessages: Message[] = [];
-    while (
-      index < messages.length &&
-      messages[index].role === "assistant" &&
-      messages[index].turn_id === turnId
-    ) {
-      turnMessages.push(messages[index]);
-      index += 1;
-    }
-    entries.push({ kind: "assistant-turn", messages: turnMessages, turnId });
+    const rootTurnId = turnsById[message.turn_id]?.retry_of_turn_id || message.turn_id;
+    if (renderedRoots.has(rootTurnId)) continue;
+    renderedRoots.add(rootTurnId);
+    const rootUserMessage = groups.get(rootTurnId)?.get(rootTurnId)?.userMessage;
+    const variants = Array.from(groups.get(rootTurnId)?.entries() || [])
+      .map(([turnId, variant]) => ({
+        assistantMessages: variant.assistantMessages,
+        turnId,
+        userMessage: variant.userMessage || rootUserMessage,
+        variantIndex: turnsById[turnId]?.variant_index || 1,
+      }))
+      .filter((variant) => variant.assistantMessages.length > 0)
+      .sort((left, right) => left.variantIndex - right.variantIndex);
+    entries.push({ kind: "turn", rootTurnId, variants });
   }
   return entries;
 }
 
 export function MessageList({
   activityLabels,
+  dimmed,
   messages,
   onEditMessage,
   onOpenTimeline,
@@ -56,6 +91,7 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
@@ -81,10 +117,23 @@ export function MessageList({
     });
   }, [messages, streamingTurnId]);
 
-  const entries = groupMessageEntries(messages);
+  useEffect(() => {
+    if (!streamingTurnId) return;
+    const rootTurnId = turnsById[streamingTurnId]?.retry_of_turn_id || streamingTurnId;
+    setSelectedVariants((current) => ({ ...current, [rootTurnId]: streamingTurnId }));
+  }, [streamingTurnId, turnsById]);
+
+  const entries = groupMessageEntries(messages, turnsById);
+  const retryableRootTurnId = entries.findLast((entry) => entry.kind === "turn")?.rootTurnId;
 
   return (
-    <div ref={scrollRootRef} className="min-h-0 flex-1">
+    <div
+      ref={scrollRootRef}
+      className={cn(
+        "min-h-0 flex-1 transition-[filter,opacity,transform] duration-200 motion-reduce:transition-none",
+        dimmed && "pointer-events-none scale-[0.995] opacity-45 blur-[2px]",
+      )}
+    >
       <ScrollArea className="h-full">
         <div className="mx-auto min-w-0 w-full max-w-2xl px-4 pt-4 pb-52 sm:px-6">
           {messages.length === 0 ? (
@@ -92,28 +141,67 @@ export function MessageList({
               发送第一条消息开始对话
             </div>
           ) : (
-            entries.map((entry) =>
-              entry.kind === "assistant-turn" ? (
-                <AssistantTurnBubble
-                  key={`assistant-turn-${entry.turnId}-${entry.messages[0].id}`}
-                  activityLabel={activityLabels?.[entry.turnId]}
-                  messages={entry.messages}
-                  onOpenTimeline={onOpenTimeline}
-                  onRetry={onRetryMessage}
-                  isStreaming={streamingTurnId === entry.turnId}
-                  turn={turnsById[entry.turnId] || null}
-                  turnId={entry.turnId}
-                />
-              ) : (
+            entries.map((entry) => {
+              if (entry.kind === "turn") {
+                const selectedTurnId = entry.variants.some(
+                  (variant) => variant.turnId === selectedVariants[entry.rootTurnId],
+                )
+                  ? selectedVariants[entry.rootTurnId]
+                  : entry.variants.at(-1)?.turnId;
+                const selectedIndex = Math.max(
+                  0,
+                  entry.variants.findIndex((variant) => variant.turnId === selectedTurnId),
+                );
+                const variant = entry.variants[selectedIndex];
+                if (!variant) return null;
+                const canChangePrompt =
+                  entry.rootTurnId === retryableRootTurnId &&
+                  !streamingTurnId &&
+                  ["completed", "failed"].includes(turnsById[variant.turnId]?.status || "");
+                return (
+                  <Fragment key={`turn-${entry.rootTurnId}`}>
+                    {variant.userMessage ? (
+                      <MessageBubble
+                        key={variant.userMessage.id}
+                        message={variant.userMessage}
+                        onEdit={onEditMessage}
+                        canEdit={canChangePrompt}
+                      />
+                    ) : null}
+                    {variant.assistantMessages.length > 0 ? (
+                      <AssistantTurnBubble
+                        activityLabel={activityLabels?.[variant.turnId]}
+                        messages={variant.assistantMessages}
+                        onOpenTimeline={onOpenTimeline}
+                        onRetry={onRetryMessage}
+                        canRetry={canChangePrompt}
+                        isStreaming={streamingTurnId === variant.turnId}
+                        turn={turnsById[variant.turnId] || null}
+                        turnId={variant.turnId}
+                        variantCount={entry.variants.length}
+                        variantIndex={selectedIndex}
+                        onVariantChange={(nextIndex) => {
+                          const next = entry.variants[nextIndex];
+                          if (!next) return;
+                          setSelectedVariants((current) => ({
+                            ...current,
+                            [entry.rootTurnId]: next.turnId,
+                          }));
+                        }}
+                      />
+                    ) : null}
+                  </Fragment>
+                );
+              }
+              return (
                 <MessageBubble
                   key={entry.message.id}
                   message={entry.message}
                   onEdit={onEditMessage}
-                  onRetry={onRetryMessage}
                   isStreaming={streamingTurnId === entry.message.turn_id}
                 />
-              ),
-            )
+              );
+            })
           )}
         </div>
       </ScrollArea>

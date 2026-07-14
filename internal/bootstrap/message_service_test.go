@@ -74,6 +74,48 @@ func (s *stubTurnCreator) CreateUserTurn(_ context.Context, params postgres.Crea
 	}, nil
 }
 
+type stubRetryTurnStore struct {
+	turns        map[string]domain.Turn
+	sourceTurnID string
+	params       postgres.CreateUserTurnParams
+}
+
+func (s *stubRetryTurnStore) GetTurn(_ context.Context, turnID string) (*domain.Turn, error) {
+	turn, ok := s.turns[turnID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return &turn, nil
+}
+
+func (s *stubRetryTurnStore) CreateRetryTurn(_ context.Context, sourceTurnID string, params postgres.CreateUserTurnParams) (*domain.EnqueuedRetryTurn, error) {
+	s.sourceTurnID = sourceTurnID
+	s.params = params
+	rootTurnID := sourceTurnID
+	if source, ok := s.turns[sourceTurnID]; ok && source.RetryOfTurnID != "" {
+		rootTurnID = source.RetryOfTurnID
+	}
+	return &domain.EnqueuedRetryTurn{
+		ConversationID: params.ConversationID,
+		Message:        domain.Message{ID: "retry-message", ConversationID: params.ConversationID, Role: domain.RoleUser, ContentText: params.Content},
+		Turn: domain.Turn{
+			ID: "retry-1", ConversationID: params.ConversationID, RetryOfTurnID: rootTurnID, VariantIndex: 2,
+		},
+	}, nil
+}
+
+type stubRetryMessageStore struct {
+	message *domain.Message
+}
+
+func (s *stubRetryMessageStore) GetUserMessageByTurn(context.Context, string) (*domain.Message, error) {
+	if s.message == nil {
+		return nil, domain.ErrNotFound
+	}
+	clone := *s.message
+	return &clone, nil
+}
+
 func TestMessageServiceOrchestratesValidatedUserTurn(t *testing.T) {
 	attachmentID := "4ff17288-4fbe-4b2d-9d1d-aaba6db680dc"
 	conversations := &stubOwnedConversations{conversation: &domain.Conversation{ID: "conversation-1", OwnerUserID: "user-1"}}
@@ -109,6 +151,62 @@ func TestMessageServiceOrchestratesValidatedUserTurn(t *testing.T) {
 	}
 	if conversations.calls != 1 || attachments.calls != 1 || models.calls != 1 || accounts.calls != 1 {
 		t.Fatalf("unexpected dependency calls: conversations=%d attachments=%d models=%d billing=%d", conversations.calls, attachments.calls, models.calls, accounts.calls)
+	}
+}
+
+func TestMessageServiceRetriesRootTurnWithoutCreatingUserMessage(t *testing.T) {
+	conversations := &stubOwnedConversations{conversation: &domain.Conversation{ID: "conversation-1", OwnerUserID: "user-1"}}
+	attachments := &stubMessageAttachments{}
+	models := &stubModelResolver{snapshot: testModelSnapshot()}
+	accounts := &stubBillingAdmission{account: domain.BillingAccount{Status: "active", BalanceNanos: 1_000_000}}
+	retries := &stubRetryTurnStore{turns: map[string]domain.Turn{
+		"retry-source": {ID: "retry-source", ConversationID: "conversation-1", RetryOfTurnID: "root-turn", VariantIndex: 2, Status: domain.TurnStatusCompleted},
+		"root-turn":    {ID: "root-turn", ConversationID: "conversation-1", VariantIndex: 1, Status: domain.TurnStatusCompleted},
+	}}
+	messages := &stubRetryMessageStore{message: &domain.Message{
+		TurnID: "root-turn", ConversationID: "conversation-1", Role: domain.RoleUser, ContentText: "try this",
+		Metadata: json.RawMessage(`{"model_id":"model-1","reasoning_effort":"high"}`),
+	}}
+	service := &MessageService{
+		Conversations: conversations, Attachments: attachments, Models: models, Billing: accounts,
+		RetryTurns: retries, Messages: messages,
+	}
+
+	result, err := service.RetryTurn(t.Context(), "user-1", "retry-source")
+	if err != nil {
+		t.Fatalf("RetryTurn() error = %v", err)
+	}
+	if result.Turn.RetryOfTurnID != "root-turn" || retries.sourceTurnID != "retry-source" {
+		t.Fatalf("retry did not resolve root: result=%#v source=%q", result, retries.sourceTurnID)
+	}
+	if retries.params.Content != "try this" || retries.params.ModelSnapshot.ReasoningEffort != "high" {
+		t.Fatalf("retry params = %#v", retries.params)
+	}
+}
+
+func TestMessageServiceEditsSelectedPromptBeforeCreatingVariant(t *testing.T) {
+	conversations := &stubOwnedConversations{conversation: &domain.Conversation{ID: "conversation-1", OwnerUserID: "user-1"}}
+	retries := &stubRetryTurnStore{turns: map[string]domain.Turn{
+		"root-turn": {ID: "root-turn", ConversationID: "conversation-1", VariantIndex: 1, Status: domain.TurnStatusCompleted},
+	}}
+	service := &MessageService{
+		Conversations: conversations,
+		Attachments:   &stubMessageAttachments{},
+		Models:        &stubModelResolver{snapshot: testModelSnapshot()},
+		Billing:       &stubBillingAdmission{account: domain.BillingAccount{Status: "active", BalanceNanos: 1_000_000}},
+		RetryTurns:    retries,
+		Messages: &stubRetryMessageStore{message: &domain.Message{
+			TurnID: "root-turn", ConversationID: "conversation-1", Role: domain.RoleUser,
+			ContentText: "old prompt", Metadata: json.RawMessage(`{"model_id":"model-1"}`),
+		}},
+	}
+
+	result, err := service.EditTurn(t.Context(), "user-1", "root-turn", "edited prompt")
+	if err != nil {
+		t.Fatalf("EditTurn() error = %v", err)
+	}
+	if retries.params.Content != "edited prompt" || result.Message.ContentText != "edited prompt" {
+		t.Fatalf("edited variant = %#v params=%#v", result, retries.params)
 	}
 }
 

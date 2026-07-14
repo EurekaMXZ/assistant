@@ -33,6 +33,13 @@ type ContextCompactor struct {
 }
 
 func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEvent) error {
+	activeRetry, err := c.store.HasActiveRetry(ctx, event.ConversationID)
+	if err != nil {
+		return err
+	}
+	if activeRetry {
+		return nil
+	}
 	hot, head, err := c.loader.EnsureHotContext(ctx, event.ConversationID)
 	if err != nil {
 		return err
@@ -44,7 +51,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		return nil
 	}
 
-	compactedMessages, retainedMessages := splitCompactionMessages(hot.Tail)
+	compactedMessages, retainedMessages := splitCompactionMessages(contextMessages(hot.Tail))
 	if len(compactedMessages) == 0 {
 		return nil
 	}
@@ -175,6 +182,16 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	}, *updatedHead, retainedMessages)
 
 	return nil
+}
+
+func contextMessages(messages []domain.Message) []domain.Message {
+	filtered := make([]domain.Message, 0, len(messages))
+	for _, message := range messages {
+		if !message.ContextExcluded {
+			filtered = append(filtered, message)
+		}
+	}
+	return filtered
 }
 
 func splitCompactionMessages(messages []domain.Message) ([]domain.Message, []domain.Message) {

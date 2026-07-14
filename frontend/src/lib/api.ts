@@ -905,6 +905,32 @@ export async function createMessage(
   );
 }
 
+export async function retryTurn(turnId: string) {
+  return apiFetch<Pick<InitialTurnResult, "conversation_id" | "message" | "turn" | "stream_path">>(
+    `/turns/${turnId}/retries`,
+    { method: "POST" },
+    z.object({
+      conversation_id: z.string(),
+      message: messageSchema,
+      turn: turnSchema,
+      stream_path: z.string(),
+    }),
+  );
+}
+
+export async function editTurn(turnId: string, content: string) {
+  return apiFetch<Pick<InitialTurnResult, "conversation_id" | "message" | "turn" | "stream_path">>(
+    `/turns/${turnId}/edits`,
+    { method: "POST", body: JSON.stringify({ content }) },
+    z.object({
+      conversation_id: z.string(),
+      message: messageSchema,
+      turn: turnSchema,
+      stream_path: z.string(),
+    }),
+  );
+}
+
 // Turns
 export async function getTurn(id: string) {
   return apiFetch<{ turn: Turn }>(`/turns/${id}`, {}, z.object({ turn: turnSchema })).then(

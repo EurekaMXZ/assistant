@@ -104,6 +104,8 @@ func (a *API) registerRoutes(router *gin.Engine) {
 	userRoutes.POST("/conversations/:conversationID/sandbox/exec", a.handleExecConversationSandbox)
 	userRoutes.DELETE("/conversations/:conversationID/sandbox", a.handleDestroyConversationSandbox)
 	userRoutes.GET("/turns/:turnID", a.handleGetTurn)
+	userRoutes.POST("/turns/:turnID/retries", a.handleRetryTurn)
+	userRoutes.POST("/turns/:turnID/edits", a.handleEditTurn)
 	userRoutes.GET("/turns/:turnID/execution-trace", a.handleGetTurnExecutionTrace)
 	userRoutes.GET("/turns/:turnID/stream", a.handleStreamTurn)
 

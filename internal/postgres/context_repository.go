@@ -35,6 +35,22 @@ func (r *WorkflowContextRepository) GetContextHead(ctx context.Context, conversa
 	return head, nil
 }
 
+func (r *WorkflowContextRepository) HasActiveRetry(ctx context.Context, conversationID string) (bool, error) {
+	var active bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM turns
+			WHERE conversation_id = $1::uuid
+				AND retry_of_turn_id IS NOT NULL
+				AND status IN ($2, $3, $4)
+		)
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing).Scan(&active); err != nil {
+		return false, fmt.Errorf("check active retry: %w", err)
+	}
+	return active, nil
+}
+
 func (r *WorkflowContextRepository) ListRawTailMessages(ctx context.Context, conversationID string, fromSeq int64, toSeq int64) ([]domain.Message, error) {
 	if toSeq > 0 && fromSeq > toSeq {
 		return nil, nil
@@ -50,6 +66,7 @@ func (r *WorkflowContextRepository) ListRawTailMessages(ctx context.Context, con
 			COALESCE(content_text, ''),
 			token_count,
 			metadata,
+			context_excluded,
 			created_at
 		FROM messages
 		WHERE conversation_id = $1::uuid
@@ -96,6 +113,21 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 	if err != nil {
 		return nil, err
 	}
+	var activeRetry bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM turns
+			WHERE conversation_id = $1::uuid
+				AND retry_of_turn_id IS NOT NULL
+				AND status IN ($2, $3, $4)
+		)
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing).Scan(&activeRetry); err != nil {
+		return nil, fmt.Errorf("check active retry before compaction: %w", err)
+	}
+	if activeRetry {
+		return nil, domain.ErrConflict
+	}
 
 	if head.LastSeq != expectedLastSeq || anchor.CoveredUntilSeq > expectedLastSeq {
 		return nil, domain.ErrConflict
@@ -114,6 +146,7 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 				WHERE conversation_id = $1::uuid
 					AND seq > $4
 					AND seq <= $7
+					AND context_excluded = false
 			), 0)
 		WHERE conversation_id = $1::uuid
 		RETURNING

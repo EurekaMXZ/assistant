@@ -20,13 +20,16 @@ type WorkflowOutboxRepository interface {
 }
 
 type TurnWorkflowRepository interface {
+	GetTurn(ctx context.Context, turnID string) (*domain.Turn, error)
+	GetUserMessageByTurn(ctx context.Context, turnID string) (*domain.Message, error)
 	MarkTurnContextReady(ctx context.Context, turnID string) (*domain.Turn, error)
 	FinalizeTurnSuccess(ctx context.Context, turnID string, assistantMessages []domain.AssistantMessageDraft, summary domain.TurnRunSummary, compactTriggerTokens int) (*domain.Turn, []domain.Message, *domain.ContextHead, bool, error)
-	FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, streamKey string, code string, message string) error
+	FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, streamKey string, code string, message string, compactTriggerTokens int) error
 }
 
 type WorkflowContextRepository interface {
 	GetContextHead(ctx context.Context, conversationID string) (*domain.ContextHead, error)
+	HasActiveRetry(ctx context.Context, conversationID string) (bool, error)
 	ListRawTailMessages(ctx context.Context, conversationID string, fromSeq int64, toSeq int64) ([]domain.Message, error)
 	CompleteCompaction(ctx context.Context, conversationID string, anchor domain.AnchorObject, expectedLastSeq int64) (*domain.ContextHead, error)
 }
@@ -74,8 +77,8 @@ type TurnRunWorkflowStore interface {
 	ClaimTurnRun(ctx context.Context, runID string) (*domain.TurnRun, TurnRunLease, error)
 	RenewTurnRunLease(ctx context.Context, lease TurnRunLease) error
 	CheckpointScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string) error
-	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int) (*domain.TurnRun, error)
-	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string) (*domain.TurnRun, error)
+	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error)
+	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
 }
 
 type ToolCallStore interface {

@@ -293,6 +293,8 @@ export interface Turn {
   id: string;
   conversation_id: string;
   seq: number;
+  retry_of_turn_id?: string;
+  variant_index?: number;
   status: TurnStatus;
   request_blob_key?: string;
   response_blob_key?: string;

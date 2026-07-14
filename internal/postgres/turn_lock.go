@@ -23,6 +23,8 @@ func lockTurnInStatuses(ctx context.Context, tx pgx.Tx, turnID string, statuses 
 			id::text,
 			conversation_id::text,
 			seq,
+			COALESCE(retry_of_turn_id::text, ''),
+			variant_index,
 			status,
 			COALESCE(request_blob_key, ''),
 			COALESCE(response_blob_key, ''),

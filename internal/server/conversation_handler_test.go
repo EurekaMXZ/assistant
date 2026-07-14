@@ -51,6 +51,66 @@ func TestHandleInitialTurnRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestHandleRetryTurnReturnsVariantStream(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{RetryTurn: func(_ context.Context, ownerUserID string, sourceTurnID string) (*domain.EnqueuedRetryTurn, error) {
+			if ownerUserID != "user-1" || sourceTurnID != "turn-1" {
+				t.Fatalf("unexpected retry input: owner=%q source=%q", ownerUserID, sourceTurnID)
+			}
+			return &domain.EnqueuedRetryTurn{
+				ConversationID: "conversation-1",
+				Message:        domain.Message{ID: "message-2", ConversationID: "conversation-1", TurnID: "turn-2", Role: domain.RoleUser},
+				Turn: domain.Turn{
+					ID: "turn-2", ConversationID: "conversation-1", RetryOfTurnID: "turn-1", VariantIndex: 2,
+				},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/turns/turn-1/retries", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted ||
+		!strings.Contains(rec.Body.String(), `"retry_of_turn_id":"turn-1"`) ||
+		!strings.Contains(rec.Body.String(), `"stream_path":"/api/v1/turns/turn-2/stream"`) ||
+		!strings.Contains(rec.Body.String(), `"id":"message-2"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleEditTurnReturnsEditedPromptVariant(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{EditTurn: func(_ context.Context, ownerUserID string, sourceTurnID string, content string) (*domain.EnqueuedRetryTurn, error) {
+			if ownerUserID != "user-1" || sourceTurnID != "turn-1" || content != "edited prompt" {
+				t.Fatalf("unexpected edit input: owner=%q source=%q content=%q", ownerUserID, sourceTurnID, content)
+			}
+			return &domain.EnqueuedRetryTurn{
+				ConversationID: "conversation-1",
+				Message: domain.Message{
+					ID: "message-2", ConversationID: "conversation-1", TurnID: "turn-2", Role: domain.RoleUser, ContentText: content,
+				},
+				Turn: domain.Turn{ID: "turn-2", ConversationID: "conversation-1", RetryOfTurnID: "turn-1", VariantIndex: 2},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/turns/turn-1/edits", strings.NewReader(`{"content":"edited prompt"}`))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted ||
+		!strings.Contains(rec.Body.String(), `"content_text":"edited prompt"`) ||
+		!strings.Contains(rec.Body.String(), `"stream_path":"/api/v1/turns/turn-2/stream"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestListConversationResourcesEncodeEmptyArrays(t *testing.T) {
 	srv := newTestServer(UseCases{
 		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},

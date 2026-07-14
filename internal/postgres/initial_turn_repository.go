@@ -265,7 +265,7 @@ func getConversationTx(ctx context.Context, tx pgx.Tx, conversationID string) (*
 
 func getEnqueuedTurnTx(ctx context.Context, tx pgx.Tx, conversationID string, turnID string) (*domain.EnqueuedTurn, error) {
 	turn, err := scanTurn(tx.QueryRow(ctx, `
-		SELECT id::text, conversation_id::text, seq, status, COALESCE(request_blob_key, ''),
+		SELECT id::text, conversation_id::text, seq, COALESCE(retry_of_turn_id::text, ''), variant_index, status, COALESCE(request_blob_key, ''),
 		       COALESCE(response_blob_key, ''), COALESCE(stream_blob_key, ''), COALESCE(openai_response_id, ''),
 		       COALESCE(error_code, ''), COALESCE(error_message, ''), metadata, started_at, completed_at, failed_at,
 		       created_at, updated_at
@@ -276,7 +276,7 @@ func getEnqueuedTurnTx(ctx context.Context, tx pgx.Tx, conversationID string, tu
 	}
 	message, err := scanMessage(tx.QueryRow(ctx, `
 		SELECT id::text, conversation_id::text, COALESCE(turn_id::text, ''), seq, role,
-		       COALESCE(content_text, ''), token_count, metadata, created_at
+			COALESCE(content_text, ''), token_count, metadata, context_excluded, created_at
 		FROM messages WHERE turn_id = $1::uuid AND role = $2
 	`, turnID, domain.RoleUser))
 	if err != nil {

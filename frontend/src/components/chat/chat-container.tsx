@@ -4,11 +4,13 @@ import { useEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore
 import {
   createConversationShare,
   createMessage,
+  editTurn,
   getConversation,
   getTurn,
   isSessionUnauthorizedError,
   listMessages,
   patchConversation,
+  retryTurn,
   uploadConversationAttachment,
 } from "@/lib/api";
 import { openAuthDialog } from "@/lib/auth-dialog-events";
@@ -32,7 +34,6 @@ import {
   ensurePendingHomeTurnMessages,
   ensureStreamingThinkingMessage,
 } from "@/lib/chat-state";
-import { requestDescriptorFromMessage } from "@/lib/turn-request";
 import { MessageList } from "./message-list";
 import { Composer } from "./composer";
 import { ConversationShareDialog } from "./conversation-share-dialog";
@@ -130,6 +131,8 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
   const [resumeTurnId, setResumeTurnId] = useState<string | null>(null);
   const [restoreTurns, setRestoreTurns] = useState<Turn[]>([]);
@@ -143,6 +146,8 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const shareCacheRef = useRef(new Map<string, ConversationShare>());
   const activeConversationIdRef = useRef(conversationId);
   const mountedRef = useRef(true);
+  const retryInFlightRef = useRef(false);
+  const editBackupRef = useRef<{ draft: string; attachments: Attachment[] } | null>(null);
 
   useEffect(() => {
     activeConversationIdRef.current = conversationId;
@@ -308,18 +313,21 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     setConversation(null);
     setMessages([]);
     setAttachments([]);
+    setEditingMessage(null);
+    setIsSubmittingEdit(false);
     setIsUploadingAttachments(false);
     setResumeTurnId(null);
     setRestoreTurns([]);
     setConversationShare(shareCacheRef.current.get(conversationId) || null);
     setShareOpen(false);
     setIsSharing(false);
+    editBackupRef.current = null;
     resumeConversationIdRef.current = null;
     restoreConversationIdRef.current = null;
   }, [conversationId]);
 
   const handleUploadFiles = async (files: File[]) => {
-    if (authLoading || isStreaming || isUploadingAttachments) return;
+    if (authLoading || isStreaming || isUploadingAttachments || isSubmittingEdit) return;
 
     if (!user) {
       openAuthDialog("login");
@@ -397,6 +405,11 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
 
     if (!user) {
       openAuthDialog("login");
+      return;
+    }
+
+    if (editingMessage) {
+      await handleSubmitEditedMessage(editingMessage, content);
       return;
     }
 
@@ -548,51 +561,88 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     return () => setMobileAction(null);
   }, [conversation?.id, conversationId, handleShare, isSharing, isStreaming, setMobileAction]);
 
-  const handleEditMessage = (message: Message) => {
-    setDraft(message.content_text || "");
+  const restoreComposerAfterEdit = () => {
+    const backup = editBackupRef.current;
+    setDraft(backup?.draft || "");
+    setAttachments(backup?.attachments || []);
+    setEditingMessage(null);
+    editBackupRef.current = null;
+  };
 
+  const handleEditMessage = (message: Message) => {
+    if (isStreaming || isUploadingAttachments || isSubmittingEdit || retryInFlightRef.current)
+      return;
+    if (!editBackupRef.current) {
+      editBackupRef.current = { draft, attachments: [...attachments] };
+    }
+    setEditingMessage(message);
+    setDraft(message.content_text || "");
+    setAttachments([]);
     requestAnimationFrame(() => {
       const input = composerInputRef.current;
       if (!input) return;
       input.focus();
-      const length = input.value.length;
-      input.setSelectionRange(length, length);
+      input.setSelectionRange(input.value.length, input.value.length);
     });
   };
 
+  const handleSubmitEditedMessage = async (message: Message, content: string) => {
+    if (isStreaming || retryInFlightRef.current) return false;
+    if (!user) {
+      openAuthDialog("login");
+      return false;
+    }
+    if (!message.turn_id) {
+      toast.error("未找到可编辑的消息");
+      return false;
+    }
+    if (content === (message.content_text || "").trim()) {
+      restoreComposerAfterEdit();
+      return true;
+    }
+
+    const requestedConversationId = conversationId;
+    retryInFlightRef.current = true;
+    setIsSubmittingEdit(true);
+    try {
+      const res = await editTurn(message.turn_id, content);
+      if (activeConversationIdRef.current !== requestedConversationId) return false;
+      setMessages((previous) => [
+        ...previous,
+        res.message,
+        buildThinkingMessage(res.turn.id, res.conversation_id),
+      ]);
+      registerTurn(res.turn);
+      restoreComposerAfterEdit();
+      void streamTurn(res.turn.id, res.stream_path);
+      return true;
+    } catch (error) {
+      if (!isSessionUnauthorizedError(error)) {
+        toast.error(error instanceof Error ? error.message : "编辑并重发失败");
+      }
+      return false;
+    } finally {
+      retryInFlightRef.current = false;
+      setIsSubmittingEdit(false);
+    }
+  };
+
   const handleRetryMessage = async (message: Message) => {
+    if (isStreaming || retryInFlightRef.current) return;
     if (!user) {
       openAuthDialog("login");
       return;
     }
-
-    const messageIndex = messages.findIndex((candidate) => candidate.id === message.id);
-    if (messageIndex === -1) {
-      toast.error("未找到可重试的消息");
+    if (!message.turn_id) {
+      toast.error("未找到可重试的回复");
       return;
     }
 
-    const retrySource = [...messages.slice(0, messageIndex)]
-      .reverse()
-      .find(
-        (candidate) =>
-          candidate.role === "user" &&
-          (!!candidate.content_text?.trim() ||
-            requestDescriptorFromMessage(candidate)?.attachment_ids.length),
-      );
-
-    const descriptor = retrySource ? requestDescriptorFromMessage(retrySource) : null;
-    if (!descriptor) {
-      toast.error("未找到可重试的用户消息");
-      return;
-    }
-
-    setDraft(descriptor.content);
     const requestedConversationId = conversationId;
+    retryInFlightRef.current = true;
     try {
-      const res = await createMessage(conversationId, descriptor);
+      const res = await retryTurn(message.turn_id);
       if (activeConversationIdRef.current !== requestedConversationId) return;
-      setDraft("");
       setMessages((previous) => [
         ...previous,
         res.message,
@@ -604,6 +654,8 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
       if (!isSessionUnauthorizedError(error)) {
         toast.error(error instanceof Error ? error.message : "重试失败");
       }
+    } finally {
+      retryInFlightRef.current = false;
     }
   };
 
@@ -687,6 +739,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               onEditMessage={handleEditMessage}
               onOpenTimeline={handleOpenTimeline}
               onRetryMessage={handleRetryMessage}
+              dimmed={Boolean(editingMessage)}
               streamingTurnId={streamingTurnId}
               turnsById={turnsById}
             />
@@ -699,12 +752,20 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
             )}
 
             <Composer
+              allowEmpty={Boolean(
+                editingMessage &&
+                Array.isArray(editingMessage.metadata?.attachment_ids) &&
+                editingMessage.metadata.attachment_ids.length > 0,
+              )}
               attachments={attachments}
+              editing={Boolean(editingMessage)}
+              editingBusy={isSubmittingEdit}
               inputRef={composerInputRef}
               models={composerPreferences.models}
               modelsLoading={composerPreferences.modelsLoading}
               modelId={composerPreferences.modelId}
               onChange={setDraft}
+              onCancelEdit={restoreComposerAfterEdit}
               onRemoveAttachment={(attachmentId) => {
                 setAttachments((prev) =>
                   prev.filter((attachment) => attachment.id !== attachmentId),
@@ -714,8 +775,8 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               onModelReasoningEffortChange={composerPreferences.setModelReasoningEffort}
               onSend={handleSend}
               onUploadFiles={handleUploadFiles}
-              disabled={authLoading || isStreaming}
-              placeholder="输入消息"
+              disabled={authLoading || isStreaming || isSubmittingEdit}
+              placeholder={editingMessage ? "编辑消息" : "输入消息"}
               reasoningEfforts={composerPreferences.reasoningEfforts}
               uploadingAttachments={isUploadingAttachments}
               value={draft}

@@ -15,6 +15,24 @@ type stubCompactionContextStore struct {
 	messages        []domain.Message
 	anchor          domain.AnchorObject
 	expectedLastSeq int64
+	activeRetry     bool
+}
+
+func (s *stubCompactionContextStore) HasActiveRetry(context.Context, string) (bool, error) {
+	return s.activeRetry, nil
+}
+
+func TestContextCompactorSkipsModelWhileRetryIsActive(t *testing.T) {
+	store := &stubCompactionContextStore{activeRetry: true}
+	model := &stubModelClient{}
+	compactor := &ContextCompactor{store: store, model: model}
+
+	if err := compactor.HandleRequested(t.Context(), WorkflowEvent{ConversationID: "conv-1"}); err != nil {
+		t.Fatalf("skip compaction: %v", err)
+	}
+	if len(model.streamRequests) != 0 {
+		t.Fatalf("model requests = %d, want 0", len(model.streamRequests))
+	}
 }
 
 func (s *stubCompactionContextStore) GetContextHead(context.Context, string) (*domain.ContextHead, error) {

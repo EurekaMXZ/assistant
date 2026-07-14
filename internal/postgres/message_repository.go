@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,6 +30,7 @@ func (r *MessageRepository) ListMessages(ctx context.Context, conversationID str
 			COALESCE(content_text, ''),
 			token_count,
 			metadata,
+			context_excluded,
 			created_at
 		FROM messages
 		WHERE conversation_id = $1::uuid
@@ -70,6 +73,7 @@ func (r *MessageRepository) ListAssistantMessagesByTurn(ctx context.Context, tur
 			COALESCE(content_text, ''),
 			token_count,
 			metadata,
+			context_excluded,
 			created_at
 		FROM messages
 		WHERE turn_id = $1::uuid
@@ -93,4 +97,34 @@ func (r *MessageRepository) ListAssistantMessagesByTurn(ctx context.Context, tur
 		return nil, fmt.Errorf("iterate assistant messages: %w", err)
 	}
 	return messages, nil
+}
+
+func (r *MessageRepository) GetUserMessageByTurn(ctx context.Context, turnID string) (*domain.Message, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT
+			id::text,
+			conversation_id::text,
+			COALESCE(turn_id::text, ''),
+			seq,
+			role,
+			COALESCE(content_text, ''),
+			token_count,
+			metadata,
+			context_excluded,
+			created_at
+		FROM messages
+		WHERE turn_id = $1::uuid
+			AND role = $2
+		ORDER BY seq ASC
+		LIMIT 1
+	`, turnID, domain.RoleUser)
+
+	message, err := scanMessage(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get turn user message: %w", err)
+	}
+	return message, nil
 }

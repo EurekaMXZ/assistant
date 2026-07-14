@@ -61,9 +61,10 @@ func insertAssistantMessage(ctx context.Context, tx pgx.Tx, turn *domain.Turn, a
 			role,
 			content_text,
 			token_count,
-			metadata
+			metadata,
+			context_excluded
 		)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8)
 		RETURNING
 			id::text,
 			conversation_id::text,
@@ -73,14 +74,58 @@ func insertAssistantMessage(ctx context.Context, tx pgx.Tx, turn *domain.Turn, a
 			COALESCE(content_text, ''),
 			token_count,
 			metadata,
+			context_excluded,
 			created_at
-	`, turn.ConversationID, turn.ID, assistantSeq, domain.RoleAssistant, assistantText, assistantTokens, metadata)
+	`, turn.ConversationID, turn.ID, assistantSeq, domain.RoleAssistant, assistantText, assistantTokens, metadata, false)
 
 	message, err := scanMessage(row)
 	if err != nil {
 		return nil, fmt.Errorf("insert assistant message: %w", err)
 	}
 	return message, nil
+}
+
+func switchTurnVariantMessages(ctx context.Context, tx pgx.Tx, turn *domain.Turn) (int, int, error) {
+	if turn == nil || turn.RetryOfTurnID == "" {
+		return 0, 0, nil
+	}
+	rows, err := tx.Query(ctx, `
+		UPDATE messages
+		SET context_excluded = true
+		WHERE context_excluded = false
+			AND turn_id IN (
+				SELECT id
+				FROM turns
+				WHERE id = $1::uuid OR retry_of_turn_id = $1::uuid
+			)
+		RETURNING COALESCE(token_count, 0)
+	`, turn.RetryOfTurnID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("exclude previous turn variant: %w", err)
+	}
+	defer rows.Close()
+
+	tokens := 0
+	for rows.Next() {
+		var count int
+		if err := rows.Scan(&count); err != nil {
+			return 0, 0, fmt.Errorf("scan excluded turn variant tokens: %w", err)
+		}
+		tokens += count
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterate excluded turn variants: %w", err)
+	}
+	var selectedUserTokens int
+	if err := tx.QueryRow(ctx, `
+		UPDATE messages
+		SET context_excluded = false
+		WHERE turn_id = $1::uuid AND role = $2
+		RETURNING COALESCE(token_count, 0)
+	`, turn.ID, domain.RoleUser).Scan(&selectedUserTokens); err != nil {
+		return 0, 0, fmt.Errorf("activate retry user message: %w", err)
+	}
+	return tokens, selectedUserTokens, nil
 }
 
 func updateTurnSuccess(ctx context.Context, tx pgx.Tx, turnID string, summary domain.TurnRunSummary, metadata json.RawMessage) (*domain.Turn, error) {
@@ -102,6 +147,8 @@ func updateTurnSuccess(ctx context.Context, tx pgx.Tx, turnID string, summary do
 			id::text,
 			conversation_id::text,
 			seq,
+			COALESCE(retry_of_turn_id::text, ''),
+			variant_index,
 			status,
 			COALESCE(request_blob_key, ''),
 			COALESCE(response_blob_key, ''),

@@ -35,6 +35,45 @@ func (a *API) handleGetTurn(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"turn": turn})
 }
 
+func (a *API) handleRetryTurn(c *gin.Context) {
+	result, err := a.useCases.Conversations.RetryTurn(
+		c.Request.Context(), currentUser(c).ID, c.Param("turnID"),
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"conversation_id": result.ConversationID,
+		"message":         result.Message,
+		"turn":            result.Turn,
+		"stream_path":     "/api/v1/turns/" + result.Turn.ID + "/stream",
+	})
+}
+
+func (a *API) handleEditTurn(c *gin.Context) {
+	var request struct {
+		Content string `json:"content"`
+	}
+	if err := bindJSON(c, &request); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	result, err := a.useCases.Conversations.EditTurn(
+		c.Request.Context(), currentUser(c).ID, c.Param("turnID"), request.Content,
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"conversation_id": result.ConversationID,
+		"message":         result.Message,
+		"turn":            result.Turn,
+		"stream_path":     "/api/v1/turns/" + result.Turn.ID + "/stream",
+	})
+}
+
 func (a *API) handleGetTurnExecutionTrace(c *gin.Context) {
 	trace, err := a.useCases.Turns.GetTurnExecutionTrace(c.Request.Context(), currentUser(c).ID, c.Param("turnID"))
 	if err != nil {

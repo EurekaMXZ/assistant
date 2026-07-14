@@ -82,6 +82,9 @@ export function useTurnStream({
         });
         if (result.kind === "terminal") {
           completed = result.done.status === "completed";
+          if (!completed) {
+            toast.error(result.done.error || "生成失败");
+          }
         } else {
           toast.error(result.error.message);
         }

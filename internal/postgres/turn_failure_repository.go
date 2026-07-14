@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, streamKey string, code string, message string) error {
+func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, streamKey string, code string, message string, compactTriggerTokens int) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -36,6 +36,15 @@ func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID
 		WHERE id = $1::uuid
 	`, turnID, domain.TurnStatusFailed, requestKey, streamKey, code, message, metadata); err != nil {
 		return fmt.Errorf("update turn failure: %w", err)
+	}
+	if turn.RetryOfTurnID != "" {
+		head, err := queryContextHeadForUpdate(ctx, tx, turn.ConversationID)
+		if err != nil {
+			return err
+		}
+		if err := enqueueCompactionRequest(ctx, tx, turn, shouldRequestCompaction(head, compactTriggerTokens)); err != nil {
+			return err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

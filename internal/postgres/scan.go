@@ -110,6 +110,8 @@ func scanTurn(row scanRow) (*domain.Turn, error) {
 		&turn.ID,
 		&turn.ConversationID,
 		&turn.Seq,
+		&turn.RetryOfTurnID,
+		&turn.VariantIndex,
 		&turn.Status,
 		&turn.RequestBlobKey,
 		&turn.ResponseBlobKey,
@@ -157,6 +159,7 @@ func scanMessage(row scanRow) (*domain.Message, error) {
 		&message.ContentText,
 		&tokenCount,
 		&metadata,
+		&message.ContextExcluded,
 		&message.CreatedAt,
 	); err != nil {
 		return nil, err

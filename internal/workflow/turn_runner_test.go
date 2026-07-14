@@ -55,6 +55,10 @@ func (s *stubRunnerContextStore) GetContextHead(context.Context, string) (*domai
 	return s.head, nil
 }
 
+func (s *stubRunnerContextStore) HasActiveRetry(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (s *stubRunnerContextStore) ListRawTailMessages(context.Context, string, int64, int64) ([]domain.Message, error) {
 	return append([]domain.Message(nil), s.messages...), nil
 }
@@ -76,7 +80,25 @@ type stubScheduledRunStore struct {
 }
 
 type stubTurnWorkflowStore struct {
-	failures int
+	failures    int
+	turn        *domain.Turn
+	userMessage *domain.Message
+}
+
+func (s *stubTurnWorkflowStore) GetTurn(_ context.Context, turnID string) (*domain.Turn, error) {
+	if s.turn != nil {
+		clone := *s.turn
+		return &clone, nil
+	}
+	return &domain.Turn{ID: turnID}, nil
+}
+
+func (s *stubTurnWorkflowStore) GetUserMessageByTurn(context.Context, string) (*domain.Message, error) {
+	if s.userMessage != nil {
+		clone := *s.userMessage
+		return &clone, nil
+	}
+	return &domain.Message{Role: domain.RoleUser, ContentText: "retry"}, nil
 }
 
 func (s *stubTurnWorkflowStore) MarkTurnContextReady(context.Context, string) (*domain.Turn, error) {
@@ -87,7 +109,7 @@ func (s *stubTurnWorkflowStore) FinalizeTurnSuccess(context.Context, string, []d
 	return nil, nil, nil, false, nil
 }
 
-func (s *stubTurnWorkflowStore) FinalizeTurnFailure(context.Context, string, string, string, string, string) error {
+func (s *stubTurnWorkflowStore) FinalizeTurnFailure(context.Context, string, string, string, string, string, int) error {
 	s.failures++
 	return nil
 }
@@ -132,7 +154,7 @@ func (s *stubScheduledRunStore) CheckpointScheduledTurnRun(context.Context, Turn
 	return nil
 }
 
-func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRunLease, string, string, string, llm.ModelUsage, int) (*domain.TurnRun, error) {
+func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRunLease, string, string, string, llm.ModelUsage, int, int) (*domain.TurnRun, error) {
 	s.completed++
 	if s.run != nil {
 		s.run.Status = domain.TurnRunStatusCompleted
@@ -140,7 +162,7 @@ func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRu
 	return s.run, nil
 }
 
-func (s *stubScheduledRunStore) FailScheduledTurnRun(context.Context, TurnRunLease, string, string, string, string, string, string, string, string) (*domain.TurnRun, error) {
+func (s *stubScheduledRunStore) FailScheduledTurnRun(context.Context, TurnRunLease, string, string, string, string, string, string, string, string, int) (*domain.TurnRun, error) {
 	s.failed++
 	if s.failErr != nil {
 		return nil, s.failErr
@@ -239,6 +261,75 @@ func TestTurnRunnerContextReadySchedulesWithoutCallingModel(t *testing.T) {
 	}
 	if state.Request.PromptCacheKey != conversationPromptCacheKey("conv-1") {
 		t.Fatalf("prompt cache key = %q", state.Request.PromptCacheKey)
+	}
+}
+
+func TestTurnRunnerRetryInputReplacesOriginalUserPrompt(t *testing.T) {
+	artifacts := &stubTurnArtifactStore{data: map[string][]byte{
+		"requests/conv-1/root-turn.json": []byte(`{"input":[{"type":"message","role":"assistant","content":"context"},{"type":"message","role":"user","content":"original"}]}`),
+	}}
+	runner := &TurnRunner{
+		blobs: artifacts,
+		store: &stubTurnWorkflowStore{userMessage: &domain.Message{
+			Role: domain.RoleUser, ContentText: "edited prompt", ContextExcluded: true,
+		}},
+		loader: &ContextLoader{},
+	}
+
+	items, err := runner.retryModelInput(t.Context(), "conv-1", "root-turn", "variant-turn")
+	if err != nil {
+		t.Fatalf("retryModelInput() error = %v", err)
+	}
+	if len(items) != 2 || items[0].Role != domain.RoleAssistant || items[1].Role != domain.RoleUser {
+		t.Fatalf("retry input = %#v", items)
+	}
+	if items[1].Content != "edited prompt" || strings.Contains(string(items[1].Raw), "original") {
+		t.Fatalf("retry prompt was not replaced: %#v", items[1])
+	}
+}
+
+func TestTurnRunnerFailedTurnRetryFallsBackToHotContext(t *testing.T) {
+	contextStore := &stubRunnerContextStore{
+		head: &domain.ContextHead{ConversationID: "conv-1", RawTailStartSeq: 1, LastSeq: 3, ActiveContextTokens: 3},
+		messages: []domain.Message{
+			{Seq: 1, Role: domain.RoleUser, ContentText: "earlier"},
+			{Seq: 2, Role: domain.RoleAssistant, ContentText: "earlier answer"},
+			{Seq: 3, Role: domain.RoleUser, ContentText: "failed prompt"},
+		},
+	}
+	store := &stubTurnWorkflowStore{
+		turn: &domain.Turn{ID: "root-turn", Status: domain.TurnStatusFailed},
+		userMessage: &domain.Message{
+			Role: domain.RoleUser, ContentText: "edited failed prompt", ContextExcluded: true,
+		},
+	}
+	runner := &TurnRunner{
+		blobs:  &stubTurnArtifactStore{},
+		store:  store,
+		loader: &ContextLoader{store: contextStore, cache: cache.New(8, 8)},
+	}
+
+	items, err := runner.retryModelInput(t.Context(), "conv-1", "root-turn", "variant-turn")
+	if err != nil {
+		t.Fatalf("retryModelInput() fallback error = %v", err)
+	}
+	if len(items) != 3 || items[2].Role != domain.RoleUser || items[2].Content != "edited failed prompt" {
+		t.Fatalf("failed retry input = %#v", items)
+	}
+	for _, item := range items[2:] {
+		if item.Role == domain.RoleAssistant {
+			t.Fatalf("old answer followed edited failed prompt: %#v", items)
+		}
+	}
+}
+
+func TestVariantSourceTurnIDUsesSelectedVariant(t *testing.T) {
+	turn := &domain.Turn{
+		RetryOfTurnID: "root-turn",
+		Metadata:      json.RawMessage(`{"variant_source_turn_id":"selected-variant"}`),
+	}
+	if got := variantSourceTurnID(turn); got != "selected-variant" {
+		t.Fatalf("variantSourceTurnID() = %q, want selected-variant", got)
 	}
 }
 

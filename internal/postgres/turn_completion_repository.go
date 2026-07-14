@@ -25,6 +25,10 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
+	replacedTokens, selectedUserTokens, err := switchTurnVariantMessages(ctx, tx, turn)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
 
 	assistantSeq := head.LastSeq
 	assistantMessages := make([]domain.Message, 0, len(assistantDrafts))
@@ -50,7 +54,11 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 		return nil, nil, nil, false, err
 	}
 
-	head, err = updateContextHeadAfterAssistant(ctx, tx, turn.ConversationID, assistantSeq, head.ActiveContextTokens+assistantTokens)
+	activeTokens := head.ActiveContextTokens + assistantTokens
+	if turn.RetryOfTurnID != "" {
+		activeTokens = max(0, head.ActiveContextTokens-replacedTokens) + selectedUserTokens + assistantTokens
+	}
+	head, err = updateContextHeadAfterAssistant(ctx, tx, turn.ConversationID, assistantSeq, activeTokens)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}

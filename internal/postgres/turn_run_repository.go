@@ -278,7 +278,7 @@ func (r *TurnRunRepository) ListTurnRunsByTurn(ctx context.Context, turnID strin
 	return runs, nil
 }
 
-func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int) (*domain.TurnRun, error) {
+func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -361,7 +361,7 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 	billingTransactionID, err = captureUsageCharge(ctx, tx, ownerUserID, charge)
 	if err != nil {
 		if errors.Is(err, domain.ErrPaymentRequired) {
-			run, err = r.failBillingSettlement(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, toolCharge)
+			run, err = r.failBillingSettlement(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, toolCharge, compactTriggerTokens)
 			if err != nil {
 				return nil, err
 			}
@@ -394,6 +394,7 @@ func (r *TurnRunRepository) failBillingSettlement(
 	modelPriceID string,
 	charge *billing.Charge,
 	toolCharge *billing.ToolCharge,
+	compactTriggerTokens int,
 ) (*domain.TurnRun, error) {
 	row := tx.QueryRow(ctx, `
 		UPDATE turn_runs tr
@@ -416,6 +417,9 @@ func (r *TurnRunRepository) failBillingSettlement(
 	`, run.TurnID, domain.TurnStatusFailed, domain.TurnErrorBillingSettlementFailed,
 		domain.TurnPublicErrorBillingRequired); err != nil {
 		return nil, fmt.Errorf("fail turn billing settlement: %w", err)
+	}
+	if err := enqueueRetryCompactionIfNeeded(ctx, tx, run.TurnID, compactTriggerTokens); err != nil {
+		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO billing_usage_events (
@@ -479,7 +483,7 @@ func (r *TurnRunRepository) insertBillingUsageEvent(
 	return nil
 }
 
-func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string) (*domain.TurnRun, error) {
+func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin turn run failure: %w", err)
@@ -533,6 +537,9 @@ func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease work
 	`, run.TurnID).Scan(&modelID, &modelRevision, &modelPriceID, &modelSnapshot, &ownerUserID, &conversationID); err != nil {
 		return nil, fmt.Errorf("load failed turn billing snapshot: %w", err)
 	}
+	if err := enqueueRetryCompactionIfNeeded(ctx, tx, run.TurnID, compactTriggerTokens); err != nil {
+		return nil, err
+	}
 	var execution domain.ModelExecutionSnapshot
 	_ = json.Unmarshal(modelSnapshot, &execution)
 	if _, err := tx.Exec(ctx, `
@@ -553,4 +560,23 @@ func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease work
 		return nil, fmt.Errorf("commit turn run failure: %w", err)
 	}
 	return run, nil
+}
+
+func enqueueRetryCompactionIfNeeded(ctx context.Context, tx pgx.Tx, turnID string, compactTriggerTokens int) error {
+	var conversationID, retryOfTurnID string
+	if err := tx.QueryRow(ctx, `
+		SELECT conversation_id::text, COALESCE(retry_of_turn_id::text, '')
+		FROM turns
+		WHERE id = $1::uuid
+	`, turnID).Scan(&conversationID, &retryOfTurnID); err != nil {
+		return fmt.Errorf("load failed retry turn: %w", err)
+	}
+	if retryOfTurnID == "" {
+		return nil
+	}
+	head, err := queryContextHeadForUpdate(ctx, tx, conversationID)
+	if err != nil {
+		return err
+	}
+	return enqueueCompactionRequest(ctx, tx, &domain.Turn{ID: turnID, ConversationID: conversationID}, shouldRequestCompaction(head, compactTriggerTokens))
 }

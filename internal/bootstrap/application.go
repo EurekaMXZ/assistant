@@ -136,6 +136,8 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Models:        modelRepository,
 		Billing:       billingAccountRepository,
 		Turns:         turnRepository,
+		RetryTurns:    turnRepository,
+		Messages:      messageRepository,
 	}
 	initialTurnService := &InitialTurnService{Messages: messageService, Store: initialTurnRepository}
 
@@ -188,6 +190,8 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				})
 			},
 			SendMessage: messageService.SendMessage,
+			RetryTurn:   messageService.RetryTurn,
+			EditTurn:    messageService.EditTurn,
 			ListMessages: func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
 					return nil, err

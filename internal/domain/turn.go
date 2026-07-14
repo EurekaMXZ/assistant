@@ -17,6 +17,8 @@ type Turn struct {
 	ID               string          `json:"id"`
 	ConversationID   string          `json:"conversation_id"`
 	Seq              int64           `json:"seq"`
+	RetryOfTurnID    string          `json:"retry_of_turn_id,omitempty"`
+	VariantIndex     int             `json:"variant_index"`
 	Status           string          `json:"status"`
 	RequestBlobKey   string          `json:"request_blob_key,omitempty"`
 	ResponseBlobKey  string          `json:"response_blob_key,omitempty"`
@@ -33,6 +35,12 @@ type Turn struct {
 }
 
 type EnqueuedTurn struct {
+	ConversationID string  `json:"conversation_id"`
+	Message        Message `json:"message"`
+	Turn           Turn    `json:"turn"`
+}
+
+type EnqueuedRetryTurn struct {
 	ConversationID string  `json:"conversation_id"`
 	Message        Message `json:"message"`
 	Turn           Turn    `json:"turn"`

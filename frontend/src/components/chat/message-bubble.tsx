@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CircleAlert, Pencil, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleAlert, Pencil, RotateCcw } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MarkdownRenderer } from "./markdown-renderer";
 import { CopyButton } from "./copy-button";
@@ -14,6 +14,7 @@ import { ImagePreview } from "./image-preview";
 
 interface MessageBubbleProps {
   message: Message;
+  canEdit?: boolean;
   onEdit?: (message: Message) => void;
   onRetry?: (message: Message) => void;
   isStreaming?: boolean;
@@ -21,12 +22,16 @@ interface MessageBubbleProps {
 
 interface AssistantTurnBubbleProps {
   activityLabel?: string | null;
+  canRetry?: boolean;
   isStreaming?: boolean;
   messages: Message[];
   onOpenTimeline?: (turnId: string) => void;
   onRetry?: (message: Message) => void;
   turnId: string;
   turn?: Turn | null;
+  variantCount?: number;
+  variantIndex?: number;
+  onVariantChange?: (index: number) => void;
 }
 
 const assistantActionIconInsetPx = 6;
@@ -235,7 +240,13 @@ function MessageBody({ isStreaming, message }: { isStreaming?: boolean; message:
   );
 }
 
-export function MessageBubble({ message, onEdit, onRetry, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  canEdit = false,
+  onEdit,
+  onRetry,
+  isStreaming,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const displayKind =
     typeof message.metadata?.display_kind === "string" ? message.metadata.display_kind : null;
@@ -268,24 +279,27 @@ export function MessageBubble({ message, onEdit, onRetry, isStreaming }: Message
               </TooltipContent>
             </Tooltip>
 
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => onEdit?.(message)}
-                  >
-                    <Pencil className="h-4 w-4" />
-                    <span className="sr-only">编辑</span>
-                  </Button>
-                }
-              />
-              <TooltipContent>
-                <p>编辑</p>
-              </TooltipContent>
-            </Tooltip>
+            {canEdit ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label="编辑消息"
+                      onClick={() => onEdit?.(message)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      <span className="sr-only">编辑</span>
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  <p>编辑</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         ) : (
           <div className="mt-1 flex w-full items-center justify-start gap-1">
@@ -326,12 +340,16 @@ export function MessageBubble({ message, onEdit, onRetry, isStreaming }: Message
 
 export function AssistantTurnBubble({
   activityLabel,
+  canRetry = true,
   isStreaming,
   messages,
   onOpenTimeline,
   onRetry,
   turnId,
   turn,
+  variantCount = 1,
+  variantIndex = 0,
+  onVariantChange,
 }: AssistantTurnBubbleProps) {
   const hasThinkingMarker = messages.some(
     (message) => message.metadata?.display_kind === "thinking",
@@ -382,25 +400,57 @@ export function AssistantTurnBubble({
               </TooltipContent>
             </Tooltip>
 
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    disabled={isStreaming}
-                    onClick={() => onRetry?.(lastOutput)}
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                    <span className="sr-only">重试</span>
-                  </Button>
-                }
-              />
-              <TooltipContent>
-                <p>重试</p>
-              </TooltipContent>
-            </Tooltip>
+            {canRetry ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={isStreaming}
+                      onClick={() => onRetry?.(lastOutput)}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      <span className="sr-only">重试</span>
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  <p>重试</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+
+            {variantCount > 1 && !isStreaming ? (
+              <div className="ml-1 flex h-7 items-center gap-0.5 text-xs text-muted-foreground">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="上一个回复版本"
+                  disabled={variantIndex === 0}
+                  onClick={() => onVariantChange?.(variantIndex - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="min-w-9 text-center tabular-nums">
+                  {variantIndex + 1} / {variantCount}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="下一个回复版本"
+                  disabled={variantIndex >= variantCount - 1}
+                  onClick={() => onVariantChange?.(variantIndex + 1)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

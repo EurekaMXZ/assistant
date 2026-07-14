@@ -248,6 +248,8 @@ type ConversationUseCases struct {
 	GetConversation         func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error)
 	UpdateConversation      func(ctx context.Context, ownerUserID string, input UpdateConversationInput) (*domain.Conversation, error)
 	SendMessage             func(ctx context.Context, ownerUserID string, conversationID string, input SendMessageInput) (*domain.EnqueuedTurn, error)
+	RetryTurn               func(ctx context.Context, ownerUserID string, sourceTurnID string) (*domain.EnqueuedRetryTurn, error)
+	EditTurn                func(ctx context.Context, ownerUserID string, sourceTurnID string, content string) (*domain.EnqueuedRetryTurn, error)
 	ListMessages            func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error)
 }
 

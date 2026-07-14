@@ -32,11 +32,13 @@ export interface ComposerShellAttachment {
 }
 
 interface ComposerShellProps {
+  allowEmpty?: boolean;
   attachments: ComposerShellAttachment[];
   autoFocus?: boolean;
   busy?: boolean;
   className?: string;
   disabled?: boolean;
+  editing?: boolean;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   models: Model[];
   modelsLoading?: boolean;
@@ -229,11 +231,13 @@ function ComposerAttachmentItem({
 }
 
 export function ComposerShell({
+  allowEmpty,
   attachments,
   autoFocus,
   busy,
   className,
   disabled,
+  editing,
   inputRef,
   models,
   modelsLoading,
@@ -358,7 +362,7 @@ export function ComposerShell({
         size="icon"
         variant="ghost"
         className="absolute rounded-full text-muted-foreground hover:text-foreground"
-        disabled={inactive || uploadBusy}
+        disabled={inactive || uploadBusy || editing}
         onClick={() => fileInputRef.current?.click()}
         style={{ left: 12, bottom: 10 }}
       >
@@ -368,7 +372,7 @@ export function ComposerShell({
 
       <ComposerOptions
         className="absolute right-14"
-        disabled={inactive || uploadBusy}
+        disabled={inactive || uploadBusy || editing}
         models={models}
         modelsLoading={modelsLoading}
         modelId={modelId}
@@ -383,7 +387,9 @@ export function ComposerShell({
       <Button
         size="icon"
         onClick={onSubmit}
-        disabled={(!value.trim() && attachments.length === 0) || inactive || uploadBusy}
+        disabled={
+          (!allowEmpty && !value.trim() && attachments.length === 0) || inactive || uploadBusy
+        }
         className="absolute rounded-full"
         style={{ right: 12, bottom: 10 }}
       >

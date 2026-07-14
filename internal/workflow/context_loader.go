@@ -110,6 +110,9 @@ func buildTextConversationHistoryInput(hot *cache.ContextSnapshot) []llm.ModelIt
 	}
 
 	for _, message := range hot.Tail {
+		if message.ContextExcluded {
+			continue
+		}
 		if strings.TrimSpace(message.ContentText) == "" {
 			continue
 		}
@@ -140,6 +143,9 @@ func (l *ContextLoader) loadConversationModelInput(ctx context.Context, conversa
 	coveredAssistantTurns := map[string]struct{}{}
 	missingAssistantContexts := map[string]struct{}{}
 	for _, message := range hot.Tail {
+		if message.ContextExcluded {
+			continue
+		}
 		if message.Role == domain.RoleAssistant && strings.TrimSpace(message.TurnID) != "" {
 			turnID := strings.TrimSpace(message.TurnID)
 			if _, ok := coveredAssistantTurns[turnID]; ok {
@@ -185,6 +191,9 @@ func (l *ContextLoader) loadConversationModelInput(ctx context.Context, conversa
 }
 
 func (l *ContextLoader) modelInputItemsForMessage(ctx context.Context, conversationID string, message domain.Message) ([]llm.ModelItem, error) {
+	if message.ContextExcluded {
+		return nil, nil
+	}
 	if message.Role == domain.RoleAssistant && strings.TrimSpace(message.TurnID) != "" && l != nil && l.modelContexts != nil {
 		items, found, err := l.loadTurnModelContextItems(ctx, conversationID, message.TurnID)
 		if err != nil {

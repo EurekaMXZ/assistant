@@ -87,6 +87,8 @@ export const turnSchema = z.object({
   id: z.string(),
   conversation_id: z.string(),
   seq: z.number().int(),
+  retry_of_turn_id: z.string().optional(),
+  variant_index: z.number().int().positive().default(1),
   status: turnStatusSchema,
   request_blob_key: z.string().optional(),
   response_blob_key: z.string().optional(),

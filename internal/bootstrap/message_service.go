@@ -37,6 +37,15 @@ type userTurnCreator interface {
 	CreateUserTurn(ctx context.Context, params postgres.CreateUserTurnParams) (*domain.EnqueuedTurn, error)
 }
 
+type retryTurnStore interface {
+	GetTurn(ctx context.Context, turnID string) (*domain.Turn, error)
+	CreateRetryTurn(ctx context.Context, sourceTurnID string, params postgres.CreateUserTurnParams) (*domain.EnqueuedRetryTurn, error)
+}
+
+type retryMessageStore interface {
+	GetUserMessageByTurn(ctx context.Context, turnID string) (*domain.Message, error)
+}
+
 type initialTurnStore interface {
 	Prepare(ctx context.Context, params postgres.PrepareInitialConversationParams) (*postgres.PreparedInitialConversation, error)
 	Replay(ctx context.Context, ownerUserID string, idempotencyKey string, conversationID string, commitFingerprint string) (*postgres.CommittedInitialTurn, bool, error)
@@ -49,6 +58,8 @@ type MessageService struct {
 	Models        modelExecutionResolver
 	Billing       billingAdmissionStore
 	Turns         userTurnCreator
+	RetryTurns    retryTurnStore
+	Messages      retryMessageStore
 }
 
 func (s *MessageService) SendMessage(ctx context.Context, ownerUserID string, conversationID string, input server.SendMessageInput) (*domain.EnqueuedTurn, error) {
@@ -57,6 +68,79 @@ func (s *MessageService) SendMessage(ctx context.Context, ownerUserID string, co
 		return nil, err
 	}
 	return s.Turns.CreateUserTurn(ctx, params)
+}
+
+func (s *MessageService) RetryTurn(ctx context.Context, ownerUserID string, sourceTurnID string) (*domain.EnqueuedRetryTurn, error) {
+	return s.createTurnVariant(ctx, ownerUserID, sourceTurnID, nil)
+}
+
+func (s *MessageService) EditTurn(ctx context.Context, ownerUserID string, sourceTurnID string, content string) (*domain.EnqueuedRetryTurn, error) {
+	return s.createTurnVariant(ctx, ownerUserID, sourceTurnID, &content)
+}
+
+func (s *MessageService) createTurnVariant(ctx context.Context, ownerUserID string, sourceTurnID string, editedContent *string) (*domain.EnqueuedRetryTurn, error) {
+	if s.RetryTurns == nil || s.Messages == nil {
+		return nil, errors.New("turn retry is not configured")
+	}
+	source, err := s.RetryTurns.GetTurn(ctx, sourceTurnID)
+	if err != nil {
+		return nil, err
+	}
+	root := source
+	if source.RetryOfTurnID != "" {
+		root, err = s.RetryTurns.GetTurn(ctx, source.RetryOfTurnID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.Conversations.GetConversationByOwner(ctx, root.ConversationID, ownerUserID); err != nil {
+		return nil, err
+	}
+	message, err := s.Messages.GetUserMessageByTurn(ctx, source.ID)
+	if errors.Is(err, domain.ErrNotFound) && source.ID != root.ID {
+		message, err = s.Messages.GetUserMessageByTurn(ctx, root.ID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	input := retryInputFromMessage(message)
+	if editedContent != nil {
+		input.Content = *editedContent
+	}
+	params, err := s.prepareTurn(ctx, ownerUserID, root.ConversationID, input)
+	if err != nil {
+		return nil, err
+	}
+	return s.RetryTurns.CreateRetryTurn(ctx, source.ID, params)
+}
+
+func retryInputFromMessage(message *domain.Message) server.SendMessageInput {
+	if message == nil {
+		return server.SendMessageInput{}
+	}
+	metadata := decodeMetadata(message.Metadata)
+	input := server.SendMessageInput{
+		Content:  message.ContentText,
+		Metadata: cloneJSON(message.Metadata),
+	}
+	if modelID, ok := metadata["model_id"].(string); ok {
+		input.ModelID = modelID
+	}
+	if effort, ok := metadata["reasoning_effort"].(string); ok {
+		input.ReasoningEffort = effort
+	}
+	if rawIDs, ok := metadata["attachment_ids"].([]any); ok {
+		for _, rawID := range rawIDs {
+			if id, ok := rawID.(string); ok && strings.TrimSpace(id) != "" {
+				input.AttachmentIDs = append(input.AttachmentIDs, id)
+			}
+		}
+	}
+	return input
+}
+
+func cloneJSON(raw json.RawMessage) json.RawMessage {
+	return append(json.RawMessage(nil), raw...)
 }
 
 func (s *MessageService) prepareTurn(ctx context.Context, ownerUserID string, conversationID string, input server.SendMessageInput) (postgres.CreateUserTurnParams, error) {
