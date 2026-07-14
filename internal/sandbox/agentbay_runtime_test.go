@@ -17,7 +17,6 @@ type fakeAgentBayClient struct {
 	createRequest   agentBayCreateRequest
 	createResult    agentBayCreateResult
 	createCalls     int
-	getSessionID    string
 	directSessionID string
 	session         agentBaySession
 }
@@ -34,11 +33,6 @@ func (c *fakeAgentBayClient) Create(request agentBayCreateRequest) (agentBayCrea
 	return c.createResult, nil
 }
 
-func (c *fakeAgentBayClient) Get(sessionID string) (agentBaySession, error) {
-	c.getSessionID = sessionID
-	return c.session, nil
-}
-
 func (c *fakeAgentBayClient) Session(sessionID string) agentBaySession {
 	c.directSessionID = sessionID
 	return c.session
@@ -52,6 +46,11 @@ type fakeAgentBaySession struct {
 	timeoutMs        int
 	workingDirectory string
 	commandResult    agentBayCommandResult
+	status           string
+	pauseResult      agentBayLifecycleResult
+	resumeResult     agentBayLifecycleResult
+	pauseCalls       int
+	resumeCalls      int
 }
 
 func (s *fakeAgentBaySession) ID() string {
@@ -61,6 +60,52 @@ func (s *fakeAgentBaySession) ID() string {
 func (s *fakeAgentBaySession) Delete() (agentBayDeleteResult, error) {
 	s.deleteCalls++
 	return s.deleteResult, nil
+}
+
+func (s *fakeAgentBaySession) Status() (string, error) {
+	if s.status == "" {
+		return "RUNNING", nil
+	}
+	return s.status, nil
+}
+
+func (s *fakeAgentBaySession) Pause(int) (agentBayLifecycleResult, error) {
+	s.pauseCalls++
+	s.status = "PAUSED"
+	if !s.pauseResult.Success && s.pauseResult.ErrorMessage == "" {
+		return agentBayLifecycleResult{Success: true, Status: "PAUSED"}, nil
+	}
+	return s.pauseResult, nil
+}
+
+func (s *fakeAgentBaySession) Resume(int) (agentBayLifecycleResult, error) {
+	s.resumeCalls++
+	s.status = "RUNNING"
+	if !s.resumeResult.Success && s.resumeResult.ErrorMessage == "" {
+		return agentBayLifecycleResult{Success: true, Status: "RUNNING"}, nil
+	}
+	return s.resumeResult, nil
+}
+
+func TestAgentBayRuntimeStopsAndResumesSession(t *testing.T) {
+	session := &fakeAgentBaySession{id: "session-1", status: "RUNNING"}
+	runtime := newAgentBayRuntime(AgentBayRuntimeSettings{APITimeout: time.Minute}, &fakeAgentBayClient{session: session})
+	handle := domain.SandboxHandle{Provider: ProviderAgentBay, RuntimeID: "session-1", Metadata: json.RawMessage(`{"conversation_id":"conv-1"}`)}
+
+	stopped, err := runtime.StopSandbox(context.Background(), handle, "stop-key")
+	if err != nil {
+		t.Fatalf("stop sandbox: %v", err)
+	}
+	if session.pauseCalls != 1 || !strings.Contains(string(stopped.Metadata), `"lifecycle_state":"stopped"`) {
+		t.Fatalf("unexpected stop result: calls=%d handle=%#v", session.pauseCalls, stopped)
+	}
+	resumed, err := runtime.ResumeSandbox(context.Background(), *stopped, "resume-key")
+	if err != nil {
+		t.Fatalf("resume sandbox: %v", err)
+	}
+	if session.resumeCalls != 1 || !strings.Contains(string(resumed.Metadata), `"lifecycle_state":"active"`) {
+		t.Fatalf("unexpected resume result: calls=%d handle=%#v", session.resumeCalls, resumed)
+	}
 }
 
 func (s *fakeAgentBaySession) ExecuteCommand(command string, timeoutMs int, workingDirectory string) (agentBayCommandResult, error) {
@@ -125,8 +170,8 @@ func TestAgentBayRuntimeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec sandbox command: %v", err)
 	}
-	if client.getSessionID != "session-1" {
-		t.Fatalf("get session ID = %q, want session-1", client.getSessionID)
+	if client.directSessionID != "session-1" {
+		t.Fatalf("direct session ID = %q, want session-1", client.directSessionID)
 	}
 	wantCommand := `'printf' '%s' 'hello world' 'a'"'"'b' '; rm -rf /' 2>&1`
 	if activeSession.command != wantCommand {
@@ -214,7 +259,7 @@ func TestAgentBayRuntimeUsesDefaultCommandTimeoutAndPreservesFailure(t *testing.
 	}
 }
 
-func TestAgentBayRuntimeTreatsAcceptedDeletionAsDestroyed(t *testing.T) {
+func TestAgentBayRuntimeKeepsAcceptedDeletionPending(t *testing.T) {
 	session := &fakeAgentBaySession{
 		id:           "session-1",
 		deleteResult: agentBayDeleteResult{Accepted: true, ErrorMessage: "Timeout waiting for session deletion after 5m"},
@@ -224,8 +269,26 @@ func TestAgentBayRuntimeTreatsAcceptedDeletionAsDestroyed(t *testing.T) {
 	_, err := runtime.DestroySandbox(context.Background(), domain.SandboxHandle{
 		Provider: ProviderAgentBay, RuntimeID: "session-1",
 	}, "")
-	if err != nil {
-		t.Fatalf("destroy accepted AgentBay session: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not yet confirmed") {
+		t.Fatalf("destroy accepted AgentBay session error = %v", err)
+	}
+}
+
+func TestAgentBayRuntimeResumesPausedSessionBeforeDeletion(t *testing.T) {
+	session := &fakeAgentBaySession{
+		id:           "session-1",
+		status:       "PAUSED",
+		deleteResult: agentBayDeleteResult{Success: true},
+	}
+	runtime := newAgentBayRuntime(AgentBayRuntimeSettings{}, &fakeAgentBayClient{session: session})
+
+	if _, err := runtime.DestroySandbox(context.Background(), domain.SandboxHandle{
+		Provider: ProviderAgentBay, RuntimeID: "session-1",
+	}, ""); err != nil {
+		t.Fatalf("destroy paused AgentBay session: %v", err)
+	}
+	if session.resumeCalls != 1 || session.deleteCalls != 1 {
+		t.Fatalf("resume calls = %d, delete calls = %d", session.resumeCalls, session.deleteCalls)
 	}
 }
 

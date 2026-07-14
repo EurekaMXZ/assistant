@@ -27,30 +27,35 @@ const (
 var _ tool.SandboxManager = (*AgentBayRuntime)(nil)
 
 type AgentBayRuntimeSettings struct {
-	APIKey     string
-	RegionID   string
-	ImageID    string
-	PolicyID   string
-	APITimeout time.Duration
+	APIKey           string
+	RegionID         string
+	ImageID          string
+	PolicyID         string
+	APITimeout       time.Duration
+	CommandTimeout   time.Duration
+	LifecycleTimeout time.Duration
 }
 
 type AgentBayRuntime struct {
-	client   agentBayClient
-	regionID string
-	imageID  string
-	policyID string
-	now      func() time.Time
+	client                  agentBayClient
+	regionID                string
+	imageID                 string
+	policyID                string
+	lifecycleTimeoutSeconds int
+	now                     func() time.Time
 }
 
 type agentBayClient interface {
 	Find(labels map[string]string, imageID string) (agentBayFindResult, error)
 	Create(request agentBayCreateRequest) (agentBayCreateResult, error)
-	Get(sessionID string) (agentBaySession, error)
 	Session(sessionID string) agentBaySession
 }
 
 type agentBaySession interface {
 	ID() string
+	Status() (string, error)
+	Pause(timeoutSeconds int) (agentBayLifecycleResult, error)
+	Resume(timeoutSeconds int) (agentBayLifecycleResult, error)
 	Delete() (agentBayDeleteResult, error)
 	ExecuteCommand(command string, timeoutMs int, workingDirectory string) (agentBayCommandResult, error)
 }
@@ -75,6 +80,13 @@ type agentBayDeleteResult struct {
 	Success      bool
 	Accepted     bool
 	NotFound     bool
+	RequestID    string
+	ErrorMessage string
+}
+
+type agentBayLifecycleResult struct {
+	Success      bool
+	Status       string
 	RequestID    string
 	ErrorMessage string
 }
@@ -110,11 +122,12 @@ func NewAgentBayRuntime(settings AgentBayRuntimeSettings) (*AgentBayRuntime, err
 func newAgentBayRuntime(settings AgentBayRuntimeSettings, client agentBayClient) *AgentBayRuntime {
 	settings = normalizeAgentBaySettings(settings)
 	return &AgentBayRuntime{
-		client:   client,
-		regionID: settings.RegionID,
-		imageID:  settings.ImageID,
-		policyID: settings.PolicyID,
-		now:      time.Now,
+		client:                  client,
+		regionID:                settings.RegionID,
+		imageID:                 settings.ImageID,
+		policyID:                settings.PolicyID,
+		lifecycleTimeoutSeconds: max(1, int(settings.LifecycleTimeout.Seconds())),
+		now:                     time.Now,
 	}
 }
 
@@ -164,19 +177,34 @@ func (r *AgentBayRuntime) CreateSandbox(ctx context.Context, conversationID stri
 }
 
 func (r *AgentBayRuntime) DestroySandbox(ctx context.Context, handle domain.SandboxHandle, _ string) (*domain.SandboxHandle, error) {
-	runtimeID, err := r.runtimeID(ctx, handle)
+	runtimeID, session, err := r.lifecycleSession(ctx, handle)
 	if err != nil {
 		return nil, err
 	}
-	session := r.client.Session(runtimeID)
-	if session == nil {
-		return nil, fmt.Errorf("get AgentBay session %q: empty response", runtimeID)
+	status, err := session.Status()
+	if err != nil {
+		if isAgentBayNotFound(err.Error()) {
+			return &domain.SandboxHandle{Provider: ProviderAgentBay, RuntimeID: runtimeID, Metadata: append(json.RawMessage(nil), handle.Metadata...)}, nil
+		}
+		return nil, fmt.Errorf("get AgentBay session %q status before deletion: %w", runtimeID, err)
+	}
+	if isAgentBayPausedStatus(status) {
+		resumeResult, resumeErr := session.Resume(r.lifecycleTimeoutSeconds)
+		if resumeErr != nil {
+			return nil, fmt.Errorf("resume AgentBay session %q before deletion: %w", runtimeID, resumeErr)
+		}
+		if !resumeResult.Success {
+			return nil, fmt.Errorf("resume AgentBay session %q before deletion: %s", runtimeID, firstNonEmpty(resumeResult.ErrorMessage, resumeResult.Status, "unknown error"))
+		}
 	}
 	result, err := session.Delete()
 	if err != nil {
 		return nil, fmt.Errorf("delete AgentBay session %q: %w", handle.RuntimeID, err)
 	}
-	if !result.Success && !result.Accepted && !result.NotFound {
+	if result.Accepted {
+		return nil, fmt.Errorf("delete AgentBay session %q is not yet confirmed: %s", runtimeID, firstNonEmpty(result.ErrorMessage, "deletion pending"))
+	}
+	if !result.Success && !result.NotFound {
 		message := strings.TrimSpace(result.ErrorMessage)
 		if message == "" {
 			message = "AgentBay session deletion failed"
@@ -186,8 +214,81 @@ func (r *AgentBayRuntime) DestroySandbox(ctx context.Context, handle domain.Sand
 	return &domain.SandboxHandle{Provider: ProviderAgentBay, RuntimeID: runtimeID, Metadata: append(json.RawMessage(nil), handle.Metadata...)}, nil
 }
 
+func (r *AgentBayRuntime) StopSandbox(ctx context.Context, handle domain.SandboxHandle, _ string) (*domain.SandboxHandle, error) {
+	runtimeID, session, err := r.lifecycleSession(ctx, handle)
+	if err != nil {
+		return nil, err
+	}
+	status, err := session.Status()
+	if err != nil {
+		return nil, fmt.Errorf("get AgentBay session %q status: %w", runtimeID, err)
+	}
+	if strings.EqualFold(status, aliyunagentbay.SessionStatusPaused.String()) {
+		return r.lifecycleHandle(handle, "stopped", r.now().UTC())
+	}
+	result, err := session.Pause(r.lifecycleTimeoutSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("pause AgentBay session %q: %w", runtimeID, err)
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("pause AgentBay session %q: %s", runtimeID, firstNonEmpty(result.ErrorMessage, result.Status, "unknown error"))
+	}
+	return r.lifecycleHandle(handle, "stopped", r.now().UTC())
+}
+
+func (r *AgentBayRuntime) ResumeSandbox(ctx context.Context, handle domain.SandboxHandle, _ string) (*domain.SandboxHandle, error) {
+	runtimeID, session, err := r.lifecycleSession(ctx, handle)
+	if err != nil {
+		return nil, err
+	}
+	status, err := session.Status()
+	if err != nil {
+		return nil, fmt.Errorf("get AgentBay session %q status: %w", runtimeID, err)
+	}
+	if strings.EqualFold(status, aliyunagentbay.SessionStatusRunning.String()) {
+		return r.lifecycleHandle(handle, "active", r.now().UTC())
+	}
+	result, err := session.Resume(r.lifecycleTimeoutSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("resume AgentBay session %q: %w", runtimeID, err)
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("resume AgentBay session %q: %s", runtimeID, firstNonEmpty(result.ErrorMessage, result.Status, "unknown error"))
+	}
+	return r.lifecycleHandle(handle, "active", r.now().UTC())
+}
+
+func (r *AgentBayRuntime) lifecycleSession(ctx context.Context, handle domain.SandboxHandle) (string, agentBaySession, error) {
+	runtimeID, err := r.runtimeID(ctx, handle)
+	if err != nil {
+		return "", nil, err
+	}
+	session := r.client.Session(runtimeID)
+	if session == nil {
+		return "", nil, fmt.Errorf("get AgentBay session %q: empty response", runtimeID)
+	}
+	return runtimeID, session, nil
+}
+
+func (r *AgentBayRuntime) lifecycleHandle(handle domain.SandboxHandle, state string, at time.Time) (*domain.SandboxHandle, error) {
+	metadata := map[string]any{}
+	if len(handle.Metadata) > 0 {
+		_ = json.Unmarshal(handle.Metadata, &metadata)
+	}
+	metadata["lifecycle_state"] = state
+	metadata[state+"_at"] = at.Format(time.RFC3339Nano)
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshal AgentBay lifecycle metadata: %w", err)
+	}
+	return &domain.SandboxHandle{Provider: ProviderAgentBay, RuntimeID: strings.TrimSpace(handle.RuntimeID), Metadata: encoded}, nil
+}
+
 func (r *AgentBayRuntime) ExecSandboxCommand(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxCommandRequest, _ string) (*domain.SandboxCommandResult, error) {
-	session, err := r.session(ctx, handle)
+	if _, err := r.ResumeSandbox(ctx, handle, ""); err != nil {
+		return nil, err
+	}
+	_, session, err := r.lifecycleSession(ctx, handle)
 	if err != nil {
 		return nil, err
 	}
@@ -250,24 +351,6 @@ func (r *AgentBayRuntime) ready(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (r *AgentBayRuntime) session(ctx context.Context, handle domain.SandboxHandle) (agentBaySession, error) {
-	runtimeID, err := r.runtimeID(ctx, handle)
-	if err != nil {
-		return nil, err
-	}
-	session, err := r.client.Get(runtimeID)
-	if err != nil {
-		return nil, fmt.Errorf("get AgentBay session %q: %w", runtimeID, err)
-	}
-	if session == nil {
-		return nil, fmt.Errorf("get AgentBay session %q: empty response", runtimeID)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return session, nil
-}
-
 func (r *AgentBayRuntime) runtimeID(ctx context.Context, handle domain.SandboxHandle) (string, error) {
 	if err := r.ready(ctx); err != nil {
 		return "", err
@@ -312,6 +395,12 @@ func normalizeAgentBaySettings(settings AgentBayRuntimeSettings) AgentBayRuntime
 	settings.PolicyID = strings.TrimSpace(settings.PolicyID)
 	if settings.APITimeout <= 0 {
 		settings.APITimeout = defaultAgentBayAPITimeout
+	}
+	if settings.LifecycleTimeout <= 0 {
+		settings.LifecycleTimeout = settings.APITimeout
+	}
+	if commandTimeout := settings.CommandTimeout + 10*time.Second; settings.CommandTimeout > 0 && settings.APITimeout < commandTimeout {
+		settings.APITimeout = commandTimeout
 	}
 	return settings
 }
@@ -377,21 +466,6 @@ func (c *sdkAgentBayClient) Create(request agentBayCreateRequest) (agentBayCreat
 	return agentBayCreateResult{Session: &sdkAgentBaySession{session: result.Session}, RequestID: result.RequestID}, nil
 }
 
-func (c *sdkAgentBayClient) Get(sessionID string) (agentBaySession, error) {
-	result, err := c.client.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil || !result.Success || result.Session == nil {
-		message := "AgentBay session lookup failed"
-		if result != nil && strings.TrimSpace(result.ErrorMessage) != "" {
-			message = result.ErrorMessage
-		}
-		return nil, fmt.Errorf("%s", message)
-	}
-	return &sdkAgentBaySession{session: result.Session}, nil
-}
-
 func (c *sdkAgentBayClient) Session(sessionID string) agentBaySession {
 	return &sdkAgentBaySession{session: aliyunagentbay.NewSession(c.client, sessionID)}
 }
@@ -424,6 +498,43 @@ func (s *sdkAgentBaySession) Delete() (agentBayDeleteResult, error) {
 	}, nil
 }
 
+func (s *sdkAgentBaySession) Status() (string, error) {
+	result, err := s.session.GetStatus()
+	if err != nil {
+		return "", err
+	}
+	if result == nil || !result.Success {
+		message := "empty response"
+		if result != nil && strings.TrimSpace(result.ErrorMessage) != "" {
+			message = result.ErrorMessage
+		}
+		return "", fmt.Errorf("%s", message)
+	}
+	return strings.TrimSpace(result.Status), nil
+}
+
+func (s *sdkAgentBaySession) Pause(timeoutSeconds int) (agentBayLifecycleResult, error) {
+	result, err := s.session.BetaPause(timeoutSeconds, 2)
+	if err != nil {
+		return agentBayLifecycleResult{}, err
+	}
+	if result == nil {
+		return agentBayLifecycleResult{}, fmt.Errorf("AgentBay pause returned an empty response")
+	}
+	return agentBayLifecycleResult{Success: result.Success, Status: result.Status, RequestID: result.RequestID, ErrorMessage: result.ErrorMessage}, nil
+}
+
+func (s *sdkAgentBaySession) Resume(timeoutSeconds int) (agentBayLifecycleResult, error) {
+	result, err := s.session.BetaResume(timeoutSeconds, 2)
+	if err != nil {
+		return agentBayLifecycleResult{}, err
+	}
+	if result == nil {
+		return agentBayLifecycleResult{}, fmt.Errorf("AgentBay resume returned an empty response")
+	}
+	return agentBayLifecycleResult{Success: result.Success, Status: result.Status, RequestID: result.RequestID, ErrorMessage: result.ErrorMessage}, nil
+}
+
 func (s *sdkAgentBaySession) ExecuteCommand(command string, timeoutMs int, workingDirectory string) (agentBayCommandResult, error) {
 	options := []interface{}{agentbaycommand.WithTimeoutMs(timeoutMs)}
 	if workingDirectory != "" {
@@ -450,6 +561,10 @@ func isAgentBayDeleteAccepted(message string) bool {
 	return strings.Contains(strings.ToLower(message), "timeout waiting for session deletion")
 }
 
+func isAgentBayPausedStatus(status string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(status)), "PAUS")
+}
+
 func isAgentBayNotFound(message string) bool {
 	message = strings.ToLower(message)
 	return strings.Contains(message, "notfound") || strings.Contains(message, "not found")
@@ -463,4 +578,13 @@ func isAgentBayTimeout(message string) bool {
 		}
 	}
 	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }

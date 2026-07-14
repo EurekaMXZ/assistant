@@ -20,6 +20,7 @@ type baseSettings struct {
 	EnableAuth                  bool
 	BillingCurrency             string
 	Sandbox                     assistantsandbox.RuntimeSettings
+	SandboxLifecycle            assistantsandbox.LifecycleSettings
 	Stream                      streamredis.Settings
 	Server                      server.Settings
 	Auth                        assistantauth.TokenSettings
@@ -35,6 +36,7 @@ type workerSettings struct {
 	Tavily                tavily.Settings
 	SandboxExecEnabled    bool
 	Sandbox               assistantsandbox.RuntimeSettings
+	SandboxLifecycle      assistantsandbox.LifecycleSettings
 	MinIO                 minio.Settings
 	Kafka                 assistantkafka.Settings
 	KafkaReader           assistantkafka.ReaderSettings
@@ -54,15 +56,19 @@ func newBaseSettings(cfg config.Config, enableAuth bool) baseSettings {
 				BaseURL:           cfg.SandboxBridgeURL,
 				Token:             cfg.SandboxBridgeToken,
 				HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+				CommandTimeout:    cfg.SandboxCommandMaxTimeout,
 			},
 			AgentBay: assistantsandbox.AgentBayRuntimeSettings{
-				APIKey:     cfg.AgentBayAPIKey,
-				RegionID:   cfg.AgentBayRegionID,
-				ImageID:    cfg.AgentBayImageID,
-				PolicyID:   cfg.AgentBayPolicyID,
-				APITimeout: cfg.AgentBayAPITimeout,
+				APIKey:           cfg.AgentBayAPIKey,
+				RegionID:         cfg.AgentBayRegionID,
+				ImageID:          cfg.AgentBayImageID,
+				PolicyID:         cfg.AgentBayPolicyID,
+				APITimeout:       cfg.AgentBayAPITimeout,
+				CommandTimeout:   cfg.SandboxCommandMaxTimeout,
+				LifecycleTimeout: cfg.AgentBayAPITimeout,
 			},
 		},
+		SandboxLifecycle: sandboxLifecycleSettings(cfg),
 		Stream: streamredis.Settings{
 			Addr:          cfg.RedisAddr,
 			Password:      cfg.RedisPassword,
@@ -117,15 +123,19 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 				BaseURL:           cfg.SandboxBridgeURL,
 				Token:             cfg.SandboxBridgeToken,
 				HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+				CommandTimeout:    cfg.SandboxCommandMaxTimeout,
 			},
 			AgentBay: assistantsandbox.AgentBayRuntimeSettings{
-				APIKey:     cfg.AgentBayAPIKey,
-				RegionID:   cfg.AgentBayRegionID,
-				ImageID:    cfg.AgentBayImageID,
-				PolicyID:   cfg.AgentBayPolicyID,
-				APITimeout: cfg.AgentBayAPITimeout,
+				APIKey:           cfg.AgentBayAPIKey,
+				RegionID:         cfg.AgentBayRegionID,
+				ImageID:          cfg.AgentBayImageID,
+				PolicyID:         cfg.AgentBayPolicyID,
+				APITimeout:       cfg.AgentBayAPITimeout,
+				CommandTimeout:   cfg.SandboxCommandMaxTimeout,
+				LifecycleTimeout: cfg.AgentBayAPITimeout,
 			},
 		},
+		SandboxLifecycle: sandboxLifecycleSettings(cfg),
 		MinIO: minio.Settings{
 			Endpoint:  cfg.MinIOEndpoint,
 			Region:    cfg.MinIORegion,
@@ -157,5 +167,16 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			WorkerPollInterval: cfg.WorkerPollInterval,
 			WorkerLeaseTimeout: cfg.WorkerLeaseTimeout,
 		},
+	}
+}
+
+func sandboxLifecycleSettings(cfg config.Config) assistantsandbox.LifecycleSettings {
+	return assistantsandbox.LifecycleSettings{
+		IdleStopAfter:    cfg.SandboxIdleStopAfter,
+		StoppedRetention: cfg.SandboxStoppedRetention,
+		ReaperInterval:   cfg.SandboxReaperInterval,
+		ReaperBatchSize:  cfg.SandboxReaperBatchSize,
+		CommandDefault:   cfg.SandboxCommandTimeout,
+		CommandMaximum:   cfg.SandboxCommandMaxTimeout,
 	}
 }

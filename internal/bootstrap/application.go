@@ -13,6 +13,7 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	assistantmail "github.com/EurekaMXZ/assistant/internal/mail"
 	"github.com/EurekaMXZ/assistant/internal/postgres"
+	assistantsandbox "github.com/EurekaMXZ/assistant/internal/sandbox"
 	"github.com/EurekaMXZ/assistant/internal/server"
 	"github.com/EurekaMXZ/assistant/internal/tool"
 	"github.com/EurekaMXZ/assistant/internal/workflow"
@@ -43,9 +44,10 @@ type attachmentBlobReader interface {
 	GetBytes(ctx context.Context, key string) ([]byte, error)
 }
 
-func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentBlobs assistantattachment.BlobStore, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
+func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentBlobs assistantattachment.BlobStore, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, sandboxLifecycle assistantsandbox.LifecycleSettings, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
 	conversationRepository := postgres.NewConversationRepository(pool)
 	conversationSandboxRepository := postgres.NewConversationSandboxRepository(pool)
+	conversationLocker := postgres.NewConversationLocker(pool)
 	attachmentRepository := postgres.NewAttachmentRepository(pool)
 	messageRepository := postgres.NewMessageRepository(pool)
 	turnRepository := postgres.NewTurnRepository(pool)
@@ -91,14 +93,19 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	createSandbox := tool.CreateSandbox{
 		Sandboxes: conversationSandboxRepository,
 		Runtime:   sandboxRuntime,
+		Locker:    conversationLocker,
 	}
 	destroySandbox := tool.DestroySandbox{
 		Sandboxes: conversationSandboxRepository,
 		Runtime:   sandboxRuntime,
+		Locker:    conversationLocker,
 	}
 	execSandbox := tool.ExecSandboxCommand{
-		Sandboxes: conversationSandboxRepository,
-		Runtime:   sandboxRuntime,
+		Sandboxes:      conversationSandboxRepository,
+		Runtime:        sandboxRuntime,
+		Locker:         conversationLocker,
+		DefaultTimeout: sandboxLifecycle.CommandDefault,
+		MaximumTimeout: sandboxLifecycle.CommandMaximum,
 	}
 	uploadAttachment := assistantattachment.Service{
 		Repo:  attachmentRepository,
@@ -221,7 +228,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
 					return nil, err
 				}
-				return conversationSandboxRepository.GetActiveConversationSandbox(ctx, conversationID)
+				return conversationSandboxRepository.GetUsableConversationSandbox(ctx, conversationID)
 			},
 			CreateConversationSandbox: func(ctx context.Context, ownerUserID string, conversationID string) (*domain.ConversationSandbox, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
@@ -285,7 +292,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		ToolCalls:            toolCallRepository,
 		StreamEvents:         turnStreamEventRepository,
 		StaleTurns:           postgres.NewStaleTurnRepository(pool),
-		Locker:               postgres.NewConversationLocker(pool),
+		Locker:               conversationLocker,
 		ConversationReader:   conversationRepository,
 		Conversations:        conversationRepository,
 		Sandboxes:            conversationSandboxRepository,

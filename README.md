@@ -109,6 +109,19 @@ Compose 不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 
 
 若镜像构建或容器内 Worker 访问外部服务超时，而宿主机访问正常，需配置 `.env` 中 `DOCKER_HTTP_PROXY` / `DOCKER_HTTPS_PROXY`。该地址必须同时可被 BuildKit 和运行中的容器访问。
 
+### 沙箱生命周期
+
+沙箱在没有命令活动一段时间后会自动进入 `stopped`，下次创建或执行命令时自动恢复。Firecracker 停止 VM 进程但保留可写 rootfs；AgentBay 使用 `BetaPause` / `BetaResume`。超过 stopped 保留时间后，沙箱会先进入可重试的 `releasing`，Provider 确认删除后再进入 `destroyed`。时间均可通过环境变量调整：
+
+```bash
+SANDBOX_IDLE_STOP_AFTER=15m
+SANDBOX_STOPPED_RETENTION=24h
+SANDBOX_REAPER_INTERVAL=1m
+SANDBOX_REAPER_BATCH_SIZE=20
+SANDBOX_COMMAND_DEFAULT_TIMEOUT=30s
+SANDBOX_COMMAND_MAX_TIMEOUT=5m
+```
+
 ### Firecracker 沙箱部署
 
 Firecracker bridge 必须运行在宿主机上（需要 `/dev/kvm`、TAP 设备、iptables 权限），API 与 Worker 都通过 HTTP 与它通信。
@@ -132,7 +145,7 @@ SANDBOX_EXEC_ENABLED=true
 
 ### 阿里云 AgentBay 沙箱部署
 
-后端可通过官方 AgentBay Go SDK 直接创建云端 Agent Sandbox，不需要启动 Firecracker bridge。AgentBay session 使用手动释放生命周期，与 conversation sandbox 的 `active` / `destroyed` 状态保持一致；不再使用时应调用 sandbox destroy，避免继续占用云端资源。
+后端可通过官方 AgentBay Go SDK 直接创建云端 Agent Sandbox，不需要启动 Firecracker bridge。AgentBay session 保持手动释放生命周期，由应用的空闲 reaper 负责 pause、resume 和最终 delete，数据库状态保持为 `active` / `stopped` / `releasing` / `destroyed`。
 
 ```bash
 SANDBOX_PROVIDER=agentbay
@@ -153,6 +166,8 @@ go run ./cmd/migrate up       # 执行所有未应用迁移
 go run ./cmd/migrate down     # 回滚最近一次迁移
 go run ./cmd/migrate version  # 查看当前迁移版本
 ```
+
+部署 `000006_sandbox_lifecycle` 前应先停止旧版本 Worker 并等待正在执行的沙箱命令结束，再执行迁移和启动新版本 Worker。回滚前必须确保没有 `stopped` / `releasing` 沙箱或执行租约；迁移会在条件不满足时拒绝回滚，避免遗留 Provider 资源。
 
 ## 开源协议
 

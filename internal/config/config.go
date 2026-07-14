@@ -46,6 +46,12 @@ const (
 	defaultAccessTokenTTL           = 24 * time.Hour
 	defaultSandboxProvider          = "firecracker"
 	defaultSandboxBridgeTimeout     = time.Minute
+	defaultSandboxIdleStopAfter     = 15 * time.Minute
+	defaultSandboxStoppedRetention  = 24 * time.Hour
+	defaultSandboxReaperInterval    = time.Minute
+	defaultSandboxReaperBatchSize   = 20
+	defaultSandboxCommandTimeout    = 30 * time.Second
+	defaultSandboxCommandMaxTimeout = 5 * time.Minute
 	defaultAgentBayRegionID         = "cn-hangzhou"
 	defaultAgentBayImageID          = "code_latest"
 	defaultAgentBayAPITimeout       = time.Minute
@@ -95,6 +101,12 @@ type Config struct {
 	SandboxBridgeURL            string
 	SandboxBridgeToken          string
 	SandboxBridgeTimeout        time.Duration
+	SandboxIdleStopAfter        time.Duration
+	SandboxStoppedRetention     time.Duration
+	SandboxReaperInterval       time.Duration
+	SandboxReaperBatchSize      int
+	SandboxCommandTimeout       time.Duration
+	SandboxCommandMaxTimeout    time.Duration
 	AgentBayAPIKey              string
 	AgentBayRegionID            string
 	AgentBayImageID             string
@@ -157,6 +169,12 @@ func Load() Config {
 		SandboxBridgeURL:            os.Getenv("SANDBOX_BRIDGE_URL"),
 		SandboxBridgeToken:          os.Getenv("SANDBOX_BRIDGE_TOKEN"),
 		SandboxBridgeTimeout:        getenvDuration("SANDBOX_BRIDGE_TIMEOUT", defaultSandboxBridgeTimeout),
+		SandboxIdleStopAfter:        getenvDuration("SANDBOX_IDLE_STOP_AFTER", defaultSandboxIdleStopAfter),
+		SandboxStoppedRetention:     getenvDuration("SANDBOX_STOPPED_RETENTION", defaultSandboxStoppedRetention),
+		SandboxReaperInterval:       getenvDuration("SANDBOX_REAPER_INTERVAL", defaultSandboxReaperInterval),
+		SandboxReaperBatchSize:      getenvInt("SANDBOX_REAPER_BATCH_SIZE", defaultSandboxReaperBatchSize),
+		SandboxCommandTimeout:       getenvDuration("SANDBOX_COMMAND_DEFAULT_TIMEOUT", defaultSandboxCommandTimeout),
+		SandboxCommandMaxTimeout:    getenvDuration("SANDBOX_COMMAND_MAX_TIMEOUT", defaultSandboxCommandMaxTimeout),
 		AgentBayAPIKey:              os.Getenv("AGENTBAY_API_KEY"),
 		AgentBayRegionID:            getenv("AGENTBAY_REGION_ID", defaultAgentBayRegionID),
 		AgentBayImageID:             getenv("AGENTBAY_IMAGE_ID", defaultAgentBayImageID),
@@ -209,6 +227,9 @@ func (c Config) Address() string {
 }
 
 func (c Config) ValidateAPI() error {
+	if err := c.validateSandboxLifecycle(); err != nil {
+		return fmt.Errorf("invalid api config: %w", err)
+	}
 	var missing []string
 
 	required := map[string]string{
@@ -240,6 +261,9 @@ func (c Config) ValidateAPI() error {
 }
 
 func (c Config) ValidateWorker() error {
+	if err := c.validateSandboxLifecycle(); err != nil {
+		return fmt.Errorf("invalid worker config: %w", err)
+	}
 	var missing []string
 
 	required := map[string]string{
@@ -272,6 +296,30 @@ func (c Config) ValidateWorker() error {
 		return errors.New("missing required worker config: KAFKA_BROKERS")
 	}
 
+	return nil
+}
+
+func (c Config) validateSandboxLifecycle() error {
+	for key, value := range map[string]time.Duration{
+		"SANDBOX_IDLE_STOP_AFTER":         c.SandboxIdleStopAfter,
+		"SANDBOX_STOPPED_RETENTION":       c.SandboxStoppedRetention,
+		"SANDBOX_REAPER_INTERVAL":         c.SandboxReaperInterval,
+		"SANDBOX_COMMAND_DEFAULT_TIMEOUT": c.SandboxCommandTimeout,
+		"SANDBOX_COMMAND_MAX_TIMEOUT":     c.SandboxCommandMaxTimeout,
+	} {
+		if value <= 0 {
+			return fmt.Errorf("%s must be positive", key)
+		}
+	}
+	if c.SandboxReaperBatchSize <= 0 {
+		return errors.New("SANDBOX_REAPER_BATCH_SIZE must be positive")
+	}
+	if c.SandboxCommandMaxTimeout < c.SandboxCommandTimeout {
+		return errors.New("SANDBOX_COMMAND_MAX_TIMEOUT must be greater than or equal to SANDBOX_COMMAND_DEFAULT_TIMEOUT")
+	}
+	if c.SandboxCommandTimeout < time.Second || c.SandboxCommandTimeout%time.Second != 0 || c.SandboxCommandMaxTimeout%time.Second != 0 {
+		return errors.New("sandbox command timeouts must use whole seconds and be at least one second")
+	}
 	return nil
 }
 

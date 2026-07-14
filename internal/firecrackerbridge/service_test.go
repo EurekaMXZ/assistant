@@ -1,6 +1,7 @@
 package firecrackerbridge
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,6 +9,40 @@ import (
 	"testing"
 	"time"
 )
+
+func TestNewLoadsPersistedSandboxAsStopped(t *testing.T) {
+	runtimeDir := t.TempDir()
+	runtimeID := "fc-persisted"
+	dir := filepath.Join(runtimeDir, runtimeID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rootfs.ext4"), []byte("rootfs"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(sandboxManifest{ID: runtimeID, ConversationID: "conversation-1", GuestCID: 7, CreatedAt: time.Now(), State: sandboxStateActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sandboxManifestName), payload, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := New(Settings{
+		FirecrackerBin: "firecracker", KernelImagePath: "/tmp/vmlinux", RootFSImagePath: "/tmp/rootfs.ext4",
+		RuntimeDir: runtimeDir, VCPUCount: 1, MemSizeMIB: 128, AgentPort: 52,
+	}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	loaded := service.sandboxes[runtimeID]
+	if loaded == nil || loaded.state != sandboxStateStopped || loaded.stoppedAt == nil {
+		t.Fatalf("persisted sandbox was not loaded as stopped: %#v", loaded)
+	}
+	if service.nextCID != 8 {
+		t.Fatalf("nextCID = %d, want 8", service.nextCID)
+	}
+}
 
 func TestHandlerAuth(t *testing.T) {
 	service, err := New(Settings{
@@ -103,5 +138,54 @@ func TestCopyRootFSCreatesIndependentSandboxImage(t *testing.T) {
 	}
 	if string(gotSrc) != "original-rootfs" {
 		t.Fatalf("source rootfs = %q, want original-rootfs", string(gotSrc))
+	}
+}
+
+func TestStopPersistsExitedSandboxAsStopped(t *testing.T) {
+	runtimeDir := t.TempDir()
+	runtimeID := "fc-exited"
+	dir := filepath.Join(runtimeDir, runtimeID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(Settings{
+		FirecrackerBin: "firecracker", KernelImagePath: "/tmp/vmlinux", RootFSImagePath: "/tmp/rootfs.ext4",
+		RuntimeDir: runtimeDir, VCPUCount: 1, MemSizeMIB: 128, AgentPort: 52,
+	}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	service.sandboxes[runtimeID] = &sandbox{
+		id: runtimeID, conversationID: "conversation-1", dir: dir, rootFSPath: filepath.Join(dir, "rootfs.ext4"),
+		state: sandboxStateActive, createdAt: time.Now().UTC(),
+	}
+
+	handle, err := service.stopSandboxRuntime(t.Context(), runtimeID)
+	if err != nil {
+		t.Fatalf("stop exited sandbox: %v", err)
+	}
+	if service.sandboxes[runtimeID].state != sandboxStateStopped || !json.Valid(handle.Metadata) {
+		t.Fatalf("sandbox was not persisted as stopped: sandbox=%#v handle=%#v", service.sandboxes[runtimeID], handle)
+	}
+	if _, err := os.Stat(filepath.Join(dir, sandboxManifestName)); err != nil {
+		t.Fatalf("stat sandbox manifest: %v", err)
+	}
+}
+
+func TestDestroySandboxIsIdempotent(t *testing.T) {
+	service, err := New(Settings{
+		FirecrackerBin: "firecracker", KernelImagePath: "/tmp/vmlinux", RootFSImagePath: "/tmp/rootfs.ext4",
+		RuntimeDir: t.TempDir(), VCPUCount: 1, MemSizeMIB: 128, AgentPort: 52,
+	}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	handle, err := service.destroySandbox("fc-missing")
+	if err != nil {
+		t.Fatalf("destroy missing sandbox: %v", err)
+	}
+	if handle.RuntimeID != "fc-missing" || handle.Provider != providerName {
+		t.Fatalf("unexpected idempotent destroy handle: %#v", handle)
 	}
 }

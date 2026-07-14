@@ -44,6 +44,8 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 				t.Fatalf("unexpected exec request: %#v", request)
 			}
 			_ = json.NewEncoder(w).Encode(domain.SandboxCommandResult{RuntimeID: "runtime-1", Command: "echo", Output: "hello\n"})
+		case "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume":
+			_ = json.NewEncoder(w).Encode(domain.SandboxHandle{Provider: "firecracker", RuntimeID: "runtime-1"})
 		case "DELETE /sandboxes/runtime-1":
 			_ = json.NewEncoder(w).Encode(domain.SandboxHandle{Provider: "firecracker", RuntimeID: "runtime-1"})
 		default:
@@ -64,6 +66,12 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 	if handle.Provider != "firecracker" || handle.RuntimeID != "runtime-1" {
 		t.Fatalf("unexpected handle: %#v", handle)
 	}
+	if _, err := runtime.StopSandbox(context.Background(), *handle, "stop-key"); err != nil {
+		t.Fatalf("stop sandbox: %v", err)
+	}
+	if _, err := runtime.ResumeSandbox(context.Background(), *handle, "resume-key"); err != nil {
+		t.Fatalf("resume sandbox: %v", err)
+	}
 
 	result, err := runtime.ExecSandboxCommand(context.Background(), *handle, domain.SandboxCommandRequest{Command: "echo", Args: []string{"hello"}}, "exec-key")
 	if err != nil {
@@ -81,7 +89,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 		t.Fatalf("unexpected destroyed handle: %#v", destroyed)
 	}
 
-	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/exec", "DELETE /sandboxes/runtime-1"}
+	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "DELETE /sandboxes/runtime-1"}
 	if strings.Join(calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}

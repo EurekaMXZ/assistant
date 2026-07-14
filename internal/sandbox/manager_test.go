@@ -26,6 +26,14 @@ func (r *trackingSandboxRuntime) DestroySandbox(_ context.Context, handle domain
 	return &handle, nil
 }
 
+func (r *trackingSandboxRuntime) StopSandbox(_ context.Context, handle domain.SandboxHandle, _ string) (*domain.SandboxHandle, error) {
+	return &handle, nil
+}
+
+func (r *trackingSandboxRuntime) ResumeSandbox(_ context.Context, handle domain.SandboxHandle, _ string) (*domain.SandboxHandle, error) {
+	return &handle, nil
+}
+
 func (r *trackingSandboxRuntime) ExecSandboxCommand(_ context.Context, handle domain.SandboxHandle, _ domain.SandboxCommandRequest, _ string) (*domain.SandboxCommandResult, error) {
 	r.execCalls++
 	return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID}, nil

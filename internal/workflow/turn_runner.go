@@ -400,14 +400,14 @@ func (r *TurnRunner) toolScope(ctx context.Context, conversationID string, turnI
 		return scope, nil
 	}
 
-	sandbox, err := r.sandboxes.GetActiveConversationSandbox(ctx, conversationID)
+	sandbox, err := r.sandboxes.GetUsableConversationSandbox(ctx, conversationID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return scope, nil
 		}
 		return scope, err
 	}
-	scope.HasSandbox = sandbox != nil && sandbox.Status == domain.SandboxStatusActive && sandbox.DestroyedAt == nil
+	scope.HasSandbox = sandbox != nil && (sandbox.Status == domain.SandboxStatusActive || sandbox.Status == domain.SandboxStatusStopped) && sandbox.DestroyedAt == nil
 	return scope, nil
 }
 

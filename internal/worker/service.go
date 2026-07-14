@@ -31,24 +31,30 @@ type WorkflowReader interface {
 
 type ReaderFactory func() WorkflowReader
 
-type Service struct {
-	logger    *log.Logger
-	settings  Settings
-	engine    workflowEngine
-	writer    WorkflowWriter
-	newReader ReaderFactory
-	sleep     func(time.Duration)
-	closeWait time.Duration
+type MaintenanceTask interface {
+	Run(ctx context.Context) error
 }
 
-func New(logger *log.Logger, engine workflowEngine, settings Settings, writer WorkflowWriter, newReader ReaderFactory) *Service {
+type Service struct {
+	logger      *log.Logger
+	settings    Settings
+	engine      workflowEngine
+	writer      WorkflowWriter
+	newReader   ReaderFactory
+	sleep       func(time.Duration)
+	closeWait   time.Duration
+	maintenance []MaintenanceTask
+}
+
+func New(logger *log.Logger, engine workflowEngine, settings Settings, writer WorkflowWriter, newReader ReaderFactory, maintenance ...MaintenanceTask) *Service {
 	return &Service{
-		logger:    logger,
-		settings:  settings,
-		engine:    engine,
-		writer:    writer,
-		newReader: newReader,
-		sleep:     time.Sleep,
+		logger:      logger,
+		settings:    settings,
+		engine:      engine,
+		writer:      writer,
+		newReader:   newReader,
+		sleep:       time.Sleep,
+		maintenance: append([]MaintenanceTask(nil), maintenance...),
 	}
 }
 
@@ -69,6 +75,19 @@ func (s *Service) Run(ctx context.Context) error {
 		defer wg.Done()
 		s.relayLoop(ctx)
 	}()
+
+	for _, task := range s.maintenance {
+		if task == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(task MaintenanceTask) {
+			defer wg.Done()
+			if err := task.Run(ctx); err != nil && ctx.Err() == nil && s.logger != nil {
+				s.logger.Printf("maintenance task stopped: %v", err)
+			}
+		}(task)
+	}
 
 	wg.Add(1)
 	go func() {

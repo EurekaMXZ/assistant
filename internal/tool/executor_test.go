@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
@@ -49,8 +50,6 @@ type stubConversationSandboxStore struct {
 	createErr           error
 	activeOnCreateError *domain.ConversationSandbox
 	destroyErr          error
-	restoreErr          error
-	restored            *domain.ConversationSandbox
 }
 
 func (s *stubConversationSandboxStore) GetLatestConversationSandbox(_ context.Context, conversationID string) (*domain.ConversationSandbox, error) {
@@ -69,7 +68,18 @@ func (s *stubConversationSandboxStore) GetActiveConversationSandbox(_ context.Co
 	if s.err != nil {
 		return nil, s.err
 	}
-	if s.active == nil {
+	if s.active == nil || s.active.Status != domain.SandboxStatusActive {
+		return nil, domain.ErrNotFound
+	}
+	return s.active, nil
+}
+
+func (s *stubConversationSandboxStore) GetUsableConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
+	s.conversationID = conversationID
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.active == nil || (s.active.Status != domain.SandboxStatusActive && s.active.Status != domain.SandboxStatusStopped) {
 		return nil, domain.ErrNotFound
 	}
 	return s.active, nil
@@ -95,32 +105,123 @@ func (s *stubConversationSandboxStore) CreateConversationSandbox(_ context.Conte
 	return s.created, nil
 }
 
-func (s *stubConversationSandboxStore) DestroyConversationSandbox(_ context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+func (s *stubConversationSandboxStore) StopConversationSandbox(_ context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+	if s.active == nil {
+		return nil, domain.ErrConflict
+	}
+	now := time.Now()
+	s.active.Status = domain.SandboxStatusStopped
+	s.active.StoppedAt = &now
+	s.active.RuntimeMetadata = metadata
+	return s.active, nil
+}
+
+func (s *stubConversationSandboxStore) ResumeConversationSandbox(_ context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+	if s.active == nil {
+		return nil, domain.ErrConflict
+	}
+	s.active.Status = domain.SandboxStatusActive
+	s.active.StoppedAt = nil
+	s.active.RuntimeMetadata = metadata
+	s.active.LastActivityAt = time.Now()
+	return s.active, nil
+}
+
+func (s *stubConversationSandboxStore) TouchConversationSandbox(_ context.Context, sandboxID string) error {
+	if s.active == nil {
+		return domain.ErrConflict
+	}
+	s.active.LastActivityAt = time.Now()
+	return nil
+}
+
+func (s *stubConversationSandboxStore) AcquireConversationSandboxExecution(_ context.Context, sandboxID string, token string, leaseDuration time.Duration) error {
+	if s.active == nil || s.active.ID != sandboxID || s.active.Status != domain.SandboxStatusActive {
+		return domain.ErrConflict
+	}
+	leaseUntil := time.Now().Add(leaseDuration)
+	s.active.ExecutionToken = token
+	s.active.ExecutionLeaseUntil = &leaseUntil
+	s.active.LastActivityAt = time.Now()
+	return nil
+}
+
+func (s *stubConversationSandboxStore) CompleteConversationSandboxExecution(_ context.Context, sandboxID string, token string) error {
+	if s.active == nil || s.active.ID != sandboxID || s.active.ExecutionToken != token {
+		return domain.ErrConflict
+	}
+	s.active.ExecutionToken = ""
+	s.active.ExecutionLeaseUntil = nil
+	s.active.LastActivityAt = time.Now()
+	return nil
+}
+
+func (s *stubConversationSandboxStore) RenewConversationSandboxExecution(_ context.Context, sandboxID string, token string, leaseDuration time.Duration) error {
+	if s.active == nil || s.active.ID != sandboxID || s.active.ExecutionToken != token {
+		return domain.ErrConflict
+	}
+	leaseUntil := time.Now().Add(leaseDuration)
+	s.active.ExecutionLeaseUntil = &leaseUntil
+	return nil
+}
+
+func (s *stubConversationSandboxStore) ListIdleConversationSandboxes(context.Context, time.Time, int) ([]*domain.ConversationSandbox, error) {
+	return nil, nil
+}
+
+func (s *stubConversationSandboxStore) ListStoppedConversationSandboxes(context.Context, time.Time, int) ([]*domain.ConversationSandbox, error) {
+	return nil, nil
+}
+
+func (s *stubConversationSandboxStore) ListReleasingConversationSandboxes(context.Context, int) ([]*domain.ConversationSandbox, error) {
+	return nil, nil
+}
+
+func (s *stubConversationSandboxStore) BeginConversationSandboxRelease(_ context.Context, sandboxID string) (*domain.ConversationSandbox, error) {
 	if s.destroyErr != nil {
 		return nil, s.destroyErr
 	}
+	if s.active == nil || s.active.ID != sandboxID {
+		return nil, domain.ErrConflict
+	}
+	s.active.ReleasePreviousStatus = s.active.Status
+	s.active.Status = domain.SandboxStatusReleasing
+	return s.active, nil
+}
+
+func (s *stubConversationSandboxStore) ClaimConversationSandboxRelease(_ context.Context, sandboxID string, token string, leaseDuration time.Duration) (*domain.ConversationSandbox, error) {
+	if s.active == nil || s.active.ID != sandboxID || s.active.Status != domain.SandboxStatusReleasing || s.active.ReleaseToken != "" {
+		return nil, domain.ErrConflict
+	}
+	leaseUntil := time.Now().Add(leaseDuration)
+	s.active.ReleaseToken = token
+	s.active.ReleaseLeaseUntil = &leaseUntil
+	return s.active, nil
+}
+
+func (s *stubConversationSandboxStore) RenewConversationSandboxReleaseClaim(_ context.Context, sandboxID string, token string, leaseDuration time.Duration) error {
+	if s.active == nil || s.active.ID != sandboxID || s.active.ReleaseToken != token {
+		return domain.ErrConflict
+	}
+	leaseUntil := time.Now().Add(leaseDuration)
+	s.active.ReleaseLeaseUntil = &leaseUntil
+	return nil
+}
+
+func (s *stubConversationSandboxStore) CompleteConversationSandboxRelease(_ context.Context, sandboxID string, token string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+	if s.active == nil || s.active.ID != sandboxID || s.active.Status != domain.SandboxStatusReleasing || s.active.ReleaseToken != token {
+		return nil, domain.ErrConflict
+	}
 	s.destroyed = &domain.ConversationSandbox{
 		ID:              sandboxID,
-		ConversationID:  s.conversationID,
-		Provider:        "local",
-		RuntimeID:       "runtime-1",
+		ConversationID:  s.active.ConversationID,
+		Provider:        s.active.Provider,
+		RuntimeID:       s.active.RuntimeID,
 		Status:          domain.SandboxStatusDestroyed,
 		RuntimeMetadata: metadata,
 	}
 	s.active = nil
 	return s.destroyed, nil
-}
-
-func (s *stubConversationSandboxStore) RestoreConversationSandbox(_ context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
-	if s.restoreErr != nil {
-		return nil, s.restoreErr
-	}
-	s.restored = &domain.ConversationSandbox{
-		ID: sandboxID, ConversationID: s.conversationID, Provider: "local", RuntimeID: "runtime-1",
-		Status: domain.SandboxStatusActive, RuntimeMetadata: metadata,
-	}
-	s.active = s.restored
-	return s.restored, nil
 }
 
 type stubSandboxManager struct {
@@ -136,6 +237,8 @@ type stubSandboxManager struct {
 	destroyErr            error
 	createCalls           int
 	destroyCalls          int
+	stopCalls             int
+	resumeCalls           int
 	destroyContextErr     error
 	requestKeys           []string
 }
@@ -159,6 +262,57 @@ func (s *stubSandboxManager) DestroySandbox(ctx context.Context, handle domain.S
 		return nil, s.destroyErr
 	}
 	return s.destroyResult, nil
+}
+
+func (s *stubSandboxManager) StopSandbox(_ context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+	s.stopCalls++
+	s.requestKeys = append(s.requestKeys, requestKey)
+	return &handle, nil
+}
+
+func (s *stubSandboxManager) ResumeSandbox(_ context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+	s.resumeCalls++
+	s.requestKeys = append(s.requestKeys, requestKey)
+	return &handle, nil
+}
+
+func TestCreateSandboxResumesStoppedSandbox(t *testing.T) {
+	now := time.Now()
+	store := &stubConversationSandboxStore{active: &domain.ConversationSandbox{
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "local", RuntimeID: "runtime-1",
+		Status: domain.SandboxStatusStopped, StoppedAt: &now,
+	}}
+	runtime := &stubSandboxManager{}
+
+	result, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1"})
+	if err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	if result.Status != domain.SandboxStatusActive || runtime.resumeCalls != 1 || runtime.createCalls != 0 {
+		t.Fatalf("stopped sandbox was not resumed: result=%#v runtime=%#v", result, runtime)
+	}
+}
+
+func TestExecSandboxCommandResumesStoppedSandboxAndEnforcesTimeout(t *testing.T) {
+	now := time.Now()
+	store := &stubConversationSandboxStore{active: &domain.ConversationSandbox{
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "local", RuntimeID: "runtime-1",
+		Status: domain.SandboxStatusStopped, StoppedAt: &now,
+	}}
+	runtime := &stubSandboxManager{execResult: &domain.SandboxCommandResult{Output: "ok"}}
+	useCase := ExecSandboxCommand{
+		Sandboxes: store, Runtime: runtime, DefaultTimeout: 20 * time.Second, MaximumTimeout: 40 * time.Second,
+	}
+
+	if _, err := useCase.Execute(t.Context(), ExecSandboxCommandInput{ConversationID: "conv-1", Command: "true"}); err != nil {
+		t.Fatalf("exec sandbox command: %v", err)
+	}
+	if runtime.resumeCalls != 1 || runtime.execRequest.TimeoutSeconds != 20 {
+		t.Fatalf("unexpected resume/default timeout: runtime=%#v", runtime)
+	}
+	if _, err := useCase.Execute(t.Context(), ExecSandboxCommandInput{ConversationID: "conv-1", Command: "sleep", TimeoutSeconds: 41}); err == nil {
+		t.Fatal("expected command timeout validation error")
+	}
 }
 
 func (s *stubSandboxManager) ExecSandboxCommand(_ context.Context, handle domain.SandboxHandle, request domain.SandboxCommandRequest, requestKey string) (*domain.SandboxCommandResult, error) {
@@ -422,7 +576,7 @@ func TestCreateSandboxRuntimeFailureLeavesDatabaseUntouched(t *testing.T) {
 	}
 }
 
-func TestDestroySandboxRestoresDatabaseWhenRuntimeDestroyFails(t *testing.T) {
+func TestDestroySandboxKeepsReleasePendingWhenRuntimeDestroyFails(t *testing.T) {
 	active := &domain.ConversationSandbox{
 		ID: "sandbox-1", ConversationID: "conv-1", Provider: "local", RuntimeID: "runtime-1",
 		Status: domain.SandboxStatusActive, RuntimeMetadata: json.RawMessage(`{"kind":"logical"}`),
@@ -433,8 +587,8 @@ func TestDestroySandboxRestoresDatabaseWhenRuntimeDestroyFails(t *testing.T) {
 	if _, err := (DestroySandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), DestroySandboxInput{ConversationID: "conv-1"}); err == nil {
 		t.Fatal("expected runtime destroy failure")
 	}
-	if store.restored == nil || store.active == nil || store.active.Status != domain.SandboxStatusActive {
-		t.Fatalf("database state was not restored: %#v", store.active)
+	if store.active == nil || store.active.Status != domain.SandboxStatusReleasing {
+		t.Fatalf("database release was not left pending: %#v", store.active)
 	}
 }
 

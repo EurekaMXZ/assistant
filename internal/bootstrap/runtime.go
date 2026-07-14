@@ -75,7 +75,7 @@ func newBaseAssembly(ctx context.Context, settings baseSettings) (*baseAssembly,
 		return nil, err
 	}
 
-	serverUseCases, workflows := buildApplication(pool, artifactStore, artifactStore, settings.BillingCurrency, authService, sandboxRuntime, credentialCipher, settings.Server.WebOrigin)
+	serverUseCases, workflows := buildApplication(pool, artifactStore, artifactStore, settings.BillingCurrency, authService, sandboxRuntime, settings.SandboxLifecycle, credentialCipher, settings.Server.WebOrigin)
 	assembled := &baseAssembly{
 		resources: lifecycle,
 		server:    serverUseCases,

@@ -3,11 +3,15 @@ package postgres
 import (
 	"context"
 
+	"github.com/EurekaMXZ/assistant/internal/tool"
 	"github.com/EurekaMXZ/assistant/internal/workflow"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var _ workflow.ConversationLocker = (*ConversationLocker)(nil)
+var (
+	_ workflow.ConversationLocker = (*ConversationLocker)(nil)
+	_ tool.ConversationLocker     = (*ConversationLocker)(nil)
+)
 
 type ConversationLocker struct {
 	pool *pgxpool.Pool

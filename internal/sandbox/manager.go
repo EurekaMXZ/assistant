@@ -102,6 +102,22 @@ func (m *Manager) DestroySandbox(ctx context.Context, handle domain.SandboxHandl
 	return runtime.DestroySandbox(ctx, handle, requestKey)
 }
 
+func (m *Manager) StopSandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+	runtime, err := m.runtime(handle.Provider)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.StopSandbox(ctx, handle, requestKey)
+}
+
+func (m *Manager) ResumeSandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+	runtime, err := m.runtime(handle.Provider)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.ResumeSandbox(ctx, handle, requestKey)
+}
+
 func (m *Manager) ExecSandboxCommand(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxCommandRequest, requestKey string) (*domain.SandboxCommandResult, error) {
 	runtime, err := m.runtime(handle.Provider)
 	if err != nil {

@@ -98,6 +98,18 @@ func TestLoadReadsSandboxExecEnabled(t *testing.T) {
 	}
 }
 
+func TestLoadReadsSandboxLifecycleSettings(t *testing.T) {
+	t.Setenv("SANDBOX_IDLE_STOP_AFTER", "20m")
+	t.Setenv("SANDBOX_STOPPED_RETENTION", "48h")
+	t.Setenv("SANDBOX_REAPER_INTERVAL", "2m")
+	t.Setenv("SANDBOX_REAPER_BATCH_SIZE", "12")
+
+	cfg := Load()
+	if cfg.SandboxIdleStopAfter != 20*time.Minute || cfg.SandboxStoppedRetention != 48*time.Hour || cfg.SandboxReaperInterval != 2*time.Minute || cfg.SandboxReaperBatchSize != 12 {
+		t.Fatalf("unexpected sandbox lifecycle settings: %+v", cfg)
+	}
+}
+
 func TestLoadReadsSandboxBridgeSettings(t *testing.T) {
 	t.Setenv("SANDBOX_PROVIDER", "firecracker")
 	t.Setenv("SANDBOX_BRIDGE_URL", "http://127.0.0.1:8787")
@@ -137,13 +149,19 @@ func TestLoadReadsAgentBaySettings(t *testing.T) {
 
 func TestValidateAPIRequiresBridgeURL(t *testing.T) {
 	cfg := Config{
-		DatabaseURL:            "postgres://db",
-		RedisAddr:              "127.0.0.1:6379",
-		JWTSecret:              "jwt-secret",
-		SystemUserEmail:        "system@example.com",
-		SystemUserUsername:     "system",
-		SystemUserPasswordHash: "hash",
-		SandboxBridgeURL:       "",
+		DatabaseURL:              "postgres://db",
+		RedisAddr:                "127.0.0.1:6379",
+		JWTSecret:                "jwt-secret",
+		SystemUserEmail:          "system@example.com",
+		SystemUserUsername:       "system",
+		SystemUserPasswordHash:   "hash",
+		SandboxBridgeURL:         "",
+		SandboxIdleStopAfter:     15 * time.Minute,
+		SandboxStoppedRetention:  24 * time.Hour,
+		SandboxReaperInterval:    time.Minute,
+		SandboxReaperBatchSize:   20,
+		SandboxCommandTimeout:    30 * time.Second,
+		SandboxCommandMaxTimeout: 5 * time.Minute,
 	}
 
 	err := cfg.ValidateAPI()
@@ -309,5 +327,11 @@ func validWorkerConfig() Config {
 		AgentSystemPromptFile:       "prompts/system.md",
 		AgentCompactPromptFile:      "prompts/compact.md",
 		SandboxBridgeURL:            "http://127.0.0.1:8787",
+		SandboxIdleStopAfter:        15 * time.Minute,
+		SandboxStoppedRetention:     24 * time.Hour,
+		SandboxReaperInterval:       time.Minute,
+		SandboxReaperBatchSize:      20,
+		SandboxCommandTimeout:       30 * time.Second,
+		SandboxCommandMaxTimeout:    5 * time.Minute,
 	}
 }

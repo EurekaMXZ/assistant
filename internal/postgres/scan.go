@@ -328,9 +328,15 @@ func scanTurnStreamEvent(row scanRow) (*domain.TurnStreamEvent, error) {
 
 func scanConversationSandbox(row scanRow) (*domain.ConversationSandbox, error) {
 	var (
-		sandbox     domain.ConversationSandbox
-		metadata    []byte
-		destroyedAt sql.NullTime
+		sandbox               domain.ConversationSandbox
+		metadata              []byte
+		stoppedAt             sql.NullTime
+		destroyedAt           sql.NullTime
+		executionToken        sql.NullString
+		executionLeaseUntil   sql.NullTime
+		releasePreviousStatus sql.NullString
+		releaseToken          sql.NullString
+		releaseLeaseUntil     sql.NullTime
 	)
 
 	if err := row.Scan(
@@ -340,16 +346,41 @@ func scanConversationSandbox(row scanRow) (*domain.ConversationSandbox, error) {
 		&sandbox.RuntimeID,
 		&sandbox.Status,
 		&metadata,
+		&sandbox.LastActivityAt,
 		&sandbox.CreatedAt,
 		&sandbox.UpdatedAt,
+		&stoppedAt,
 		&destroyedAt,
+		&executionToken,
+		&executionLeaseUntil,
+		&releasePreviousStatus,
+		&releaseToken,
+		&releaseLeaseUntil,
 	); err != nil {
 		return nil, err
 	}
 
 	sandbox.RuntimeMetadata = cloneJSON(metadata)
+	if stoppedAt.Valid {
+		sandbox.StoppedAt = &stoppedAt.Time
+	}
 	if destroyedAt.Valid {
 		sandbox.DestroyedAt = &destroyedAt.Time
+	}
+	if executionToken.Valid {
+		sandbox.ExecutionToken = executionToken.String
+	}
+	if executionLeaseUntil.Valid {
+		sandbox.ExecutionLeaseUntil = &executionLeaseUntil.Time
+	}
+	if releasePreviousStatus.Valid {
+		sandbox.ReleasePreviousStatus = releasePreviousStatus.String
+	}
+	if releaseToken.Valid {
+		sandbox.ReleaseToken = releaseToken.String
+	}
+	if releaseLeaseUntil.Valid {
+		sandbox.ReleaseLeaseUntil = &releaseLeaseUntil.Time
 	}
 
 	return &sandbox, nil

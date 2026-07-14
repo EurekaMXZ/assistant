@@ -21,6 +21,7 @@ type HTTPRuntimeSettings struct {
 	BaseURL           string
 	Token             string
 	HTTPClientTimeout time.Duration
+	CommandTimeout    time.Duration
 }
 
 type HTTPRuntime struct {
@@ -37,6 +38,9 @@ func NewHTTPRuntime(settings HTTPRuntimeSettings) (*HTTPRuntime, error) {
 	timeout := settings.HTTPClientTimeout
 	if timeout <= 0 {
 		timeout = time.Minute
+	}
+	if commandTimeout := settings.CommandTimeout + 10*time.Second; settings.CommandTimeout > 0 && timeout < commandTimeout {
+		timeout = commandTimeout
 	}
 	return &HTTPRuntime{
 		baseURL: baseURL,
@@ -58,6 +62,23 @@ func (r *HTTPRuntime) CreateSandbox(ctx context.Context, conversationID string, 
 func (r *HTTPRuntime) DestroySandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
 	var response domain.SandboxHandle
 	if err := r.doJSON(ctx, http.MethodDelete, "/sandboxes/"+pathEscape(handle.RuntimeID), nil, &response, requestKey); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func (r *HTTPRuntime) StopSandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+	return r.lifecycleRequest(ctx, handle, requestKey, "stop")
+}
+
+func (r *HTTPRuntime) ResumeSandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error) {
+	return r.lifecycleRequest(ctx, handle, requestKey, "resume")
+}
+
+func (r *HTTPRuntime) lifecycleRequest(ctx context.Context, handle domain.SandboxHandle, requestKey string, operation string) (*domain.SandboxHandle, error) {
+	var response domain.SandboxHandle
+	path := "/sandboxes/" + pathEscape(handle.RuntimeID) + "/" + operation
+	if err := r.doJSON(ctx, http.MethodPost, path, nil, &response, requestKey); err != nil {
 		return nil, err
 	}
 	return &response, nil

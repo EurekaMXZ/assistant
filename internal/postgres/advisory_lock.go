@@ -10,6 +10,8 @@ import (
 
 const advisoryLockRetry = 100 * time.Millisecond
 
+type lockedConnectionContextKey struct{}
+
 func WithConversationLock(ctx context.Context, pool *pgxpool.Pool, conversationID string, fn func(context.Context) error) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -41,5 +43,10 @@ func WithConversationLock(ctx context.Context, pool *pgxpool.Pool, conversationI
 		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock(hashtextextended($1, 0))", conversationID)
 	}()
 
-	return fn(ctx)
+	return fn(context.WithValue(ctx, lockedConnectionContextKey{}, conn))
+}
+
+func lockedConnection(ctx context.Context) *pgxpool.Conn {
+	conn, _ := ctx.Value(lockedConnectionContextKey{}).(*pgxpool.Conn)
+	return conn
 }

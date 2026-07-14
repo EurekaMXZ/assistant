@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/jackc/pgerrcode"
@@ -13,86 +14,64 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const conversationSandboxColumns = `
+	id::text, conversation_id::text, provider, runtime_id, status, runtime_metadata,
+	last_activity_at, created_at, updated_at, stopped_at, destroyed_at,
+	execution_token::text, execution_lease_until, release_previous_status,
+	release_token::text, release_lease_until
+`
+
 type ConversationSandboxRepository struct {
 	pool *pgxpool.Pool
+}
+
+type conversationSandboxDB interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 func NewConversationSandboxRepository(pool *pgxpool.Pool) *ConversationSandboxRepository {
 	return &ConversationSandboxRepository{pool: pool}
 }
 
-func (r *ConversationSandboxRepository) GetActiveConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT
-			id::text,
-			conversation_id::text,
-			provider,
-			runtime_id,
-			status,
-			runtime_metadata,
-			created_at,
-			updated_at,
-			destroyed_at
-		FROM sandboxes
-		WHERE conversation_id = $1::uuid
-		  AND status = $2
-		  AND destroyed_at IS NULL
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, conversationID, domain.SandboxStatusActive)
-
-	sandbox, err := scanConversationSandbox(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrNotFound
-		}
-		return nil, fmt.Errorf("get active conversation sandbox: %w", err)
+func (r *ConversationSandboxRepository) db(ctx context.Context) conversationSandboxDB {
+	if conn := lockedConnection(ctx); conn != nil {
+		return conn
 	}
+	return r.pool
+}
 
-	return sandbox, nil
+func (r *ConversationSandboxRepository) GetActiveConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `SELECT `+conversationSandboxColumns+`
+		FROM sandboxes
+		WHERE conversation_id = $1::uuid AND status = $2 AND destroyed_at IS NULL
+		ORDER BY created_at DESC LIMIT 1
+	`, conversationID, domain.SandboxStatusActive)
+	return scanConversationSandboxResult(row, "get active conversation sandbox")
+}
+
+func (r *ConversationSandboxRepository) GetUsableConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `SELECT `+conversationSandboxColumns+`
+		FROM sandboxes
+		WHERE conversation_id = $1::uuid AND status IN ($2, $3) AND destroyed_at IS NULL
+		ORDER BY created_at DESC LIMIT 1
+	`, conversationID, domain.SandboxStatusActive, domain.SandboxStatusStopped)
+	return scanConversationSandboxResult(row, "get usable conversation sandbox")
 }
 
 func (r *ConversationSandboxRepository) GetLatestConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id::text, conversation_id::text, provider, runtime_id, status,
-			runtime_metadata, created_at, updated_at, destroyed_at
-		FROM sandboxes
-		WHERE conversation_id = $1::uuid
-		ORDER BY created_at DESC
-		LIMIT 1
+	row := r.db(ctx).QueryRow(ctx, `SELECT `+conversationSandboxColumns+`
+		FROM sandboxes WHERE conversation_id = $1::uuid ORDER BY created_at DESC LIMIT 1
 	`, conversationID)
-	sandbox, err := scanConversationSandbox(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrNotFound
-		}
-		return nil, fmt.Errorf("get latest conversation sandbox: %w", err)
-	}
-	return sandbox, nil
+	return scanConversationSandboxResult(row, "get latest conversation sandbox")
 }
 
 func (r *ConversationSandboxRepository) CreateConversationSandbox(ctx context.Context, conversationID string, provider string, runtimeID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
-	row := r.pool.QueryRow(ctx, `
-		INSERT INTO sandboxes (
-			conversation_id,
-			provider,
-			runtime_id,
-			status,
-			runtime_metadata
-		)
+	row := r.db(ctx).QueryRow(ctx, `
+		INSERT INTO sandboxes (conversation_id, provider, runtime_id, status, runtime_metadata)
 		VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
-		RETURNING
-			id::text,
-			conversation_id::text,
-			provider,
-			runtime_id,
-			status,
-			runtime_metadata,
-			created_at,
-			updated_at,
-			destroyed_at
-	`, conversationID, provider, runtimeID, domain.SandboxStatusActive, normalizedJSON(metadata))
-
+		RETURNING `+conversationSandboxColumns, conversationID, provider, runtimeID, domain.SandboxStatusActive, normalizedJSON(metadata))
 	sandbox, err := scanConversationSandbox(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -100,59 +79,201 @@ func (r *ConversationSandboxRepository) CreateConversationSandbox(ctx context.Co
 		}
 		return nil, fmt.Errorf("create conversation sandbox: %w", err)
 	}
-
 	return sandbox, nil
 }
 
-func (r *ConversationSandboxRepository) DestroyConversationSandbox(ctx context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
-	row := r.pool.QueryRow(ctx, `
+func (r *ConversationSandboxRepository) StopConversationSandbox(ctx context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `
 		UPDATE sandboxes
-		SET
-			status = $2,
-			runtime_metadata = $3::jsonb,
-			destroyed_at = now()
-		WHERE id = $1::uuid
-		  AND status = $4
-		  AND destroyed_at IS NULL
-		RETURNING
-			id::text,
-			conversation_id::text,
-			provider,
-			runtime_id,
-			status,
-			runtime_metadata,
-			created_at,
-			updated_at,
-			destroyed_at
-	`, sandboxID, domain.SandboxStatusDestroyed, normalizedJSON(metadata), domain.SandboxStatusActive)
+		SET status = $2, runtime_metadata = $3::jsonb, stopped_at = now(),
+			execution_token = NULL, execution_lease_until = NULL
+		WHERE id = $1::uuid AND status = $4 AND destroyed_at IS NULL
+		  AND (execution_lease_until IS NULL OR execution_lease_until < now())
+		RETURNING `+conversationSandboxColumns, sandboxID, domain.SandboxStatusStopped, normalizedJSON(metadata), domain.SandboxStatusActive)
+	return scanConversationSandboxMutation(row, "stop conversation sandbox")
+}
 
+func (r *ConversationSandboxRepository) ResumeConversationSandbox(ctx context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `
+		UPDATE sandboxes
+		SET status = $2, runtime_metadata = $3::jsonb, stopped_at = NULL, last_activity_at = now()
+		WHERE id = $1::uuid AND status = $4 AND destroyed_at IS NULL
+		RETURNING `+conversationSandboxColumns, sandboxID, domain.SandboxStatusActive, normalizedJSON(metadata), domain.SandboxStatusStopped)
+	return scanConversationSandboxMutation(row, "resume conversation sandbox")
+}
+
+func (r *ConversationSandboxRepository) TouchConversationSandbox(ctx context.Context, sandboxID string) error {
+	tag, err := r.db(ctx).Exec(ctx, `
+		UPDATE sandboxes SET last_activity_at = now()
+		WHERE id = $1::uuid AND status = $2 AND destroyed_at IS NULL
+	`, sandboxID, domain.SandboxStatusActive)
+	return expectSandboxMutation("touch conversation sandbox", tag, err)
+}
+
+func (r *ConversationSandboxRepository) AcquireConversationSandboxExecution(ctx context.Context, sandboxID string, token string, leaseDuration time.Duration) error {
+	tag, err := r.db(ctx).Exec(ctx, `
+		UPDATE sandboxes
+		SET execution_token = $2::uuid,
+			execution_lease_until = now() + ($3::bigint * interval '1 microsecond'),
+			last_activity_at = now()
+		WHERE id = $1::uuid AND status = $4 AND destroyed_at IS NULL
+		  AND (execution_lease_until IS NULL OR execution_lease_until < now())
+	`, sandboxID, token, leaseDuration.Microseconds(), domain.SandboxStatusActive)
+	return expectSandboxMutation("acquire conversation sandbox execution", tag, err)
+}
+
+func (r *ConversationSandboxRepository) RenewConversationSandboxExecution(ctx context.Context, sandboxID string, token string, leaseDuration time.Duration) error {
+	tag, err := r.db(ctx).Exec(ctx, `
+		UPDATE sandboxes
+		SET execution_lease_until = now() + ($3::bigint * interval '1 microsecond')
+		WHERE id = $1::uuid AND execution_token = $2::uuid AND status = $4
+		  AND destroyed_at IS NULL AND execution_lease_until >= now()
+	`, sandboxID, token, leaseDuration.Microseconds(), domain.SandboxStatusActive)
+	return expectSandboxMutation("renew conversation sandbox execution", tag, err)
+}
+
+func (r *ConversationSandboxRepository) CompleteConversationSandboxExecution(ctx context.Context, sandboxID string, token string) error {
+	tag, err := r.db(ctx).Exec(ctx, `
+		UPDATE sandboxes
+		SET execution_token = NULL, execution_lease_until = NULL, last_activity_at = now()
+		WHERE id = $1::uuid AND execution_token = $2::uuid AND status = $3
+	`, sandboxID, token, domain.SandboxStatusActive)
+	return expectSandboxMutation("complete conversation sandbox execution", tag, err)
+}
+
+func (r *ConversationSandboxRepository) ListIdleConversationSandboxes(ctx context.Context, inactiveBefore time.Time, limit int) ([]*domain.ConversationSandbox, error) {
+	rows, err := r.db(ctx).Query(ctx, `SELECT `+conversationSandboxColumns+`
+		FROM sandboxes
+		WHERE status = $1 AND destroyed_at IS NULL AND last_activity_at < $2
+		  AND (execution_lease_until IS NULL OR execution_lease_until < now())
+		ORDER BY last_activity_at, id LIMIT $3
+	`, domain.SandboxStatusActive, inactiveBefore, normalizeSandboxLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list idle conversation sandboxes: %w", err)
+	}
+	return scanConversationSandboxes(rows, "idle")
+}
+
+func (r *ConversationSandboxRepository) ListStoppedConversationSandboxes(ctx context.Context, stoppedBefore time.Time, limit int) ([]*domain.ConversationSandbox, error) {
+	rows, err := r.db(ctx).Query(ctx, `SELECT `+conversationSandboxColumns+`
+		FROM sandboxes
+		WHERE status = $1 AND destroyed_at IS NULL AND stopped_at < $2
+		ORDER BY stopped_at, id LIMIT $3
+	`, domain.SandboxStatusStopped, stoppedBefore, normalizeSandboxLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list stopped conversation sandboxes: %w", err)
+	}
+	return scanConversationSandboxes(rows, "stopped")
+}
+
+func (r *ConversationSandboxRepository) ListReleasingConversationSandboxes(ctx context.Context, limit int) ([]*domain.ConversationSandbox, error) {
+	rows, err := r.db(ctx).Query(ctx, `SELECT `+conversationSandboxColumns+`
+		FROM sandboxes
+		WHERE status = $1 AND destroyed_at IS NULL
+		  AND (release_lease_until IS NULL OR release_lease_until < now())
+		ORDER BY updated_at, id LIMIT $2
+	`, domain.SandboxStatusReleasing, normalizeSandboxLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list releasing conversation sandboxes: %w", err)
+	}
+	return scanConversationSandboxes(rows, "releasing")
+}
+
+func (r *ConversationSandboxRepository) BeginConversationSandboxRelease(ctx context.Context, sandboxID string) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `
+		UPDATE sandboxes
+		SET release_previous_status = status, status = $2,
+			execution_token = NULL, execution_lease_until = NULL,
+			release_token = NULL, release_lease_until = NULL
+		WHERE id = $1::uuid AND status IN ($3, $4) AND destroyed_at IS NULL
+		  AND (execution_lease_until IS NULL OR execution_lease_until < now())
+		RETURNING `+conversationSandboxColumns, sandboxID, domain.SandboxStatusReleasing, domain.SandboxStatusActive, domain.SandboxStatusStopped)
+	return scanConversationSandboxMutation(row, "begin conversation sandbox release")
+}
+
+func (r *ConversationSandboxRepository) ClaimConversationSandboxRelease(ctx context.Context, sandboxID string, token string, leaseDuration time.Duration) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `
+		UPDATE sandboxes
+		SET release_token = $2::uuid,
+			release_lease_until = now() + ($3::bigint * interval '1 microsecond')
+		WHERE id = $1::uuid AND status = $4 AND destroyed_at IS NULL
+		  AND (release_lease_until IS NULL OR release_lease_until < now())
+		RETURNING `+conversationSandboxColumns, sandboxID, token, leaseDuration.Microseconds(), domain.SandboxStatusReleasing)
+	return scanConversationSandboxMutation(row, "claim conversation sandbox release")
+}
+
+func (r *ConversationSandboxRepository) RenewConversationSandboxReleaseClaim(ctx context.Context, sandboxID string, token string, leaseDuration time.Duration) error {
+	tag, err := r.db(ctx).Exec(ctx, `
+		UPDATE sandboxes
+		SET release_lease_until = now() + ($4::bigint * interval '1 microsecond')
+		WHERE id = $1::uuid AND status = $3 AND release_token = $2::uuid
+	`, sandboxID, token, domain.SandboxStatusReleasing, leaseDuration.Microseconds())
+	return expectSandboxMutation("renew conversation sandbox release claim", tag, err)
+}
+
+func (r *ConversationSandboxRepository) CompleteConversationSandboxRelease(ctx context.Context, sandboxID string, token string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
+	row := r.db(ctx).QueryRow(ctx, `
+		UPDATE sandboxes
+		SET status = $2, runtime_metadata = $4::jsonb, stopped_at = NULL, destroyed_at = now(),
+			release_previous_status = NULL, release_token = NULL, release_lease_until = NULL
+		WHERE id = $1::uuid AND status = $5 AND release_token = $3::uuid AND destroyed_at IS NULL
+		RETURNING `+conversationSandboxColumns, sandboxID, domain.SandboxStatusDestroyed, token, normalizedJSON(metadata), domain.SandboxStatusReleasing)
+	return scanConversationSandboxMutation(row, "complete conversation sandbox release")
+}
+
+func expectSandboxMutation(operation string, tag pgconn.CommandTag, err error) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrConflict
+	}
+	return nil
+}
+
+func normalizeSandboxLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	return limit
+}
+
+func scanConversationSandboxResult(row scanRow, operation string) (*domain.ConversationSandbox, error) {
+	sandbox, err := scanConversationSandbox(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("%s: %w", operation, err)
+	}
+	return sandbox, nil
+}
+
+func scanConversationSandboxMutation(row scanRow, operation string) (*domain.ConversationSandbox, error) {
 	sandbox, err := scanConversationSandbox(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrConflict
 		}
-		return nil, fmt.Errorf("destroy conversation sandbox: %w", err)
+		return nil, fmt.Errorf("%s: %w", operation, err)
 	}
-
 	return sandbox, nil
 }
 
-func (r *ConversationSandboxRepository) RestoreConversationSandbox(ctx context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
-	row := r.pool.QueryRow(ctx, `
-		UPDATE sandboxes
-		SET status = $2, runtime_metadata = $3::jsonb, destroyed_at = NULL
-		WHERE id = $1::uuid AND status = $4 AND destroyed_at IS NOT NULL
-		RETURNING id::text, conversation_id::text, provider, runtime_id, status,
-			runtime_metadata, created_at, updated_at, destroyed_at
-	`, sandboxID, domain.SandboxStatusActive, normalizedJSON(metadata), domain.SandboxStatusDestroyed)
-	sandbox, err := scanConversationSandbox(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
-			return nil, domain.ErrConflict
+func scanConversationSandboxes(rows pgx.Rows, label string) ([]*domain.ConversationSandbox, error) {
+	defer rows.Close()
+	items := make([]*domain.ConversationSandbox, 0)
+	for rows.Next() {
+		item, err := scanConversationSandbox(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan %s conversation sandbox: %w", label, err)
 		}
-		return nil, fmt.Errorf("restore conversation sandbox: %w", err)
+		items = append(items, item)
 	}
-	return sandbox, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s conversation sandboxes: %w", label, err)
+	}
+	return items, nil
 }
 
 func isUniqueViolation(err error) bool {

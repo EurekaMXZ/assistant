@@ -184,10 +184,12 @@ Fields:
 - `conversation_id`
 - `provider`: `firecracker | agentbay`
 - `runtime_id`
-- `status`: `active | destroyed`
+- `status`: `active | stopped | releasing | destroyed` (`releasing` is a transient, retryable deletion state)
 - `runtime_metadata`
+- `last_activity_at`
 - `created_at`
 - `updated_at`
+- `stopped_at`
 - `destroyed_at`
 
 ### Sandbox command result
@@ -606,7 +608,7 @@ Download an attachment from an owned conversation. The response body is the file
 
 ### GET `/conversations/:conversationID/sandbox`
 
-Get the active sandbox for the conversation.
+Get the current active or stopped sandbox for the conversation.
 
 Response: `200 OK`
 
@@ -618,7 +620,7 @@ Response: `200 OK`
 
 ### POST `/conversations/:conversationID/sandbox`
 
-Create a sandbox.
+Create a sandbox, or resume the existing sandbox when it is stopped.
 
 Response: `201 Created`
 
@@ -630,7 +632,7 @@ Response: `201 Created`
 
 ### DELETE `/conversations/:conversationID/sandbox`
 
-Destroy the active sandbox.
+Permanently release the active or stopped sandbox. Provider deletion is retried from the internal `releasing` state until it is confirmed.
 
 Response: `200 OK`
 
@@ -642,7 +644,7 @@ Response: `200 OK`
 
 ### POST `/conversations/:conversationID/sandbox/exec`
 
-Execute one command inside the conversation sandbox.
+Execute one command inside the conversation sandbox, resuming it first when it is stopped.
 
 Request:
 

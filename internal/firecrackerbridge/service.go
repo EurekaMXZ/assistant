@@ -23,7 +23,12 @@ import (
 	"github.com/google/uuid"
 )
 
-const providerName = "firecracker"
+const (
+	providerName        = "firecracker"
+	sandboxStateActive  = "active"
+	sandboxStateStopped = "stopped"
+	sandboxManifestName = "sandbox.json"
+)
 
 type Service struct {
 	settings Settings
@@ -35,6 +40,7 @@ type Service struct {
 }
 
 type sandbox struct {
+	opMu           sync.Mutex
 	id             string
 	conversationID string
 	dir            string
@@ -54,6 +60,17 @@ type sandbox struct {
 	cmd            *exec.Cmd
 	done           chan error
 	createdAt      time.Time
+	state          string
+	stoppedAt      *time.Time
+}
+
+type sandboxManifest struct {
+	ID             string     `json:"id"`
+	ConversationID string     `json:"conversation_id"`
+	GuestCID       uint32     `json:"guest_cid"`
+	CreatedAt      time.Time  `json:"created_at"`
+	State          string     `json:"state"`
+	StoppedAt      *time.Time `json:"stopped_at,omitempty"`
 }
 
 func New(settings Settings, logger *log.Logger) (*Service, error) {
@@ -63,12 +80,16 @@ func New(settings Settings, logger *log.Logger) (*Service, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	return &Service{
+	service := &Service{
 		settings:  settings,
 		logger:    logger,
 		nextCID:   3,
 		sandboxes: make(map[string]*sandbox),
-	}, nil
+	}
+	if err := service.loadSandboxManifests(); err != nil {
+		return nil, err
+	}
+	return service, nil
 }
 
 func (s *Service) Handler() http.Handler {
@@ -94,7 +115,11 @@ func (s *Service) Shutdown() {
 	}
 	s.mu.Unlock()
 	for _, sb := range sandboxes {
-		s.stopSandbox(sb)
+		sb.opMu.Lock()
+		if err := s.pauseSandboxResources(sb); err != nil {
+			s.logger.Printf("stop sandbox %s during shutdown: %v", sb.id, err)
+		}
+		sb.opMu.Unlock()
 	}
 }
 
@@ -180,12 +205,35 @@ func (s *Service) handleSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "stop" && r.Method == http.MethodPost {
+		handle, err := s.stopSandboxRuntime(r.Context(), runtimeID)
+		if err != nil {
+			writeSandboxLifecycleError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, handle)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "resume" && r.Method == http.MethodPost {
+		handle, err := s.resumeSandboxRuntime(r.Context(), runtimeID)
+		if err != nil {
+			writeSandboxLifecycleError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, handle)
+		return
+	}
+
 	writeError(w, http.StatusNotFound, "sandbox not found")
 }
 
 func (s *Service) createSandbox(ctx context.Context, conversationID string) (*domain.SandboxHandle, error) {
 	if err := os.MkdirAll(s.settings.RuntimeDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create runtime dir: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(s.settings.RuntimeDir)); err != nil {
+		return nil, fmt.Errorf("sync runtime dir parent: %w", err)
 	}
 
 	runtimeID := "fc-" + uuid.NewString()
@@ -197,6 +245,10 @@ func (s *Service) createSandbox(ctx context.Context, conversationID string) (*do
 	dir := filepath.Join(s.settings.RuntimeDir, runtimeID)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("create sandbox dir: %w", err)
+	}
+	if err := syncDirectory(s.settings.RuntimeDir); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("sync runtime dir: %w", err)
 	}
 
 	sb := &sandbox{
@@ -211,6 +263,7 @@ func (s *Service) createSandbox(ctx context.Context, conversationID string) (*do
 		guestCID:       guestCID,
 		agentPort:      s.settings.AgentPort,
 		createdAt:      time.Now().UTC(),
+		state:          sandboxStateActive,
 	}
 	if s.settings.NetworkEnabled {
 		network, err := s.networkForSandbox(sb)
@@ -240,6 +293,10 @@ func (s *Service) createSandbox(ctx context.Context, conversationID string) (*do
 		}
 		return nil, err
 	}
+	if err := s.persistSandboxManifest(sb); err != nil {
+		_ = s.destroySandboxResources(sb)
+		return nil, err
+	}
 
 	s.mu.Lock()
 	s.sandboxes[runtimeID] = sb
@@ -253,6 +310,8 @@ func (s *Service) createSandbox(ctx context.Context, conversationID string) (*do
 }
 
 func (s *Service) startFirecracker(ctx context.Context, sb *sandbox) error {
+	_ = os.Remove(sb.apiSocketPath)
+	_ = os.Remove(sb.vsockPath)
 	logFile, err := os.OpenFile(sb.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
 		return fmt.Errorf("open firecracker log: %w", err)
@@ -260,6 +319,7 @@ func (s *Service) startFirecracker(ctx context.Context, sb *sandbox) error {
 	defer logFile.Close()
 
 	cmd := exec.Command(s.settings.FirecrackerBin, "--api-sock", sb.apiSocketPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -539,7 +599,15 @@ func deleteLink(ctx context.Context, name string) error {
 	if name == "" {
 		return nil
 	}
-	return runCommand(ctx, "ip", "link", "delete", name)
+	err := runCommand(ctx, "ip", "link", "delete", name)
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "cannot find device") || strings.Contains(message, "does not exist") || strings.Contains(message, "not found") {
+		return nil
+	}
+	return err
 }
 
 func runCommand(ctx context.Context, name string, args ...string) error {
@@ -559,13 +627,20 @@ func runCommand(ctx context.Context, name string, args ...string) error {
 func (s *Service) destroySandbox(runtimeID string) (*domain.SandboxHandle, error) {
 	s.mu.Lock()
 	sb := s.sandboxes[runtimeID]
-	delete(s.sandboxes, runtimeID)
 	s.mu.Unlock()
 	if sb == nil {
-		return nil, errSandboxNotFound
+		return &domain.SandboxHandle{Provider: providerName, RuntimeID: runtimeID}, nil
 	}
-
-	s.stopSandbox(sb)
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.destroySandboxResources(sb); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if s.sandboxes[runtimeID] == sb {
+		delete(s.sandboxes, runtimeID)
+	}
+	s.mu.Unlock()
 	metadata, err := sb.metadata(map[string]any{
 		"destroyed_at": time.Now().UTC().Format(time.RFC3339Nano),
 	})
@@ -575,18 +650,151 @@ func (s *Service) destroySandbox(runtimeID string) (*domain.SandboxHandle, error
 	return &domain.SandboxHandle{Provider: providerName, RuntimeID: runtimeID, Metadata: metadata}, nil
 }
 
-func (s *Service) stopSandbox(sb *sandbox) {
-	s.stopSandboxProcess(sb)
-	if sb != nil && sb.tapName != "" {
-		_ = deleteLink(context.Background(), sb.tapName)
+func (s *Service) stopSandboxRuntime(_ context.Context, runtimeID string) (*domain.SandboxHandle, error) {
+	s.mu.Lock()
+	sb := s.sandboxes[runtimeID]
+	s.mu.Unlock()
+	if sb == nil {
+		return nil, errSandboxNotFound
 	}
-	_ = os.RemoveAll(sb.dir)
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.pauseSandboxResources(sb); err != nil {
+		return nil, err
+	}
+	metadata, err := sb.metadata(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.SandboxHandle{Provider: providerName, RuntimeID: runtimeID, Metadata: metadata}, nil
+}
+
+func (s *Service) resumeSandboxRuntime(ctx context.Context, runtimeID string) (*domain.SandboxHandle, error) {
+	s.mu.Lock()
+	sb := s.sandboxes[runtimeID]
+	s.mu.Unlock()
+	if sb == nil {
+		return nil, errSandboxNotFound
+	}
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.resumeSandboxResources(ctx, sb); err != nil {
+		return nil, err
+	}
+	metadata, err := sb.metadata(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.SandboxHandle{Provider: providerName, RuntimeID: runtimeID, Metadata: metadata}, nil
+}
+
+func (s *Service) resumeSandboxResources(ctx context.Context, sb *sandbox) error {
+	if sb == nil {
+		return nil
+	}
+	if sb.state == sandboxStateActive && sandboxProcessRunning(sb) {
+		return nil
+	}
+	if sb.state == sandboxStateActive {
+		s.stopSandboxProcess(sb)
+		now := time.Now().UTC()
+		sb.state = sandboxStateStopped
+		sb.stoppedAt = &now
+	}
+	if sb.tapName != "" {
+		if err := deleteLink(ctx, sb.tapName); err != nil {
+			return fmt.Errorf("delete stale sandbox network link: %w", err)
+		}
+	}
+	if err := s.startFirecracker(ctx, sb); err != nil {
+		s.stopSandboxProcess(sb)
+		return err
+	}
+	sb.state = sandboxStateActive
+	sb.stoppedAt = nil
+	if err := s.persistSandboxManifest(sb); err != nil {
+		_ = s.pauseSandboxResources(sb)
+		return err
+	}
+	return nil
+}
+
+func (s *Service) pauseSandboxResources(sb *sandbox) error {
+	if sb == nil {
+		return nil
+	}
+	if sb.state == sandboxStateStopped {
+		return nil
+	}
+	if !sandboxProcessRunning(sb) {
+		if sb.tapName != "" {
+			deleteCtx, cancelDelete := context.WithTimeout(context.Background(), 5*time.Second)
+			err := deleteLink(deleteCtx, sb.tapName)
+			cancelDelete()
+			if err != nil {
+				return fmt.Errorf("delete sandbox network link after process exit: %w", err)
+			}
+		}
+		now := time.Now().UTC()
+		sb.state = sandboxStateStopped
+		sb.stoppedAt = &now
+		return s.persistSandboxManifest(sb)
+	}
+	syncCtx, cancelSync := context.WithTimeout(context.Background(), 5*time.Second)
+	var syncResult domain.SandboxCommandResult
+	syncErr := s.doAgentJSON(syncCtx, sb, http.MethodPost, "/exec", domain.SandboxCommandRequest{Command: "sync", TimeoutSeconds: 5}, &syncResult, 5*time.Second)
+	cancelSync()
+	if syncErr != nil {
+		return fmt.Errorf("sync sandbox %s before stop: %w", sb.id, syncErr)
+	}
+	if syncResult.ExitCode != 0 || syncResult.TimedOut {
+		return fmt.Errorf("sync sandbox %s before stop failed: exit_code=%d timed_out=%t", sb.id, syncResult.ExitCode, syncResult.TimedOut)
+	}
+	s.stopSandboxProcess(sb)
+	if sb.tapName != "" {
+		deleteCtx, cancelDelete := context.WithTimeout(context.Background(), 5*time.Second)
+		err := deleteLink(deleteCtx, sb.tapName)
+		cancelDelete()
+		if err != nil {
+			return fmt.Errorf("delete sandbox network link: %w", err)
+		}
+	}
+	now := time.Now().UTC()
+	sb.state = sandboxStateStopped
+	sb.stoppedAt = &now
+	return s.persistSandboxManifest(sb)
+}
+
+func (s *Service) destroySandboxResources(sb *sandbox) error {
+	if sb == nil {
+		return nil
+	}
+	s.stopSandboxProcess(sb)
+	if sb.tapName != "" {
+		deleteCtx, cancelDelete := context.WithTimeout(context.Background(), 5*time.Second)
+		err := deleteLink(deleteCtx, sb.tapName)
+		cancelDelete()
+		if err != nil {
+			return fmt.Errorf("delete sandbox network link: %w", err)
+		}
+	}
+	if err := os.RemoveAll(sb.dir); err != nil {
+		return fmt.Errorf("remove sandbox directory %s: %w", sb.dir, err)
+	}
+	if err := syncDirectory(s.settings.RuntimeDir); err != nil {
+		return fmt.Errorf("sync runtime dir after removing sandbox: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) stopSandboxProcess(sb *sandbox) {
 	if sb == nil || sb.cmd == nil || sb.cmd.Process == nil {
 		return
 	}
+	defer func() {
+		sb.cmd = nil
+		sb.done = nil
+	}()
 	select {
 	case <-sb.done:
 		return
@@ -601,6 +809,20 @@ func (s *Service) stopSandboxProcess(sb *sandbox) {
 	}
 }
 
+func sandboxProcessRunning(sb *sandbox) bool {
+	if sb == nil || sb.cmd == nil || sb.cmd.Process == nil || sb.done == nil {
+		return false
+	}
+	select {
+	case <-sb.done:
+		sb.cmd = nil
+		sb.done = nil
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Service) execCommand(ctx context.Context, runtimeID string, request domain.SandboxCommandRequest) (*domain.SandboxCommandResult, error) {
 	if strings.TrimSpace(request.Command) == "" {
 		return nil, fmt.Errorf("%w: command is required", errBadRequest)
@@ -610,6 +832,11 @@ func (s *Service) execCommand(ctx context.Context, runtimeID string, request dom
 	s.mu.Unlock()
 	if sb == nil {
 		return nil, errSandboxNotFound
+	}
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.resumeSandboxResources(ctx, sb); err != nil {
+		return nil, fmt.Errorf("resume sandbox before exec: %w", err)
 	}
 
 	timeout := 35 * time.Second
@@ -659,6 +886,10 @@ func (sb *sandbox) metadata(extra map[string]any) (json.RawMessage, error) {
 		"guest_cid":       sb.guestCID,
 		"agent_port":      sb.agentPort,
 		"created_at":      sb.createdAt.Format(time.RFC3339Nano),
+		"lifecycle_state": sb.state,
+	}
+	if sb.stoppedAt != nil {
+		metadata["stopped_at"] = sb.stoppedAt.Format(time.RFC3339Nano)
 	}
 	if sb.tapName != "" {
 		metadata["network"] = map[string]any{
@@ -818,6 +1049,150 @@ func processExitError(message string, err error) error {
 		return errors.New(message)
 	}
 	return fmt.Errorf("%s: %w", message, err)
+}
+
+func (s *Service) loadSandboxManifests() error {
+	if err := os.MkdirAll(s.settings.RuntimeDir, 0o750); err != nil {
+		return fmt.Errorf("create firecracker runtime dir: %w", err)
+	}
+	entries, err := os.ReadDir(s.settings.RuntimeDir)
+	if err != nil {
+		return fmt.Errorf("read firecracker runtime dir: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(s.settings.RuntimeDir, entry.Name())
+		payload, readErr := os.ReadFile(filepath.Join(dir, sandboxManifestName))
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue
+		}
+		if readErr != nil {
+			return fmt.Errorf("read sandbox manifest %s: %w", entry.Name(), readErr)
+		}
+		var manifest sandboxManifest
+		if err := json.Unmarshal(payload, &manifest); err != nil {
+			return fmt.Errorf("decode sandbox manifest %s: %w", entry.Name(), err)
+		}
+		if strings.TrimSpace(manifest.ID) == "" || manifest.ID != entry.Name() || manifest.GuestCID < 3 {
+			return fmt.Errorf("sandbox manifest %s is invalid", entry.Name())
+		}
+		if _, err := os.Stat(filepath.Join(dir, "rootfs.ext4")); err != nil {
+			return fmt.Errorf("sandbox %s rootfs is unavailable: %w", manifest.ID, err)
+		}
+		now := time.Now().UTC()
+		sb := &sandbox{
+			id:             manifest.ID,
+			conversationID: manifest.ConversationID,
+			dir:            dir,
+			rootFSPath:     filepath.Join(dir, "rootfs.ext4"),
+			apiSocketPath:  filepath.Join(dir, "firecracker.sock"),
+			vsockPath:      filepath.Join(dir, "vsock.sock"),
+			logPath:        filepath.Join(dir, "firecracker.log"),
+			metricsPath:    filepath.Join(dir, "metrics.json"),
+			guestCID:       manifest.GuestCID,
+			agentPort:      s.settings.AgentPort,
+			createdAt:      manifest.CreatedAt,
+			state:          sandboxStateStopped,
+			stoppedAt:      manifest.StoppedAt,
+		}
+		if sb.createdAt.IsZero() {
+			sb.createdAt = now
+		}
+		if sb.stoppedAt == nil {
+			sb.stoppedAt = &now
+		}
+		if s.settings.NetworkEnabled {
+			network, networkErr := s.networkForSandbox(sb)
+			if networkErr != nil {
+				return networkErr
+			}
+			sb.bridgeName = s.settings.NetworkBridge
+			sb.tapName = network.tapName
+			sb.guestIP = network.guestIP
+			sb.guestAddress = network.guestAddress
+			sb.guestGateway = s.settings.NetworkGateway
+			sb.guestMAC = network.guestMAC
+		}
+		s.sandboxes[sb.id] = sb
+		if s.nextCID <= sb.guestCID {
+			s.nextCID = sb.guestCID + 1
+		}
+		if err := s.persistSandboxManifest(sb); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) persistSandboxManifest(sb *sandbox) error {
+	if sb == nil {
+		return errors.New("persist sandbox manifest: sandbox is required")
+	}
+	payload, err := json.Marshal(sandboxManifest{
+		ID:             sb.id,
+		ConversationID: sb.conversationID,
+		GuestCID:       sb.guestCID,
+		CreatedAt:      sb.createdAt,
+		State:          sb.state,
+		StoppedAt:      sb.stoppedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal sandbox manifest: %w", err)
+	}
+	temporary := filepath.Join(sb.dir, sandboxManifestName+".tmp")
+	manifestFile, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	if err != nil {
+		return fmt.Errorf("write sandbox manifest: %w", err)
+	}
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if _, err := manifestFile.Write(payload); err != nil {
+		_ = manifestFile.Close()
+		return fmt.Errorf("write sandbox manifest: %w", err)
+	}
+	if err := manifestFile.Sync(); err != nil {
+		_ = manifestFile.Close()
+		return fmt.Errorf("sync sandbox manifest: %w", err)
+	}
+	if err := manifestFile.Close(); err != nil {
+		return fmt.Errorf("close sandbox manifest: %w", err)
+	}
+	if err := os.Rename(temporary, filepath.Join(sb.dir, sandboxManifestName)); err != nil {
+		return fmt.Errorf("replace sandbox manifest: %w", err)
+	}
+	removeTemporary = false
+	if err := syncDirectory(sb.dir); err != nil {
+		return fmt.Errorf("sync sandbox directory: %w", err)
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return err
+	}
+	return directory.Close()
+}
+
+func writeSandboxLifecycleError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, errSandboxNotFound) {
+		status = http.StatusNotFound
+	} else if errors.Is(err, errBadRequest) {
+		status = http.StatusBadRequest
+	}
+	writeError(w, status, err.Error())
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, output any) error {

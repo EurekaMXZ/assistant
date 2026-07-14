@@ -7,6 +7,8 @@ import (
 
 const (
 	SandboxStatusActive    = "active"
+	SandboxStatusStopped   = "stopped"
+	SandboxStatusReleasing = "releasing"
 	SandboxStatusDestroyed = "destroyed"
 )
 
@@ -18,15 +20,22 @@ type SandboxHandle struct {
 }
 
 type ConversationSandbox struct {
-	ID              string          `json:"id"`
-	ConversationID  string          `json:"conversation_id"`
-	Provider        string          `json:"provider"`
-	RuntimeID       string          `json:"runtime_id"`
-	Status          string          `json:"status"`
-	RuntimeMetadata json.RawMessage `json:"runtime_metadata"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	DestroyedAt     *time.Time      `json:"destroyed_at,omitempty"`
+	ID                    string          `json:"id"`
+	ConversationID        string          `json:"conversation_id"`
+	Provider              string          `json:"provider"`
+	RuntimeID             string          `json:"runtime_id"`
+	Status                string          `json:"status"`
+	RuntimeMetadata       json.RawMessage `json:"runtime_metadata"`
+	LastActivityAt        time.Time       `json:"last_activity_at"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+	StoppedAt             *time.Time      `json:"stopped_at,omitempty"`
+	DestroyedAt           *time.Time      `json:"destroyed_at,omitempty"`
+	ExecutionToken        string          `json:"-"`
+	ExecutionLeaseUntil   *time.Time      `json:"-"`
+	ReleasePreviousStatus string          `json:"-"`
+	ReleaseToken          string          `json:"-"`
+	ReleaseLeaseUntil     *time.Time      `json:"-"`
 }
 
 type SandboxCommandRequest struct {

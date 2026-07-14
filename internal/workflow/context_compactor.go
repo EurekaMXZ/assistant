@@ -242,11 +242,11 @@ func (c *ContextCompactor) compactionTools(ctx context.Context, conversationID s
 		ConversationID: conversationID,
 	}
 	if c.sandboxes != nil {
-		sandbox, err := c.sandboxes.GetActiveConversationSandbox(ctx, conversationID)
+		sandbox, err := c.sandboxes.GetUsableConversationSandbox(ctx, conversationID)
 		if err != nil && !errors.Is(err, domain.ErrNotFound) {
 			return nil, err
 		}
-		scope.HasSandbox = sandbox != nil && sandbox.Status == domain.SandboxStatusActive && sandbox.DestroyedAt == nil
+		scope.HasSandbox = sandbox != nil && (sandbox.Status == domain.SandboxStatusActive || sandbox.Status == domain.SandboxStatusStopped) && sandbox.DestroyedAt == nil
 	}
 	return c.tools.listTools(ctx, scope)
 }

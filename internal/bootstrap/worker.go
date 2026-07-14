@@ -55,18 +55,23 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 			UseCase: tool.CreateSandbox{
 				Sandboxes: workflows.Sandboxes,
 				Runtime:   sandboxRuntime,
+				Locker:    workflows.Locker,
 			},
 		},
 		tool.DestroySandboxHandler{
 			UseCase: tool.DestroySandbox{
 				Sandboxes: workflows.Sandboxes,
 				Runtime:   sandboxRuntime,
+				Locker:    workflows.Locker,
 			},
 		},
 		tool.ExecSandboxCommandHandler{
 			UseCase: tool.ExecSandboxCommand{
-				Sandboxes: workflows.Sandboxes,
-				Runtime:   sandboxRuntime,
+				Sandboxes:      workflows.Sandboxes,
+				Runtime:        sandboxRuntime,
+				Locker:         workflows.Locker,
+				DefaultTimeout: settings.SandboxLifecycle.CommandDefault,
+				MaximumTimeout: settings.SandboxLifecycle.CommandMaximum,
 			},
 		},
 	}
@@ -119,7 +124,8 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 		Locker:                workflows.Locker,
 	})
 
-	return worker.New(logger, workflowEngine, settings.Process, writer, newReader), nil
+	reaper := assistantsandbox.NewReaper(settings.SandboxLifecycle, workflows.Sandboxes, sandboxRuntime, workflows.Locker, logger)
+	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper), nil
 }
 
 func buildSandboxRuntime(settings assistantsandbox.RuntimeSettings) (tool.SandboxManager, error) {

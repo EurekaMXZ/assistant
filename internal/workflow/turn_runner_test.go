@@ -179,6 +179,10 @@ func (s *stubConversationSandboxReader) GetActiveConversationSandbox(_ context.C
 	return s.sandbox, nil
 }
 
+func (s *stubConversationSandboxReader) GetUsableConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
+	return s.GetActiveConversationSandbox(ctx, conversationID)
+}
+
 func TestTurnRunnerToolScopeReflectsActiveSandbox(t *testing.T) {
 	reader := &stubConversationSandboxReader{
 		sandbox: &domain.ConversationSandbox{

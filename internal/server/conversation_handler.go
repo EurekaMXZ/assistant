@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/gin-gonic/gin"
@@ -230,6 +231,7 @@ func (a *API) handleDestroyConversationSandbox(c *gin.Context) {
 }
 
 func (a *API) handleExecConversationSandbox(c *gin.Context) {
+	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{})
 	var request struct {
 		Command          string   `json:"command"`
 		Args             []string `json:"args"`
