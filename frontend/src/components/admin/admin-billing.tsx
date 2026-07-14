@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
+  Activity,
   ArrowDownLeft,
   ArrowUpRight,
+  BadgeDollarSign,
   CreditCard,
+  Gift,
   MoreHorizontal,
   ReceiptText,
   WalletCards,
@@ -60,6 +63,14 @@ import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from
 import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 type BillingView = "accounts" | "transactions" | "usage" | "tool-prices" | "codes";
+
+const billingViews = [
+  { id: "accounts", label: "账户", icon: WalletCards },
+  { id: "transactions", label: "资金流水", icon: ReceiptText },
+  { id: "usage", label: "用量明细", icon: Activity },
+  { id: "tool-prices", label: "工具计费", icon: BadgeDollarSign },
+  { id: "codes", label: "兑换码", icon: Gift },
+] as const satisfies ReadonlyArray<{ id: BillingView; label: string; icon: typeof WalletCards }>;
 
 export function AdminBilling() {
   const [view, setView] = useState<BillingView>("accounts");
@@ -176,30 +187,27 @@ export function AdminBilling() {
       <AdminPageHeader title="计费" />
       <div
         className="mt-5 flex max-w-full overflow-x-auto rounded-md bg-muted p-1 sm:w-fit"
-        role="group"
+        role="tablist"
         aria-label="计费视图"
       >
-        {(["accounts", "transactions", "usage", "tool-prices", "codes"] as const).map((item) => (
-          <Button
-            key={item}
-            type="button"
-            aria-pressed={view === item}
-            size="sm"
-            variant={view === item ? "secondary" : "ghost"}
-            className="h-7 min-h-7 shrink-0 rounded px-2.5 text-xs"
-            onClick={() => setView(item)}
-          >
-            {item === "accounts"
-              ? "账户"
-              : item === "transactions"
-                ? "资金流水"
-                : item === "usage"
-                  ? "用量明细"
-                  : item === "tool-prices"
-                    ? "工具计费"
-                    : "兑换码"}
-          </Button>
-        ))}
+        {billingViews.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={view === item.id}
+              size="sm"
+              variant={view === item.id ? "secondary" : "ghost"}
+              className="h-7 min-h-7 shrink-0 rounded px-2.5 text-xs text-muted-foreground hover:bg-background hover:text-foreground aria-selected:bg-background aria-selected:text-foreground aria-selected:shadow-xs"
+              onClick={() => setView(item.id)}
+            >
+              <Icon className="size-3.5" />
+              {item.label}
+            </Button>
+          );
+        })}
       </div>
       {loading && view !== "codes" && view !== "tool-prices" ? <AdminLoading /> : null}
       {!loading && error && view !== "codes" && view !== "tool-prices" ? (
