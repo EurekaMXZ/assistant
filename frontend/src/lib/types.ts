@@ -98,6 +98,21 @@ export interface BillingRedemptionCodeIssue {
   code: string;
 }
 
+export type BillingToolKey =
+  "sandbox.create" | "image_generation" | "tavily.search" | "tavily.extract";
+
+export interface BillingToolPrice {
+  tool_key: BillingToolKey;
+  currency: string;
+  price_per_call_nanos: number;
+  price_per_call: string;
+  enabled: boolean;
+  version: number;
+  updated_by_user_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BillingUsageEvent {
   id: string;
   request_key: string;
@@ -115,6 +130,10 @@ export interface BillingUsageEvent {
   output_tokens: number;
   reasoning_output_tokens: number;
   total_tokens: number;
+  tool_amount_nanos: number;
+  tool_amount: string;
+  tool_usage: Partial<Record<BillingToolKey, number>>;
+  tool_pricing_snapshot: Record<string, unknown>;
   billing_transaction_id?: string;
   error_code?: string;
   created_at: string;

@@ -155,6 +155,18 @@ type UpdateBillingAccountInput struct {
 	Status *string
 }
 
+type BillingToolPriceInput struct {
+	ToolKey           string `json:"tool_key"`
+	PricePerCallNanos int64  `json:"price_per_call_nanos"`
+	Enabled           bool   `json:"enabled"`
+	Version           int64  `json:"version"`
+}
+
+type UpdateBillingToolPricesInput struct {
+	Prices    []BillingToolPriceInput `json:"tool_prices"`
+	RequestID string                  `json:"-"`
+}
+
 type IssueRedemptionCodeInput struct {
 	Amount    string
 	Quantity  int
@@ -291,6 +303,8 @@ type BillingUseCases struct {
 	GetBillingTransaction   func(ctx context.Context, transactionID string, userID string) (*domain.BillingTransaction, error)
 	ListBillingUsageEvents  func(ctx context.Context, input BillingListInput) (*PageResult[domain.BillingUsageEvent], error)
 	GetBillingUsageEvent    func(ctx context.Context, usageEventID string, userID string) (*domain.BillingUsageEvent, error)
+	ListBillingToolPrices   func(ctx context.Context, actor *domain.User) ([]domain.BillingToolPrice, error)
+	UpdateBillingToolPrices func(ctx context.Context, actor *domain.User, input UpdateBillingToolPricesInput) ([]domain.BillingToolPrice, error)
 }
 
 type AuditUseCases struct {

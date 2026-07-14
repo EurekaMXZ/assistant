@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,8 +105,28 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err := runs.RenewTurnRunLease(t.Context(), firstLease); err != nil {
 		t.Fatalf("renew first run: %v", err)
 	}
+	billingRepository := NewBillingAccountRepository(pool)
+	currentToolPrices, err := billingRepository.ListToolPrices(t.Context(), "USD")
+	if err != nil {
+		t.Fatalf("load current tool prices: %v", err)
+	}
+	toolPriceVersions := make(map[string]int64, len(currentToolPrices))
+	for _, price := range currentToolPrices {
+		toolPriceVersions[price.ToolKey] = price.Version
+	}
+	if _, err := billingRepository.UpdateToolPrices(t.Context(), UpdateBillingToolPricesParams{
+		Currency: "USD", ActorUserID: actorUserID, ActorRole: domain.UserRoleAdmin,
+		Prices: []BillingToolPriceUpdate{
+			{ToolKey: domain.BillingToolSandboxCreate, PricePerCallNanos: 400_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolSandboxCreate]},
+			{ToolKey: domain.BillingToolImageGeneration, PricePerCallNanos: 300_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolImageGeneration]},
+			{ToolKey: domain.BillingToolTavilySearch, PricePerCallNanos: 10_000_000, Enabled: false, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilySearch]},
+			{ToolKey: domain.BillingToolTavilyExtract, PricePerCallNanos: 20_000_000, Enabled: false, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilyExtract]},
+		},
+	}); err != nil {
+		t.Fatalf("configure tool prices: %v", err)
+	}
 	calls := NewToolCallRepository(pool)
-	call := tool.ToolCall{CallID: "call-1", Type: llm.ModelItemFunctionCall, Name: "lookup"}
+	call := tool.ToolCall{CallID: "call-1", Type: llm.ModelItemFunctionCall, Namespace: "sandbox", Name: "create"}
 	firstCall, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt, call, "arguments-1")
 	if err != nil || !acquired {
 		t.Fatalf("create tool call: %v", err)
@@ -129,12 +150,44 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err != nil || acquired || ambiguous.Status != domain.ToolCallStatusAmbiguous {
 		t.Fatalf("recover ambiguous call = %#v acquired=%t err=%v", ambiguous, acquired, err)
 	}
-	completed, err := runs.CompleteScheduledTurnRun(t.Context(), firstLease, "resp-1", "response-1", "result-1", llm.ModelUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5})
+	completed, err := runs.CompleteScheduledTurnRun(t.Context(), firstLease, "resp-1", "response-1", "result-1", llm.ModelUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}, 1)
 	if err != nil {
 		t.Fatalf("complete first run: %v", err)
 	}
 	if completed.Status != domain.TurnRunStatusCompleted || completed.ResultBlobKey != "result-1" {
 		t.Fatalf("completed run = %#v", completed)
+	}
+	var totalAmount, toolAmount int64
+	var billingTransactionID string
+	var toolUsage, toolPricing []byte
+	if err := pool.QueryRow(t.Context(), `
+		SELECT amount_nanos, tool_amount_nanos, tool_usage, tool_pricing_snapshot,
+			COALESCE(billing_transaction_id::text, '')
+		FROM billing_usage_events WHERE turn_run_id = $1::uuid
+	`, runID).Scan(&totalAmount, &toolAmount, &toolUsage, &toolPricing, &billingTransactionID); err != nil {
+		t.Fatalf("load tool-rated usage event: %v", err)
+	}
+	if toolAmount != 700_000_000 || totalAmount != 700_026_000 {
+		t.Fatalf("rated amounts: total=%d tool=%d", totalAmount, toolAmount)
+	}
+	if !strings.Contains(string(toolUsage), `"sandbox.create": 1`) && !strings.Contains(string(toolUsage), `"sandbox.create":1`) {
+		t.Fatalf("tool usage missing sandbox call: %s", toolUsage)
+	}
+	if !strings.Contains(string(toolPricing), `"image_generation"`) {
+		t.Fatalf("tool pricing missing image generation: %s", toolPricing)
+	}
+	var balanceAfter, transactionAmount int64
+	if err := pool.QueryRow(t.Context(), `SELECT balance_nanos FROM billing_accounts WHERE user_id = $1::uuid AND currency = 'USD'`, ownerUserID).Scan(&balanceAfter); err != nil {
+		t.Fatalf("load balance after tool charge: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT amount_nanos FROM billing_transactions WHERE id = $1::uuid`, billingTransactionID).Scan(&transactionAmount); err != nil {
+		t.Fatalf("load tool-rated billing transaction: %v", err)
+	}
+	if balanceAfter != 1_000_000_000_000-totalAmount || transactionAmount != totalAmount {
+		t.Fatalf("tool debit mismatch: balance=%d transaction=%d total=%d", balanceAfter, transactionAmount, totalAmount)
+	}
+	if _, err := runs.CompleteScheduledTurnRun(t.Context(), firstLease, "resp-duplicate", "", "", llm.ModelUsage{}, 0); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate completion error = %v, want conflict", err)
 	}
 
 	nextRunID, err := runs.ScheduleNextTurnRun(t.Context(), turnID, runID, 2, "openai.responses", "gpt-test", "request-2", "state-2")
@@ -165,7 +218,7 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if replacement.ResultBlobKey != "result-2" || replacement.ResponseBlobKey != "response-2" {
 		t.Fatalf("replacement lost checkpoint: %#v", replacement)
 	}
-	if _, err := runs.CompleteScheduledTurnRun(t.Context(), staleLease, "stale", "", "", llm.ModelUsage{}); !errors.Is(err, domain.ErrConflict) {
+	if _, err := runs.CompleteScheduledTurnRun(t.Context(), staleLease, "stale", "", "", llm.ModelUsage{}, 0); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("stale completion error = %v, want conflict", err)
 	}
 	failed, err := runs.FailScheduledTurnRun(t.Context(), replacementLease, "", "", "", "upstream failed",
@@ -203,7 +256,15 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim insufficient run: %v", err)
 	}
-	settled, err := runs.CompleteScheduledTurnRun(t.Context(), insufficientLease, "resp-insufficient", "response-insufficient", "result-insufficient", llm.ModelUsage{InputTokens: 1000, TotalTokens: 1000})
+	insufficientCall, acquired, err := calls.AcquireToolCall(t.Context(), insufficientTurnID, insufficientRunID, 1,
+		tool.ToolCall{CallID: "call-insufficient", Type: llm.ModelItemFunctionCall, Namespace: "sandbox", Name: "create"}, "arguments-insufficient")
+	if err != nil || !acquired {
+		t.Fatalf("acquire insufficient tool call: call=%#v acquired=%t err=%v", insufficientCall, acquired, err)
+	}
+	if _, err := calls.CompleteToolCall(t.Context(), insufficientCall.ID, "output-insufficient"); err != nil {
+		t.Fatalf("complete insufficient tool call: %v", err)
+	}
+	settled, err := runs.CompleteScheduledTurnRun(t.Context(), insufficientLease, "resp-insufficient", "response-insufficient", "result-insufficient", llm.ModelUsage{InputTokens: 1000, TotalTokens: 1000}, 0)
 	if err != nil || settled.Status != domain.TurnRunStatusFailed {
 		t.Fatalf("insufficient settlement = %#v, err=%v", settled, err)
 	}
@@ -215,10 +276,11 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	}
 	var usageStatus string
 	var transactionID *string
-	if err := pool.QueryRow(t.Context(), `SELECT status, billing_transaction_id::text FROM billing_usage_events WHERE turn_run_id = $1::uuid`, insufficientRunID).Scan(&usageStatus, &transactionID); err != nil {
+	var failedToolAmount int64
+	if err := pool.QueryRow(t.Context(), `SELECT status, billing_transaction_id::text, tool_amount_nanos FROM billing_usage_events WHERE turn_run_id = $1::uuid`, insufficientRunID).Scan(&usageStatus, &transactionID, &failedToolAmount); err != nil {
 		t.Fatalf("load insufficient usage event: %v", err)
 	}
-	if usageStatus != "failed" || transactionID != nil {
-		t.Fatalf("insufficient usage status=%q transaction=%v", usageStatus, transactionID)
+	if usageStatus != "failed" || transactionID != nil || failedToolAmount != 400_000_000 {
+		t.Fatalf("insufficient usage status=%q transaction=%v tool=%d", usageStatus, transactionID, failedToolAmount)
 	}
 }

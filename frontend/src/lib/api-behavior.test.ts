@@ -8,6 +8,7 @@ import {
   issueAdminBillingRedemptionCodes,
   isSessionUnauthorizedError,
   redeemBillingCode,
+  updateAdminBillingToolPrices,
 } from "./api";
 
 beforeEach(() => {
@@ -184,5 +185,55 @@ describe("billing redemptions", () => {
       "/api/v1/admin/billing/redemption-codes/code-1/disable",
     );
     expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
+  });
+});
+
+describe("tool pricing", () => {
+  it("updates the complete tool pricing plan", async () => {
+    const payload = [
+      {
+        tool_key: "sandbox.create" as const,
+        price_per_call_nanos: 250_000_000,
+        enabled: true,
+        version: 1,
+      },
+      {
+        tool_key: "image_generation" as const,
+        price_per_call_nanos: 500_000_000,
+        enabled: true,
+        version: 1,
+      },
+      {
+        tool_key: "tavily.search" as const,
+        price_per_call_nanos: 5_000_000,
+        enabled: true,
+        version: 1,
+      },
+      {
+        tool_key: "tavily.extract" as const,
+        price_per_call_nanos: 10_000_000,
+        enabled: false,
+        version: 1,
+      },
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        tool_prices: payload.map((item, index) => ({
+          ...item,
+          currency: "USD",
+          price_per_call: ["0.25", "0.50", "0.005", "0.01"][index],
+          version: item.version + 1,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        })),
+      }),
+    );
+
+    const result = await updateAdminBillingToolPrices(payload);
+
+    expect(result).toHaveLength(4);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/admin/billing/tool-prices");
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ tool_prices: payload }));
   });
 });

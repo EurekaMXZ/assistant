@@ -5,6 +5,7 @@ import type {
   BillingRedemptionCodeIssue,
   BillingRedemptionResult,
   BillingTransaction,
+  BillingToolPrice,
   BillingUsageEvent,
   Conversation,
   CursorPageResponse,
@@ -27,6 +28,7 @@ import {
   billingAccountSchema,
   billingRedemptionCodeSchema,
   billingTransactionSchema,
+  billingToolPriceSchema,
   billingUsageEventSchema,
   committedInitialTurnSchema,
   conversationSchema,
@@ -552,6 +554,24 @@ export async function revokeAdminCredential(credentialId: string) {
 
 export async function listAdminBillingAccounts() {
   return listAllCursorItems("/admin/billing/accounts?limit=200", billingAccountSchema);
+}
+
+export async function listAdminBillingToolPrices() {
+  return apiFetch<{ tool_prices: BillingToolPrice[] }>(
+    "/admin/billing/tool-prices",
+    {},
+    z.object({ tool_prices: z.array(billingToolPriceSchema) }),
+  ).then((result) => result.tool_prices);
+}
+
+export async function updateAdminBillingToolPrices(
+  toolPrices: Pick<BillingToolPrice, "tool_key" | "price_per_call_nanos" | "enabled" | "version">[],
+) {
+  return apiFetch<{ tool_prices: BillingToolPrice[] }>(
+    "/admin/billing/tool-prices",
+    { method: "PUT", body: JSON.stringify({ tool_prices: toolPrices }) },
+    z.object({ tool_prices: z.array(billingToolPriceSchema) }),
+  ).then((result) => result.tool_prices);
 }
 
 export async function listAdminBillingRedemptionCodes(cursor?: string) {

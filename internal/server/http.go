@@ -121,6 +121,8 @@ func (a *API) registerRoutes(router *gin.Engine) {
 	adminRoutes.GET("/admin/billing/redemption-codes", a.handleListRedemptionCodes)
 	adminRoutes.POST("/admin/billing/redemption-codes", a.handleIssueRedemptionCode)
 	adminRoutes.POST("/admin/billing/redemption-codes/:codeID/disable", a.handleDisableRedemptionCode)
+	adminRoutes.GET("/admin/billing/tool-prices", a.handleListBillingToolPrices)
+	adminRoutes.PUT("/admin/billing/tool-prices", a.handleUpdateBillingToolPrices)
 	adminRoutes.GET("/admin/billing/transactions", a.handleListAdminBillingTransactions)
 	adminRoutes.GET("/admin/billing/transactions/:transactionID", a.handleGetAdminBillingTransaction)
 	adminRoutes.GET("/admin/billing/usage-events", a.handleListAdminBillingUsageEvents)

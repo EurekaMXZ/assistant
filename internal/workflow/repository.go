@@ -74,7 +74,7 @@ type TurnRunWorkflowStore interface {
 	ClaimTurnRun(ctx context.Context, runID string) (*domain.TurnRun, TurnRunLease, error)
 	RenewTurnRunLease(ctx context.Context, lease TurnRunLease) error
 	CheckpointScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string) error
-	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage) (*domain.TurnRun, error)
+	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int) (*domain.TurnRun, error)
 	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string) (*domain.TurnRun, error)
 }
 

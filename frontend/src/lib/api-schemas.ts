@@ -214,6 +214,18 @@ export const billingRedemptionCodeSchema = z.object({
   created_at: dateTime,
 });
 
+export const billingToolPriceSchema = z.object({
+  tool_key: z.enum(["sandbox.create", "image_generation", "tavily.search", "tavily.extract"]),
+  currency: z.string(),
+  price_per_call_nanos: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  price_per_call: z.string(),
+  enabled: z.boolean(),
+  version: z.number().int().positive(),
+  updated_by_user_id: z.string().optional(),
+  created_at: dateTime,
+  updated_at: dateTime,
+});
+
 export const billingUsageEventSchema = z.object({
   id: z.string(),
   request_key: z.string(),
@@ -238,6 +250,10 @@ export const billingUsageEventSchema = z.object({
   output_tokens: z.number().int(),
   reasoning_output_tokens: z.number().int(),
   total_tokens: z.number().int(),
+  tool_amount_nanos: z.number().int().nonnegative(),
+  tool_amount: z.string(),
+  tool_usage: z.record(z.number().int().nonnegative()),
+  tool_pricing_snapshot: metadata,
   billing_transaction_id: z.string().optional(),
   error_code: z.string().optional(),
   created_at: dateTime,

@@ -11,7 +11,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminRedemptionCodes } from "@/components/admin/admin-redemption-codes";
+import { AdminToolPrices } from "@/components/admin/admin-tool-prices";
 import { BillingTokenUsage } from "@/components/billing-token-usage";
+import { BillingToolUsage } from "@/components/billing-tool-usage";
 import {
   AdminEmpty,
   AdminError,
@@ -53,7 +55,7 @@ import { parseDecimalNanos } from "@/lib/decimal-nanos";
 import { createIdempotencyKey } from "@/lib/idempotency-key";
 import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from "@/lib/types";
 
-type BillingView = "accounts" | "transactions" | "usage" | "codes";
+type BillingView = "accounts" | "transactions" | "usage" | "tool-prices" | "codes";
 
 export function AdminBilling() {
   const [view, setView] = useState<BillingView>("accounts");
@@ -170,19 +172,18 @@ export function AdminBilling() {
     <div>
       <AdminPageHeader title="计费" />
       <div
-        className="mt-5 inline-flex rounded-md bg-muted p-1"
-        role="tablist"
+        className="mt-5 flex max-w-full overflow-x-auto rounded-md bg-muted p-1 sm:w-fit"
+        role="group"
         aria-label="计费视图"
       >
-        {(["accounts", "transactions", "usage", "codes"] as const).map((item) => (
+        {(["accounts", "transactions", "usage", "tool-prices", "codes"] as const).map((item) => (
           <Button
             key={item}
             type="button"
-            role="tab"
-            aria-selected={view === item}
+            aria-pressed={view === item}
             size="sm"
             variant={view === item ? "secondary" : "ghost"}
-            className="h-7 min-h-7 rounded px-2.5 text-xs aria-selected:bg-background aria-selected:shadow-xs"
+            className="h-7 min-h-7 shrink-0 rounded px-2.5 text-xs"
             onClick={() => setView(item)}
           >
             {item === "accounts"
@@ -190,13 +191,17 @@ export function AdminBilling() {
               : item === "transactions"
                 ? "资金流水"
                 : item === "usage"
-                  ? "模型用量"
-                  : "兑换码"}
+                  ? "用量明细"
+                  : item === "tool-prices"
+                    ? "工具计费"
+                    : "兑换码"}
           </Button>
         ))}
       </div>
-      {loading && view !== "codes" ? <AdminLoading /> : null}
-      {!loading && error && view !== "codes" ? <AdminError message={error} onRetry={load} /> : null}
+      {loading && view !== "codes" && view !== "tool-prices" ? <AdminLoading /> : null}
+      {!loading && error && view !== "codes" && view !== "tool-prices" ? (
+        <AdminError message={error} onRetry={load} />
+      ) : null}
       {!loading && !error && view === "accounts" ? (
         accounts.length ? (
           <div className="mt-5 overflow-x-auto border-y">
@@ -335,6 +340,7 @@ export function AdminBilling() {
                   <th className="px-4 py-3 font-medium">用户</th>
                   <th className="px-4 py-3 font-medium">模型</th>
                   <th className="px-4 py-3 text-right font-medium">Tokens</th>
+                  <th className="px-4 py-3 text-right font-medium">工具</th>
                   <th className="px-4 py-3 text-right font-medium">费用</th>
                   <th className="py-3 pl-4 text-right font-medium">状态</th>
                 </tr>
@@ -354,6 +360,9 @@ export function AdminBilling() {
                     <td className="px-4 py-3 font-medium">{item.upstream_model}</td>
                     <td className="px-4 py-3 text-right font-mono">
                       <BillingTokenUsage usage={item} />
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono">
+                      <BillingToolUsage usage={item} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
                       {item.currency && item.amount_nanos != null
@@ -376,6 +385,7 @@ export function AdminBilling() {
       ) : null}
 
       {view === "codes" ? <AdminRedemptionCodes users={users} /> : null}
+      {view === "tool-prices" ? <AdminToolPrices /> : null}
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
@@ -476,7 +486,7 @@ function transactionName(kind: BillingTransaction["kind"]) {
   return {
     manual_topup: "充值",
     manual_refund: "退款扣减",
-    model_usage_charge: "模型用量",
+    model_usage_charge: "模型与工具用量",
     redemption_credit: "兑换码充值",
   }[kind];
 }

@@ -132,7 +132,7 @@ func (s *stubScheduledRunStore) CheckpointScheduledTurnRun(context.Context, Turn
 	return nil
 }
 
-func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRunLease, string, string, string, llm.ModelUsage) (*domain.TurnRun, error) {
+func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRunLease, string, string, string, llm.ModelUsage, int) (*domain.TurnRun, error) {
 	s.completed++
 	if s.run != nil {
 		s.run.Status = domain.TurnRunStatusCompleted

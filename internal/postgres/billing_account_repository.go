@@ -58,6 +58,7 @@ const billingUsageColumns = `
 	COALESCE(model_id::text, ''), COALESCE(model_revision, 0), COALESCE(model_price_id::text, ''),
 	upstream_model, provider_response_id, status, COALESCE(currency, ''), amount_nanos,
 	input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
+	tool_amount_nanos, tool_usage, tool_pricing_snapshot,
 	pricing_snapshot, usage, COALESCE(billing_transaction_id::text, ''), error_code, created_at`
 
 func (r *BillingAccountRepository) GetOrCreateAccount(ctx context.Context, userID string, currency string) (*domain.BillingAccount, error) {
@@ -525,7 +526,9 @@ func scanBillingUsageEvent(row scanRow) (*domain.BillingUsageEvent, error) {
 		&item.TurnRunID, &item.Workflow, &item.Attempt, &item.Provider, &item.ModelID,
 		&item.ModelRevision, &item.ModelPriceID, &item.UpstreamModel, &item.ProviderResponseID,
 		&item.Status, &item.Currency, &item.AmountNanos, &item.InputTokens, &item.CacheReadInputTokens,
-		&item.CacheCreationInputTokens, &item.OutputTokens, &item.ReasoningOutputTokens, &item.TotalTokens, &item.PricingSnapshot,
-		&item.Usage, &item.BillingTransactionID, &item.ErrorCode, &item.CreatedAt)
+		&item.CacheCreationInputTokens, &item.OutputTokens, &item.ReasoningOutputTokens, &item.TotalTokens,
+		&item.ToolAmountNanos, &item.ToolUsage, &item.ToolPricingSnapshot, &item.PricingSnapshot, &item.Usage,
+		&item.BillingTransactionID, &item.ErrorCode, &item.CreatedAt)
+	item.ToolAmount = billing.FormatAmount(item.ToolAmountNanos)
 	return &item, err
 }

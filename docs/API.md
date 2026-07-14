@@ -1189,7 +1189,7 @@ Returns one transaction only when it belongs to the authenticated user.
 
 ### GET `/billing/usage-events`
 
-Query params: `status`, `limit`, and `cursor`. Usage includes turn and compaction requests, token counts, the immutable pricing snapshot, rated amount, and linked billing transaction when one was captured.
+Query params: `status`, `limit`, and `cursor`. Usage includes turn and compaction requests, token counts, tool call counts, immutable model and tool pricing snapshots, rated amount, and linked billing transaction when one was captured. `tool_amount_nanos` is the tool portion of `amount_nanos`, `tool_amount` is its exact decimal string, and `tool_usage` maps billing tool keys to successful call counts.
 
 ### GET `/billing/usage-events/:usageEventID`
 
@@ -1550,6 +1550,29 @@ Lists redemption code metadata with cursor pagination. Status is computed as `ac
 ### POST `/admin/billing/redemption-codes/:codeID/disable`
 
 Permanently disables an active redemption code. The amount and expiry remain immutable. Repeating the disable is safe; redeemed or expired codes return `409 Conflict`.
+
+### GET `/admin/billing/tool-prices`
+
+Returns the configured-currency flat prices for `sandbox.create`, `image_generation`, `tavily.search`, and `tavily.extract`. The local `internet.search` and `internet.extract` tools are billed under the corresponding Tavily keys.
+
+### PUT `/admin/billing/tool-prices`
+
+Replaces the complete supported tool pricing plan atomically. Every supported tool must appear exactly once. Enabled prices must be greater than zero; disabled tools may retain a non-negative price for later activation.
+
+```json
+{
+  "tool_prices": [
+    { "tool_key": "sandbox.create", "price_per_call_nanos": 250000000, "enabled": true, "version": 1 },
+    { "tool_key": "image_generation", "price_per_call_nanos": 500000000, "enabled": true, "version": 1 },
+    { "tool_key": "tavily.search", "price_per_call_nanos": 5000000, "enabled": true, "version": 1 },
+    { "tool_key": "tavily.extract", "price_per_call_nanos": 10000000, "enabled": true, "version": 1 }
+  ]
+}
+```
+
+`version` is required for optimistic concurrency. A stale plan returns `409 Conflict` instead of overwriting a newer update.
+
+Tool prices are resolved when a successful model run settles. Only completed durable tool calls and image-generation output items with non-empty results are counted. The selected price versions and counts are stored on the immutable usage event. Model and tool amounts are debited together, so a retry cannot charge the run twice. Admission remains token-based; insufficient balance at settlement fails the turn without writing a debit transaction.
 
 ### GET `/admin/billing/transactions`
 

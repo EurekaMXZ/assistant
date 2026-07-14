@@ -399,6 +399,39 @@ func attachManagementUseCases(useCases *server.UseCases, deps managementDependen
 		return &server.PageResult[domain.BillingUsageEvent]{Items: items, NextCursor: next}, err
 	}
 	useCases.Billing.GetBillingUsageEvent = deps.billing.GetUsageEvent
+	useCases.Billing.ListBillingToolPrices = func(ctx context.Context, actor *domain.User) ([]domain.BillingToolPrice, error) {
+		if err := requireAdminActor(actor); err != nil {
+			return nil, err
+		}
+		return deps.billing.ListToolPrices(ctx, deps.currency)
+	}
+	useCases.Billing.UpdateBillingToolPrices = func(ctx context.Context, actor *domain.User, input server.UpdateBillingToolPricesInput) ([]domain.BillingToolPrice, error) {
+		if err := requireAdminActor(actor); err != nil {
+			return nil, err
+		}
+		if len(input.Prices) != len(domain.SupportedBillingToolKeys()) {
+			return nil, domain.NewValidationError("all supported tool prices are required")
+		}
+		seen := make(map[string]bool, len(input.Prices))
+		updates := make([]postgres.BillingToolPriceUpdate, 0, len(input.Prices))
+		for _, price := range input.Prices {
+			key := strings.TrimSpace(price.ToolKey)
+			if !domain.IsSupportedBillingToolKey(key) || seen[key] || price.Version <= 0 ||
+				price.PricePerCallNanos < 0 || price.PricePerCallNanos > domain.BillingToolMaxPriceNanos ||
+				(price.Enabled && price.PricePerCallNanos == 0) {
+				return nil, domain.NewValidationError("tool prices must contain each supported tool exactly once; enabled prices must be positive")
+			}
+			seen[key] = true
+			updates = append(updates, postgres.BillingToolPriceUpdate{
+				ToolKey: key, PricePerCallNanos: price.PricePerCallNanos, Enabled: price.Enabled,
+				ExpectedVersion: price.Version,
+			})
+		}
+		return deps.billing.UpdateToolPrices(ctx, postgres.UpdateBillingToolPricesParams{
+			Currency: deps.currency, Prices: updates, ActorUserID: actor.ID,
+			ActorRole: actor.Role, RequestID: input.RequestID,
+		})
+	}
 	useCases.Audit.ListAuditEvents = func(ctx context.Context, input server.AuditListInput) (*server.PageResult[domain.AuditEvent], error) {
 		items, next, err := deps.audit.List(ctx, postgres.AuditListParams(input))
 		return &server.PageResult[domain.AuditEvent]{Items: items, NextCursor: next}, err

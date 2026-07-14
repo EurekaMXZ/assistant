@@ -278,7 +278,7 @@ func (r *TurnRunRepository) ListTurnRunsByTurn(ctx context.Context, turnID strin
 	return runs, nil
 }
 
-func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage) (*domain.TurnRun, error) {
+func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int) (*domain.TurnRun, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -335,9 +335,17 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 	}
 	var execution domain.ModelExecutionSnapshot
 	_ = json.Unmarshal(modelSnapshot, &execution)
-	charge, err := billing.QuoteSnapshot(execution.PricingSnapshot, usage)
+	modelCharge, err := billing.QuoteSnapshot(execution.PricingSnapshot, usage)
 	if err != nil {
 		return nil, fmt.Errorf("rate turn run: %w", err)
+	}
+	toolCharge, err := loadRunToolCharge(ctx, tx, run.ID, modelCharge.Currency, imageGenerationCount)
+	if err != nil {
+		return nil, err
+	}
+	charge, err := billing.AddToolCharge(modelCharge, toolCharge)
+	if err != nil {
+		return nil, fmt.Errorf("combine turn run charges: %w", err)
 	}
 	row = tx.QueryRow(ctx, `
 		UPDATE turn_runs tr
@@ -353,7 +361,7 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 	billingTransactionID, err = captureUsageCharge(ctx, tx, ownerUserID, charge)
 	if err != nil {
 		if errors.Is(err, domain.ErrPaymentRequired) {
-			run, err = r.failBillingSettlement(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge)
+			run, err = r.failBillingSettlement(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, toolCharge)
 			if err != nil {
 				return nil, err
 			}
@@ -364,7 +372,7 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 		}
 		return nil, err
 	}
-	if err := r.insertBillingUsageEvent(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, billingTransactionID); err != nil {
+	if err := r.insertBillingUsageEvent(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, toolCharge, billingTransactionID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -385,6 +393,7 @@ func (r *TurnRunRepository) failBillingSettlement(
 	modelRevision int64,
 	modelPriceID string,
 	charge *billing.Charge,
+	toolCharge *billing.ToolCharge,
 ) (*domain.TurnRun, error) {
 	row := tx.QueryRow(ctx, `
 		UPDATE turn_runs tr
@@ -414,16 +423,18 @@ func (r *TurnRunRepository) failBillingSettlement(
 			provider, model_id, model_revision, model_price_id, upstream_model, provider_response_id,
 			status, currency, amount_nanos, input_tokens, cache_read_input_tokens,
 			cache_creation_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
-			pricing_snapshot, usage, error_code
+			tool_amount_nanos, tool_usage, tool_pricing_snapshot, pricing_snapshot, usage, error_code
 		) VALUES ($1, NULLIF($2, '')::uuid, $3::uuid, $4::uuid, $5::uuid, 'turn', $6,
 			$7, NULLIF($8, '')::uuid, NULLIF($9, 0), NULLIF($10, '')::uuid, $11, $12,
-			'failed', $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23)
+			'failed', $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23::jsonb,
+			$24::jsonb, $25::jsonb, $26)
 		ON CONFLICT (turn_run_id) WHERE turn_run_id IS NOT NULL DO NOTHING
 	`, "turn-run:"+run.ID, ownerUserID, conversationID, run.TurnID, run.ID, run.Attempt,
 		run.Provider, modelID, modelRevision, modelPriceID, run.Model, run.ResponseID,
 		charge.Currency, charge.AmountNanos, usage.InputTokens, usage.CacheReadInputTokens,
 		usage.CacheCreationInputTokens, usage.OutputTokens, usage.ReasoningOutputTokens,
-		usage.TotalTokens, normalizedJSON(charge.PricingJSON), normalizedJSON(usage.Raw),
+		usage.TotalTokens, toolCharge.AmountNanos, normalizedJSON(toolCharge.UsageJSON),
+		normalizedJSON(toolCharge.PricingJSON), normalizedJSON(charge.PricingJSON), normalizedJSON(usage.Raw),
 		domain.TurnErrorBillingSettlementFailed); err != nil {
 		return nil, fmt.Errorf("insert failed settlement usage event: %w", err)
 	}
@@ -442,6 +453,7 @@ func (r *TurnRunRepository) insertBillingUsageEvent(
 	modelRevision int64,
 	modelPriceID string,
 	charge *billing.Charge,
+	toolCharge *billing.ToolCharge,
 	billingTransactionID string,
 ) error {
 	_, err := tx.Exec(ctx, `
@@ -449,16 +461,18 @@ func (r *TurnRunRepository) insertBillingUsageEvent(
 			request_key, owner_user_id, conversation_id, turn_id, turn_run_id, workflow, attempt,
 			provider, model_id, model_revision, model_price_id, upstream_model, provider_response_id,
 			status, currency, amount_nanos, input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
-			reasoning_output_tokens, total_tokens, pricing_snapshot, usage, billing_transaction_id
+			reasoning_output_tokens, total_tokens, tool_amount_nanos, tool_usage, tool_pricing_snapshot,
+			pricing_snapshot, usage, billing_transaction_id
 		) VALUES ($1, NULLIF($2, '')::uuid, $3::uuid, $4::uuid, $5::uuid, 'turn', $6,
 			$7, NULLIF($8, '')::uuid, NULLIF($9, 0), NULLIF($10, '')::uuid, $11, $12,
-			'completed', $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb,
-			NULLIF($23, '')::uuid)
+			'completed', $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23::jsonb,
+			$24::jsonb, $25::jsonb, NULLIF($26, '')::uuid)
 		ON CONFLICT (turn_run_id) WHERE turn_run_id IS NOT NULL DO NOTHING
 	`, "turn-run:"+run.ID, ownerUserID, conversationID, run.TurnID, run.ID, run.Attempt,
 		run.Provider, modelID, modelRevision, modelPriceID, run.Model, run.ResponseID,
 		charge.Currency, charge.AmountNanos, usage.InputTokens, usage.CacheReadInputTokens, usage.CacheCreationInputTokens, usage.OutputTokens,
-		usage.ReasoningOutputTokens, usage.TotalTokens, normalizedJSON(charge.PricingJSON), normalizedJSON(usage.Raw), billingTransactionID)
+		usage.ReasoningOutputTokens, usage.TotalTokens, toolCharge.AmountNanos, normalizedJSON(toolCharge.UsageJSON),
+		normalizedJSON(toolCharge.PricingJSON), normalizedJSON(charge.PricingJSON), normalizedJSON(usage.Raw), billingTransactionID)
 	if err != nil {
 		return fmt.Errorf("insert billing usage event: %w", err)
 	}

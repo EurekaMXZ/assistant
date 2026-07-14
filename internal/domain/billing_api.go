@@ -14,7 +14,31 @@ const (
 	BillingRedemptionCodeDisabled = "disabled"
 	BillingRedemptionCodeExpired  = "expired"
 	BillingRedemptionCodeRedeemed = "redeemed"
+
+	BillingToolSandboxCreate   = "sandbox.create"
+	BillingToolImageGeneration = "image_generation"
+	BillingToolTavilySearch    = "tavily.search"
+	BillingToolTavilyExtract   = "tavily.extract"
+	BillingToolMaxPriceNanos   = int64(9_007_199_254_740_991)
 )
+
+func SupportedBillingToolKeys() []string {
+	return []string{
+		BillingToolSandboxCreate,
+		BillingToolImageGeneration,
+		BillingToolTavilySearch,
+		BillingToolTavilyExtract,
+	}
+}
+
+func IsSupportedBillingToolKey(value string) bool {
+	for _, key := range SupportedBillingToolKeys() {
+		if value == key {
+			return true
+		}
+	}
+	return false
+}
 
 type BillingAccount struct {
 	ID           string    `json:"id"`
@@ -74,6 +98,18 @@ type BillingRedemptionResult struct {
 	Replayed    bool               `json:"replayed"`
 }
 
+type BillingToolPrice struct {
+	ToolKey           string    `json:"tool_key"`
+	Currency          string    `json:"currency"`
+	PricePerCallNanos int64     `json:"price_per_call_nanos"`
+	PricePerCall      string    `json:"price_per_call"`
+	Enabled           bool      `json:"enabled"`
+	Version           int64     `json:"version"`
+	UpdatedByUserID   string    `json:"updated_by_user_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 type BillingUsageEvent struct {
 	ID                       string          `json:"id"`
 	RequestKey               string          `json:"request_key"`
@@ -98,6 +134,10 @@ type BillingUsageEvent struct {
 	OutputTokens             int             `json:"output_tokens"`
 	ReasoningOutputTokens    int             `json:"reasoning_output_tokens"`
 	TotalTokens              int             `json:"total_tokens"`
+	ToolAmountNanos          int64           `json:"tool_amount_nanos"`
+	ToolAmount               string          `json:"tool_amount"`
+	ToolUsage                json.RawMessage `json:"tool_usage"`
+	ToolPricingSnapshot      json.RawMessage `json:"tool_pricing_snapshot"`
 	PricingSnapshot          json.RawMessage `json:"pricing_snapshot"`
 	Usage                    json.RawMessage `json:"usage"`
 	BillingTransactionID     string          `json:"billing_transaction_id,omitempty"`

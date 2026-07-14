@@ -12,6 +12,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { BillingTokenUsage } from "@/components/billing-token-usage";
+import { BillingToolUsage } from "@/components/billing-tool-usage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -359,7 +360,9 @@ export function ExpensesSettings() {
                       </Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {formatDate(item.created_at)} · <BillingTokenUsage usage={item} /> tokens
+                      {formatDate(item.created_at)} · <BillingTokenUsage usage={item} /> tokens ·
+                      {` `}
+                      <BillingToolUsage usage={item} /> tools
                     </p>
                   </div>
                   <p className="shrink-0 whitespace-nowrap font-mono text-sm">
@@ -375,6 +378,7 @@ export function ExpensesSettings() {
                     <th className="py-3 pr-4 font-medium">时间</th>
                     <th className="px-4 py-3 font-medium">模型</th>
                     <th className="px-4 py-3 text-right font-medium">Tokens</th>
+                    <th className="px-4 py-3 text-right font-medium">工具</th>
                     <th className="px-4 py-3 text-right font-medium">费用</th>
                     <th className="py-3 pl-4 text-right font-medium">状态</th>
                   </tr>
@@ -390,6 +394,9 @@ export function ExpensesSettings() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
                         <BillingTokenUsage usage={item} />
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
+                        <BillingToolUsage usage={item} />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
                         {usageAmount(item)}

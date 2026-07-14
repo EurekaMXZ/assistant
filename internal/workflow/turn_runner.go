@@ -254,7 +254,10 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			return err
 		}
 	}
-	settled, err := r.runs.CompleteScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey, outcome.Model.Usage)
+	settled, err := r.runs.CompleteScheduledTurnRun(
+		ctx, lease, outcome.Model.ResponseID, responseKey, resultKey,
+		outcome.Model.Usage, billableImageGenerationCount(outcome.Model),
+	)
 	if err != nil {
 		if leaseErr := stopLease(); leaseErr != nil {
 			return leaseErr

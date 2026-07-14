@@ -53,6 +53,19 @@ func (r *TurnRunner) generatedImageDrafts(ctx context.Context, turn *domain.Turn
 	return drafts, nil
 }
 
+func billableImageGenerationCount(result *llm.ModelResult) int {
+	if result == nil {
+		return 0
+	}
+	count := 0
+	for _, item := range result.OutputItems {
+		if item.Type == llm.ModelItemImageGenerationCall && strings.TrimSpace(item.Result) != "" {
+			count++
+		}
+	}
+	return count
+}
+
 func (r *TurnRunner) generatedImageDraft(ctx context.Context, turn *domain.Turn, responseID string, ownerUserID string, item llm.ModelItem, outputIndex int) (domain.AssistantMessageDraft, error) {
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(item.Result))
 	if err != nil {

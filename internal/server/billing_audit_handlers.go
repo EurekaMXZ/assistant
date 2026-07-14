@@ -128,6 +128,30 @@ func (a *API) handleDisableRedemptionCode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"redemption_code": item})
 }
 
+func (a *API) handleListBillingToolPrices(c *gin.Context) {
+	items, err := a.useCases.Billing.ListBillingToolPrices(c.Request.Context(), currentUser(c))
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tool_prices": items})
+}
+
+func (a *API) handleUpdateBillingToolPrices(c *gin.Context) {
+	var request UpdateBillingToolPricesInput
+	if err := bindJSON(c, &request); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	request.RequestID = requestID(c)
+	items, err := a.useCases.Billing.UpdateBillingToolPrices(c.Request.Context(), currentUser(c), request)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tool_prices": items})
+}
+
 func (a *API) handleRedeemBillingCode(c *gin.Context) {
 	var request struct {
 		Code string `json:"code"`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationSchema, parseTurnStreamFrame } from "./api-schemas";
+import { billingToolPriceSchema, conversationSchema, parseTurnStreamFrame } from "./api-schemas";
 import { isViewportNearBottom } from "./scroll-follow";
 import { parseSseFrame, SseValidationError } from "./sse";
 
@@ -23,6 +23,24 @@ describe("runtime schemas", () => {
     expect(parseTurnStreamFrame("internal.event", {})).toBeNull();
     expect(() => parseSseFrame('event: turn.done\ndata: {"status":"completed"}\n\n')).toThrow(
       SseValidationError,
+    );
+  });
+
+  it("validates supported billing tool keys", () => {
+    const base = {
+      currency: "USD",
+      price_per_call_nanos: 250_000_000,
+      price_per_call: "0.25",
+      enabled: true,
+      version: 1,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    expect(billingToolPriceSchema.safeParse({ ...base, tool_key: "sandbox.create" }).success).toBe(
+      true,
+    );
+    expect(billingToolPriceSchema.safeParse({ ...base, tool_key: "sandbox.exec" }).success).toBe(
+      false,
     );
   });
 });

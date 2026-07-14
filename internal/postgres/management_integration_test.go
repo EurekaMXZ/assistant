@@ -131,6 +131,30 @@ func TestManagementBillingAndAuditIntegration(t *testing.T) {
 	}
 
 	billing := NewBillingAccountRepository(pool)
+	toolPrices, err := billing.ListToolPrices(t.Context(), "USD")
+	if err != nil || len(toolPrices) != len(domain.SupportedBillingToolKeys()) {
+		t.Fatalf("list default tool prices: prices=%#v err=%v", toolPrices, err)
+	}
+	toolPriceVersions := make(map[string]int64, len(toolPrices))
+	for _, price := range toolPrices {
+		toolPriceVersions[price.ToolKey] = price.Version
+	}
+	toolPriceUpdate := UpdateBillingToolPricesParams{
+		Currency: "USD", ActorUserID: adminID, ActorRole: domain.UserRoleAdmin, RequestID: "tool-price-update",
+		Prices: []BillingToolPriceUpdate{
+			{ToolKey: domain.BillingToolSandboxCreate, PricePerCallNanos: 250_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolSandboxCreate]},
+			{ToolKey: domain.BillingToolImageGeneration, PricePerCallNanos: 500_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolImageGeneration]},
+			{ToolKey: domain.BillingToolTavilySearch, PricePerCallNanos: 5_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilySearch]},
+			{ToolKey: domain.BillingToolTavilyExtract, PricePerCallNanos: 10_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilyExtract]},
+		},
+	}
+	toolPrices, err = billing.UpdateToolPrices(t.Context(), toolPriceUpdate)
+	if err != nil || len(toolPrices) != 4 || toolPrices[0].PricePerCall != "0.25" || !toolPrices[0].Enabled {
+		t.Fatalf("update tool prices: prices=%#v err=%v", toolPrices, err)
+	}
+	if _, err := billing.UpdateToolPrices(t.Context(), toolPriceUpdate); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale tool price update error = %v, want conflict", err)
+	}
 	account, err := billing.GetOrCreateAccount(t.Context(), userID, "USD")
 	if err != nil {
 		t.Fatalf("create billing account: %v", err)
@@ -257,6 +281,20 @@ func TestManagementBillingAndAuditIntegration(t *testing.T) {
 	}
 	if usageCount != 1 || transactionCount != 1 || balanceBefore-balanceAfter != usageAmount {
 		t.Fatalf("compaction charge count=%d transactions=%d before=%d after=%d amount=%d", usageCount, transactionCount, balanceBefore, balanceAfter, usageAmount)
+	}
+	usageEvents, _, err := billing.ListUsageEvents(t.Context(), BillingListParams{UserID: userID, Limit: 50})
+	if err != nil {
+		t.Fatalf("list usage events after tool billing migration: %v", err)
+	}
+	var compactionUsage *domain.BillingUsageEvent
+	for index := range usageEvents {
+		if usageEvents[index].RequestKey == requestKey {
+			compactionUsage = &usageEvents[index]
+			break
+		}
+	}
+	if compactionUsage == nil || compactionUsage.ToolAmountNanos != 0 || compactionUsage.ToolAmount != "0.00" || string(compactionUsage.ToolUsage) != "{}" {
+		t.Fatalf("compaction tool defaults = %#v", compactionUsage)
 	}
 	if _, err := pool.Exec(t.Context(), `UPDATE billing_accounts SET status = 'frozen' WHERE user_id = $1::uuid AND currency = 'USD'`, userID); err != nil {
 		t.Fatalf("freeze billing account: %v", err)

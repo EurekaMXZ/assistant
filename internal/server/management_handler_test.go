@@ -25,6 +25,7 @@ func TestAdminManagementRoutesRejectRegularUser(t *testing.T) {
 		"/api/v1/admin/models",
 		"/api/v1/admin/billing/accounts",
 		"/api/v1/admin/billing/redemption-codes",
+		"/api/v1/admin/billing/tool-prices",
 		"/api/v1/admin/audit-events",
 	} {
 		req := httptest.NewRequest(http.MethodGet, route, nil)
@@ -237,6 +238,35 @@ func TestDisableRedemptionCodeUsesAdminAndRequestID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"disabled"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateBillingToolPricesPassesCompletePlanAndRequestID(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleAdmin)},
+		Billing: BillingUseCases{UpdateBillingToolPrices: func(_ context.Context, actor *domain.User, input UpdateBillingToolPricesInput) ([]domain.BillingToolPrice, error) {
+			if actor.ID != "user-1" || input.RequestID != "request-tool-prices" || len(input.Prices) != 4 {
+				t.Fatalf("unexpected tool price input: actor=%#v input=%#v", actor, input)
+			}
+			if input.Prices[0].ToolKey != domain.BillingToolSandboxCreate || !input.Prices[0].Enabled ||
+				input.Prices[0].PricePerCallNanos != 250_000_000 || input.Prices[0].Version != 1 {
+				t.Fatalf("unexpected sandbox price: %#v", input.Prices[0])
+			}
+			return []domain.BillingToolPrice{{
+				ToolKey: domain.BillingToolSandboxCreate, Currency: "USD", PricePerCallNanos: 250_000_000,
+				PricePerCall: "0.25", Enabled: true, Version: 2,
+			}}, nil
+		}},
+	})
+	body := `{"tool_prices":[{"tool_key":"sandbox.create","price_per_call_nanos":250000000,"enabled":true,"version":1},{"tool_key":"image_generation","price_per_call_nanos":100000000,"enabled":true,"version":1},{"tool_key":"tavily.search","price_per_call_nanos":10000000,"enabled":true,"version":1},{"tool_key":"tavily.extract","price_per_call_nanos":20000000,"enabled":false,"version":1}]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/billing/tool-prices", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "request-tool-prices")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tool_key":"sandbox.create"`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
