@@ -11,6 +11,7 @@ import {
   RefreshCw,
   WalletCards,
 } from "lucide-react";
+import { BillingTokenUsage } from "@/components/billing-token-usage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -358,8 +359,7 @@ export function ExpensesSettings() {
                       </Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {formatDate(item.created_at)} · {item.total_tokens.toLocaleString("zh-CN")}{" "}
-                      tokens
+                      {formatDate(item.created_at)} · <BillingTokenUsage usage={item} /> tokens
                     </p>
                   </div>
                   <p className="shrink-0 whitespace-nowrap font-mono text-sm">
@@ -389,7 +389,7 @@ export function ExpensesSettings() {
                         {item.upstream_model}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
-                        {item.total_tokens.toLocaleString("zh-CN")}
+                        <BillingTokenUsage usage={item} />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
                         {usageAmount(item)}

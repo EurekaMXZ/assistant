@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminRedemptionCodes } from "@/components/admin/admin-redemption-codes";
+import { BillingTokenUsage } from "@/components/billing-token-usage";
 import {
   AdminEmpty,
   AdminError,
@@ -352,7 +353,7 @@ export function AdminBilling() {
                     </td>
                     <td className="px-4 py-3 font-medium">{item.upstream_model}</td>
                     <td className="px-4 py-3 text-right font-mono">
-                      {item.total_tokens.toLocaleString("zh-CN")}
+                      <BillingTokenUsage usage={item} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
                       {item.currency && item.amount_nanos != null
