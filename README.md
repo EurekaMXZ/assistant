@@ -67,8 +67,8 @@ cp .env.example .env
 ### 本地开发
 
 ```bash
-# 启动基础设施
-docker compose up -d postgres redis kafka minio
+# 启动基础设施；开发 override 仅将中间件端口绑定到本机回环地址
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis kafka minio
 
 # 配置浏览器直连的后端地址
 cp frontend/.env.local.example frontend/.env.local
@@ -102,9 +102,9 @@ cd frontend && pnpm install && pnpm dev
 docker compose up -d --build
 ```
 
-默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。浏览器统一访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。前端使用同源相对地址 `/api/v1`，Go API 和 Next.js 均只暴露在 Compose 内部网络，不单独发布宿主机端口。Nginx 对 SSE 路径关闭压缩、缓存和代理缓冲。
+默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。只有入口 Nginx 向宿主机发布端口，PostgreSQL、Redis、Kafka、MinIO、Go API 和 Next.js 仅在 Compose 网络内可达。浏览器默认访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。前端使用同源相对地址 `/api/v1`，Nginx 对 SSE 路径关闭压缩、缓存和代理缓冲。宿主机映射端口可通过 `NGINX_HOST_PORT` 调整。
 
-单机部署到其他域名时，将域名或 TLS 入口指向 Nginx 的 `8080` 端口，并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。该值同时用于 CORS 和邮箱验证、密码重置链接。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
+单机部署到其他域名时，将域名或 TLS 入口指向 `NGINX_HOST_PORT`（默认 `8080`），并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。`WEB_ORIGIN` 同时用于 CORS 和邮箱验证、密码重置链接。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
 
 Compose 不包含独立部署的 CubeSandbox 集群，也不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 进程默认提供 4 个 request slot，但只建立一个 Kafka group consumer；同一 conversation 在分区稳定期间固定命中同一进程。
 
