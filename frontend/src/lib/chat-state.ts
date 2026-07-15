@@ -194,12 +194,3 @@ export function applyAssistantTimelineSnapshot(
     retained,
   );
 }
-
-export function statusTextFromItem(item: TimelineItem): string | null {
-  if (item.type === "reasoning") return "模型思考中…";
-  if (item.type === "tool_call") {
-    return item.title?.trim() ? `调用 ${item.title.trim()}…` : "工具调用中…";
-  }
-  if (item.type === "status") return item.content_text?.trim() || null;
-  return null;
-}

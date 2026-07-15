@@ -15,7 +15,6 @@ import {
   assistantOutputPhase,
   assistantTextMessageId,
   moveThinkingAfter,
-  statusTextFromItem,
   upsertAssistantTextContent,
   upsertTurnFailureMessage,
 } from "@/lib/chat-state";
@@ -51,8 +50,6 @@ export interface TurnTimelineController {
   timelineLoading: ReturnType<typeof createTurnTimelineState>["loading"];
   timelineErrors: ReturnType<typeof createTurnTimelineState>["errors"];
   timelineActivityLabels: Record<string, string | null>;
-  statusText: string | null;
-  clearStatus: () => void;
   closeTimeline: () => void;
   dispatchActiveFrame: (frame: SseFrame, turnId: string) => void;
   finishActiveTurn: (turnId: string) => void;
@@ -70,7 +67,6 @@ export function useTurnTimelineController({
   const [projection, setProjection] = useState(createTurnTimelineState);
   const projectionRef = useRef(projection);
   const [timelineTurnId, setTimelineTurnId] = useState<string | null>(null);
-  const [statusText, setStatusText] = useState<string | null>(null);
   const pendingDoneTextMessageIdRef = useRef<string | null>(null);
   const hydrationControllersRef = useRef(new Map<string, AbortController>());
   const activeConversationIdRef = useRef(conversationId);
@@ -106,7 +102,6 @@ export function useTurnTimelineController({
     projectionRef.current = initial;
     setProjection(initial);
     setTimelineTurnId(null);
-    setStatusText(null);
   }, [conversationId]);
 
   const settlePendingThinking = useCallback(
@@ -204,11 +199,6 @@ export function useTurnTimelineController({
               applyAssistantTimelineSnapshot(previous, turnId, conversationId, snapshot.items),
             );
           }
-          if (mode === "active") {
-            const timelineItems = snapshot.items.filter(isTimelineItem);
-            const latest = timelineItems.at(-1);
-            setStatusText(latest ? statusTextFromItem(latest) : null);
-          }
         },
         onItemUpsert(item) {
           const accepted = applyAction({
@@ -230,8 +220,6 @@ export function useTurnTimelineController({
                 "replace",
               ),
             );
-          } else if (mode === "active" && isTimelineItem(item)) {
-            setStatusText(statusTextFromItem(item));
           }
         },
         onItemDelta(delta) {
@@ -282,10 +270,7 @@ export function useTurnTimelineController({
               if (phase === "commentary") {
                 setMessages((previous) => moveThinkingAfter(previous, turnId, messageId));
               }
-              setStatusText(null);
             }
-          } else if (mode === "active" && isTimelineItem(item)) {
-            setStatusText(statusTextFromItem(item));
           }
         },
         onTurnDone(done) {
@@ -305,7 +290,6 @@ export function useTurnTimelineController({
                   ),
             );
           }
-          if (mode === "active") setStatusText(null);
         },
         onConversationUpdated(update) {
           if (update.conversation_id === conversationId) {
@@ -408,7 +392,6 @@ export function useTurnTimelineController({
   const finishActiveTurn = useCallback(
     (turnId: string) => {
       pendingDoneTextMessageIdRef.current = null;
-      setStatusText(null);
       applyAction({ type: "set-loading", turnId, loading: false });
     },
     [applyAction],
@@ -429,8 +412,6 @@ export function useTurnTimelineController({
     timelineLoading: projection.loading,
     timelineErrors: projection.errors,
     timelineActivityLabels,
-    statusText,
-    clearStatus: useCallback(() => setStatusText(null), []),
     closeTimeline: useCallback(() => setTimelineTurnId(null), []),
     dispatchActiveFrame,
     finishActiveTurn,

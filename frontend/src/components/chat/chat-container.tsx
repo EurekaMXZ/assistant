@@ -176,8 +176,6 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     timelineLoading,
     timelineErrors,
     timelineActivityLabels,
-    statusText,
-    clearStatus,
     closeTimeline,
     dispatchActiveFrame,
     finishActiveTurn,
@@ -416,8 +414,6 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     if (!content.trim() && attachmentIds.length === 0) {
       return;
     }
-
-    clearStatus();
 
     let turnId: string;
     let streamPath: string;
@@ -743,13 +739,6 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               streamingTurnId={streamingTurnId}
               turnsById={turnsById}
             />
-
-            {statusText && (
-              <div className="flex shrink-0 items-center justify-center gap-2 border-t py-2 text-xs text-muted-foreground sm:hidden">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                {statusText}
-              </div>
-            )}
 
             <Composer
               allowEmpty={Boolean(
