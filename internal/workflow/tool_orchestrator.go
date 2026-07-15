@@ -152,7 +152,7 @@ func (o *ToolOrchestrator) recordToolCallSuccess(ctx context.Context, scope tool
 	return nil
 }
 
-func (o *ToolOrchestrator) recordToolCallFailure(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, message string) error {
+func (o *ToolOrchestrator) recordToolCallFailure(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, message string, output string) error {
 	if o == nil || record == nil || o.calls == nil {
 		return nil
 	}
@@ -160,7 +160,7 @@ func (o *ToolOrchestrator) recordToolCallFailure(ctx context.Context, scope tool
 	outputKey := ""
 	if o.artifacts != nil {
 		outputKey = o.artifacts.ToolCallOutputKey(scope.ConversationID, scope.TurnID, call.CallID)
-		if err := o.artifacts.PutBytes(ctx, outputKey, []byte(message), "text/plain"); err != nil {
+		if err := o.artifacts.PutBytes(ctx, outputKey, []byte(output), "application/json"); err != nil {
 			return fmt.Errorf("persist failed tool call output: %w", err)
 		}
 	}
@@ -172,6 +172,19 @@ func (o *ToolOrchestrator) recordToolCallFailure(ctx context.Context, scope tool
 		return fmt.Errorf("fail tool call: %w", err)
 	}
 
+	return nil
+}
+
+func (o *ToolOrchestrator) recordToolCallAmbiguous(ctx context.Context, record *domain.ToolCallRecord, message string) error {
+	if o == nil || record == nil || o.calls == nil {
+		return nil
+	}
+	record.OutputBlobKey = ""
+	record.ErrorMessage = message
+	record.Status = domain.ToolCallStatusAmbiguous
+	if _, err := o.calls.MarkToolCallAmbiguous(ctx, record.ID, message); err != nil {
+		return fmt.Errorf("mark tool call ambiguous: %w", err)
+	}
 	return nil
 }
 

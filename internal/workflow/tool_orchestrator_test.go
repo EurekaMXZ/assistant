@@ -3,7 +3,9 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -119,6 +121,7 @@ type stubToolCallStore struct {
 	created     []string
 	completed   []string
 	failed      []string
+	ambiguous   []string
 	recordsByID map[string]*domain.ToolCallRecord
 }
 
@@ -143,6 +146,11 @@ func (s *stubToolCallStore) CompleteToolCall(_ context.Context, recordID string,
 func (s *stubToolCallStore) FailToolCall(_ context.Context, recordID string, outputBlobKey string, message string) (*domain.ToolCallRecord, error) {
 	s.failed = append(s.failed, recordID+":"+outputBlobKey+":"+message)
 	return &domain.ToolCallRecord{ID: recordID}, nil
+}
+
+func (s *stubToolCallStore) MarkToolCallAmbiguous(_ context.Context, recordID string, message string) (*domain.ToolCallRecord, error) {
+	s.ambiguous = append(s.ambiguous, recordID+":"+message)
+	return &domain.ToolCallRecord{ID: recordID, Status: domain.ToolCallStatusAmbiguous}, nil
 }
 
 type stubToolExecutor struct {
@@ -214,5 +222,50 @@ func TestToolExecutionReceivesStableRequestKey(t *testing.T) {
 	}
 	if len(executor.calls) != 1 || executor.calls[0].RequestKey != "run-1:call-1" {
 		t.Fatalf("request key not propagated: %#v", executor.calls)
+	}
+}
+
+func TestToolFailureReturnsRecoverableModelOutputAndReplaysIt(t *testing.T) {
+	executor := &stubToolExecutor{err: tool.RecoverableError(fmt.Errorf("temporary lookup failure"))}
+	artifacts := &stubToolArtifactStore{}
+	store := &stubToolCallStore{}
+	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, artifacts, store)
+	run := &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}
+	call := tool.ToolCall{CallID: "call-1", Namespace: "sandbox", Name: "create"}
+
+	input, scope, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call})
+	if err != nil {
+		t.Fatalf("execute failed tool call: %v", err)
+	}
+	if len(input) != 1 || input[0].Type != llm.ModelItemFunctionCallOutput || !strings.Contains(input[0].Output, `"recoverable":true`) {
+		t.Fatalf("model-visible failure output = %#v", input)
+	}
+	if scope.HasSandbox {
+		t.Fatal("failed sandbox.create changed sandbox scope")
+	}
+	if len(store.failed) != 1 || store.recordsByID["record-call-1"].Status != domain.ToolCallStatusFailed {
+		t.Fatalf("failed tool call was not persisted: store=%#v", store)
+	}
+
+	executor.calls = nil
+	replayed, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call})
+	if err != nil {
+		t.Fatalf("replay failed tool call: %v", err)
+	}
+	if len(executor.calls) != 0 || len(replayed) != 1 || replayed[0].Output != input[0].Output {
+		t.Fatalf("failed tool replay = %#v, executor calls = %#v", replayed, executor.calls)
+	}
+}
+
+func TestToolFailureWithUncertainOutcomeFailsClosed(t *testing.T) {
+	executor := &stubToolExecutor{err: errors.New("connection dropped after request")}
+	store := &stubToolCallStore{}
+	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, &stubToolArtifactStore{}, store)
+	_, _, err := orchestrator.executeLocalToolCalls(t.Context(), &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{{CallID: "call-1", Namespace: "sandbox", Name: "create"}})
+	if err == nil || !strings.Contains(err.Error(), "uncertain outcome") {
+		t.Fatalf("uncertain tool error = %v", err)
+	}
+	if len(store.failed) != 0 || len(store.ambiguous) != 1 || store.recordsByID["record-call-1"].Status != domain.ToolCallStatusAmbiguous {
+		t.Fatalf("uncertain tool outcome was recorded as definitive: %#v", store)
 	}
 }

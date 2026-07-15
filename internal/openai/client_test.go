@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,7 +58,9 @@ func TestNewUsesSettings(t *testing.T) {
 }
 
 func TestStreamResponseClassifiesAndSanitizesProviderFailure(t *testing.T) {
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"message\":\"sensitive provider detail\"}}}\n\n"))
 	}))
@@ -76,6 +80,119 @@ func TestStreamResponseClassifiesAndSanitizesProviderFailure(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Error != domain.TurnPublicErrorUpstreamRequestFailed {
 		t.Fatalf("unexpected public events: %#v", events)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("stream failure requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestStreamResponseRetriesServerErrorsWithBoundedExponentialBackoff(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) <= maxModelHTTPRetries {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_retry\",\"status\":\"completed\",\"output\":[]}}\n\n"))
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL, Settings{HTTPClientTimeout: 5 * time.Second})
+	var delays []time.Duration
+	client.retryWait = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	result, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, nil)
+	if err != nil {
+		t.Fatalf("stream response after retries: %v", err)
+	}
+	if result == nil || result.ResponseID != "resp_retry" {
+		t.Fatalf("unexpected retry result: %#v", result)
+	}
+	if requests.Load() != maxModelHTTPRetries+1 {
+		t.Fatalf("requests = %d, want %d", requests.Load(), maxModelHTTPRetries+1)
+	}
+	if len(delays) != maxModelHTTPRetries {
+		t.Fatalf("retry delays = %#v", delays)
+	}
+	for index, delay := range delays {
+		if want := time.Second << index; delay != want {
+			t.Fatalf("retry delay %d = %v, want %v", index, delay, want)
+		}
+	}
+}
+
+func TestStreamResponseStopsAfterMaximumServerErrorRetries(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL, Settings{HTTPClientTimeout: 5 * time.Second})
+	var delays []time.Duration
+	client.retryWait = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	_, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, nil)
+	if !errors.Is(err, llm.ErrUpstreamRequestFailed) || !strings.Contains(err.Error(), "status=502") {
+		t.Fatalf("error = %v, want final 502 failure", err)
+	}
+	if requests.Load() != maxModelHTTPRetries+1 || len(delays) != maxModelHTTPRetries || delays[len(delays)-1] != 128*time.Second {
+		t.Fatalf("requests = %d delays = %#v", requests.Load(), delays)
+	}
+}
+
+func TestStreamResponseDoesNotRetryClientErrors(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				http.Error(w, "client error", status)
+			}))
+			defer server.Close()
+
+			client := newTestClient(server.URL, Settings{HTTPClientTimeout: 5 * time.Second})
+			client.retryWait = func(_ context.Context, _ time.Duration) error {
+				t.Fatal("client error triggered retry wait")
+				return nil
+			}
+			_, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, nil)
+			if !errors.Is(err, llm.ErrUpstreamRequestFailed) || !strings.Contains(err.Error(), fmt.Sprintf("status=%d", status)) {
+				t.Fatalf("error = %v, want status %d failure", err, status)
+			}
+			if requests.Load() != 1 {
+				t.Fatalf("requests = %d, want 1", requests.Load())
+			}
+		})
+	}
+}
+
+func TestStreamResponseStopsRetryingWhenContextIsCanceled(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL, Settings{HTTPClientTimeout: 5 * time.Second})
+	client.retryWait = func(_ context.Context, _ time.Duration) error {
+		return context.Canceled
+	}
+	_, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, nil)
+	if !errors.Is(err, llm.ErrUpstreamRequestFailed) || !strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Fatalf("error = %v, want canceled retry wait", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", requests.Load())
 	}
 }
 

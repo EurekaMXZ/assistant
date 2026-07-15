@@ -185,6 +185,46 @@ func (r *ToolCallRepository) FailToolCall(ctx context.Context, recordID string, 
 	return record, nil
 }
 
+func (r *ToolCallRepository) MarkToolCallAmbiguous(ctx context.Context, recordID string, message string) (*domain.ToolCallRecord, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE tool_calls
+		SET
+			status = $2,
+			output_blob_key = NULL,
+			error_message = $3,
+			completed_at = NULL,
+			failed_at = now()
+		WHERE id = $1::uuid AND status = $4
+		RETURNING
+			id::text,
+			turn_id::text,
+			turn_run_id::text,
+			call_id,
+			tool_type,
+			namespace,
+			tool_name,
+			status,
+			execution_attempt,
+			arguments_blob_key,
+			COALESCE(output_blob_key, ''),
+			COALESCE(error_message, ''),
+			started_at,
+			completed_at,
+			failed_at,
+			created_at,
+			updated_at
+	`, recordID, domain.ToolCallStatusAmbiguous, message, domain.ToolCallStatusRunning)
+
+	record, err := scanToolCall(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrConflict
+		}
+		return nil, fmt.Errorf("mark tool call ambiguous: %w", err)
+	}
+	return record, nil
+}
+
 func (r *ToolCallRepository) ListToolCallsByTurn(ctx context.Context, turnID string) ([]domain.ToolCallRecord, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT

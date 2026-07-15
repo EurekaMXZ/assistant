@@ -65,7 +65,7 @@ func sandboxNamespaceDefinition() llm.ModelTool {
 func internetNamespaceDefinition() llm.ModelTool {
 	return namespaceDefinition(
 		internetNamespace,
-		"Tools for public web research. Use search to discover candidate URLs, then use extract to read the smallest relevant set of search results before relying on their page content.",
+		"Tools for mandatory two-stage public web research. Use search only to discover candidate sources, then always use extract on the smallest relevant set before answering from web evidence. Never rely on search snippets alone.",
 		internetSearchDefinition(),
 		internetExtractDefinition(),
 	)
@@ -186,91 +186,93 @@ func internetSearchDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        internetSearchName,
-		Description: "Search the web for current information on any topic. Returns snippets and source URLs. Use internet.extract to read selected pages before relying on their full contents.",
+		Description: "First-stage source discovery only. Returns candidate URLs and short snippets, not sufficient page evidence. Do not answer from this output alone: after the final search, always call internet.extract on the smallest relevant set of returned URLs.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"query":{
 					"type":"string",
-					"description":"Search query"
+					"description":"First-stage discovery query. Keep it focused enough to identify candidate sources; use internet.extract afterward for page-level evidence."
 				},
 				"search_depth":{
 					"type":"string",
 					"enum":["basic","advanced","fast","ultra-fast"],
-					"description":"The depth of the search. basic for generic results, advanced for more thorough search, fast for optimized low latency with high relevance, ultra-fast for prioritizing latency above all else.",
+					"description":"Discovery depth only: basic is the normal first pass; advanced spends more time finding relevant sources and snippets; fast favors latency with relevance; ultra-fast minimizes latency. Regardless of depth, follow with internet.extract before relying on source content.",
 					"default":"basic"
 				},
 				"topic":{
 					"type":"string",
 					"enum":["general"],
-					"description":"The category of the search.",
+					"description":"Search category. This integration supports general only; leave it as general.",
 					"default":"general"
 				},
 				"time_range":{
 					"type":"string",
 					"enum":["day","week","month","year"],
-					"description":"The time range back from the current date to include in the search results."
+					"description":"Relative date filter. Mutually exclusive with start_date and end_date: use time_range OR explicit dates, never both."
 				},
 				"start_date":{
 					"type":"string",
-					"description":"Will return all results after the specified start date. Required format: YYYY-MM-DD.",
+					"description":"Explicit lower date bound in YYYY-MM-DD. If start_date or end_date is set, omit time_range. May be used alone or with end_date.",
 					"default":""
 				},
 				"end_date":{
 					"type":"string",
-					"description":"Will return all results before the specified end date. Required format: YYYY-MM-DD.",
+					"description":"Explicit upper date bound in YYYY-MM-DD. If start_date or end_date is set, omit time_range. May be used alone or with start_date.",
 					"default":""
 				},
 				"max_results":{
-					"type":"number",
+					"type":"integer",
 					"minimum":5,
 					"maximum":20,
-					"description":"The maximum number of search results to return.",
+					"description":"Number of discovery results, integer 5 through 20. Use the default 5 for typical queries; increase only when broader source discovery is necessary.",
 					"default":5
 				},
 				"include_images":{
 					"type":"boolean",
-					"description":"Include a list of query-related images in the response.",
+					"description":"Include query-related image URLs. Normally false; enable only when the user needs images.",
 					"default":false
 				},
 				"include_image_descriptions":{
 					"type":"boolean",
-					"description":"Include descriptions for returned images.",
+					"description":"Include image descriptions. Meaningful only when include_images is true; otherwise keep false.",
 					"default":false
 				},
 				"include_raw_content":{
 					"type":"boolean",
-					"description":"Include the cleaned and parsed HTML content of each search result.",
+					"enum":[false],
+					"description":"Must always be false. Search returns discovery snippets only; use internet.extract to read selected source content.",
 					"default":false
 				},
 				"include_domains":{
 					"type":"array",
-					"description":"A list of domains to specifically include in the search results.",
+					"description":"Optional domain allowlist for discovery. Use only when the user requests specific sites; do not place the same domain in exclude_domains.",
 					"items":{"type":"string"},
 					"default":[]
 				},
 				"exclude_domains":{
 					"type":"array",
-					"description":"A list of domains to specifically exclude from the search results.",
+					"description":"Optional domain denylist for discovery. Use only when exclusions are required; do not place the same domain in include_domains.",
 					"items":{"type":"string"},
 					"default":[]
 				},
 				"country":{
 					"type":"string",
-					"description":"Boost results from a country. Use the full country name, not an ISO code. Available only for general search.",
+					"description":"Optional country boost, available only with topic=general. Use the full country name such as United States or Japan, never an ISO code.",
 					"default":""
 				},
 				"include_favicon":{
 					"type":"boolean",
-					"description":"Whether to include the favicon URL for each result.",
+					"description":"Include favicon URLs. Normally false unless the presentation specifically needs them.",
 					"default":false
 				},
 				"exact_match":{
 					"type":"boolean",
-					"description":"Only return results containing the exact phrase or phrases in quotes in the query."
+					"description":"Exact-phrase filtering. Set true only when query contains at least one non-empty phrase in double quotes; otherwise it is ignored."
 				}
 			},
-			"required":["query"]
+			"required":["query"],
+			"additionalProperties":false
 		}`),
 	}
 }
@@ -279,43 +281,46 @@ func internetExtractDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        internetExtractName,
-		Description: "Extract content from URLs selected from internet.search results. Returns raw page content in markdown or text format.",
+		Description: "Mandatory second-stage web retrieval after internet.search. Read the smallest relevant set of URLs selected from search results before answering from web evidence. Returns page content in markdown or text.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"urls":{
 					"type":"array",
-					"description":"List of URLs to extract content from.",
-					"items":{"type":"string"}
+					"description":"One to 20 source URLs selected from the preceding internet.search results. Prefer the smallest set needed to verify the answer.",
+					"items":{"type":"string"},
+					"minItems":1,
+					"maxItems":20
 				},
 				"extract_depth":{
 					"type":"string",
 					"enum":["basic","advanced"],
-					"description":"Use advanced for LinkedIn, protected sites, or tables and embedded content.",
+					"description":"Extraction depth: basic is the normal choice; use advanced only for protected pages, LinkedIn, tables, or embedded content.",
 					"default":"basic"
 				},
 				"include_images":{
 					"type":"boolean",
-					"description":"Include images from pages.",
+					"description":"Include page images only when the user needs visual assets; otherwise keep false.",
 					"default":false
 				},
 				"format":{
 					"type":"string",
 					"enum":["markdown","text"],
-					"description":"Output format.",
+					"description":"Extracted content format. Use markdown by default; use text only when markup is not useful.",
 					"default":"markdown"
 				},
 				"include_favicon":{
 					"type":"boolean",
-					"description":"Include favicon URLs.",
+					"description":"Include favicon URLs only when needed for presentation; otherwise keep false.",
 					"default":false
 				},
 				"query":{
 					"type":"string",
-					"description":"Query to rerank content chunks by relevance."
+					"description":"Optional focused intent for reranking extracted chunks. Set it to the exact evidence needed when full-page extraction would be noisy."
 				}
 			},
-			"required":["urls"]
+			"required":["urls"],
+			"additionalProperties":false
 		}`),
 	}
 }

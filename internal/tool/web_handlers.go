@@ -21,7 +21,6 @@ func (h SearchWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCal
 		TimeRange                string   `json:"time_range"`
 		StartDate                string   `json:"start_date"`
 		EndDate                  string   `json:"end_date"`
-		IncludeRawContent        bool     `json:"include_raw_content"`
 		IncludeImages            bool     `json:"include_images"`
 		IncludeImageDescriptions bool     `json:"include_image_descriptions"`
 		IncludeFavicon           bool     `json:"include_favicon"`
@@ -42,7 +41,6 @@ func (h SearchWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCal
 		TimeRange:                input.TimeRange,
 		StartDate:                input.StartDate,
 		EndDate:                  input.EndDate,
-		IncludeRawContent:        input.IncludeRawContent,
 		IncludeImages:            input.IncludeImages,
 		IncludeImageDescriptions: input.IncludeImageDescriptions,
 		IncludeFavicon:           input.IncludeFavicon,
@@ -52,12 +50,12 @@ func (h SearchWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCal
 		ExactMatch:               input.ExactMatch,
 	})
 	if err != nil {
-		return nil, err
+		return nil, RecoverableError(err)
 	}
 
 	payload, err := marshalToolOutput(WebSearch, result)
 	if err != nil {
-		return nil, err
+		return nil, RecoverableError(err)
 	}
 
 	return outputOnlyExecutionResult(call.CallID, payload), nil
@@ -93,7 +91,7 @@ func (h ExtractWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCa
 		Query:          input.Query,
 	})
 	if err != nil {
-		return nil, err
+		return nil, RecoverableError(err)
 	}
 	return outputOnlyExecutionResult(call.CallID, payload), nil
 }

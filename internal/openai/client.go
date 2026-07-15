@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/credential"
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -19,12 +20,14 @@ import (
 const (
 	defaultReasoningEffort  = "xhigh"
 	defaultReasoningSummary = "detailed"
+	maxModelHTTPRetries     = 8
 )
 
 type Client struct {
 	userAgent   string
 	httpClient  *http.Client
 	credentials CredentialResolver
+	retryWait   func(context.Context, time.Duration) error
 }
 
 type CredentialResolver interface {
@@ -67,6 +70,7 @@ func New(settings Settings) *Client {
 		httpClient: &http.Client{
 			Transport: transport,
 		},
+		retryWait: waitForModelRetry,
 	}
 }
 
@@ -202,30 +206,11 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 	if value := strings.TrimSpace(request.ProviderBaseURL); value != "" {
 		baseURL = value
 	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, normalizeBaseURL(baseURL)+"/responses", bytes.NewReader(rawRequest))
+	response, err := c.sendResponseRequest(ctx, normalizeBaseURL(baseURL)+"/responses", apiKey, rawRequest)
 	if err != nil {
-		return nil, fmt.Errorf("create openai request: %w", err)
-	}
-	httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "text/event-stream")
-	if c.userAgent != "" {
-		httpRequest.Header.Set("User-Agent", c.userAgent)
-	}
-
-	response, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		return nil, upstreamRequestError("send openai request", err)
+		return nil, err
 	}
 	defer response.Body.Close()
-
-	if response.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return nil, upstreamRequestError(
-			"openai request failed",
-			fmt.Errorf("status=%d body=%s", response.StatusCode, strings.TrimSpace(string(body))),
-		)
-	}
 
 	result := &llm.ModelResult{
 		RawRequest: rawRequest,
@@ -433,6 +418,58 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 	}
 
 	return result, nil
+}
+
+func (c *Client) sendResponseRequest(ctx context.Context, endpoint string, apiKey string, rawRequest []byte) (*http.Response, error) {
+	for retry := 0; ; retry++ {
+		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(rawRequest))
+		if err != nil {
+			return nil, fmt.Errorf("create openai request: %w", err)
+		}
+		httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
+		httpRequest.Header.Set("Content-Type", "application/json")
+		httpRequest.Header.Set("Accept", "text/event-stream")
+		if c.userAgent != "" {
+			httpRequest.Header.Set("User-Agent", c.userAgent)
+		}
+
+		response, err := c.httpClient.Do(httpRequest)
+		if err != nil {
+			return nil, upstreamRequestError("send openai request", err)
+		}
+		if response.StatusCode < http.StatusBadRequest {
+			return response, nil
+		}
+
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		_ = response.Body.Close()
+		requestErr := upstreamRequestError(
+			"openai request failed",
+			fmt.Errorf("status=%d body=%s", response.StatusCode, strings.TrimSpace(string(body))),
+		)
+		if response.StatusCode < http.StatusInternalServerError || response.StatusCode > 599 || retry >= maxModelHTTPRetries {
+			return nil, requestErr
+		}
+
+		wait := c.retryWait
+		if wait == nil {
+			wait = waitForModelRetry
+		}
+		if err := wait(ctx, time.Second<<retry); err != nil {
+			return nil, upstreamRequestError("wait to retry openai request", err)
+		}
+	}
+}
+
+func waitForModelRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func upstreamRequestError(operation string, err error) error {

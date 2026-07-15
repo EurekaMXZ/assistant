@@ -822,7 +822,10 @@ func TestLocalExecutorSearchWeb(t *testing.T) {
 	if searcher.searchRequest.ExactMatch {
 		t.Fatalf("unquoted query retained exact_match: %#v", searcher.searchRequest)
 	}
-	if searcher.searchRequest.IncludeAnswer != nil || searcher.searchRequest.IncludeRawContent != true {
+	if searcher.searchRequest.IncludeAnswer != nil {
+		t.Fatalf("unexpected include_answer option: %#v", searcher.searchRequest)
+	}
+	if rawContent, _ := searcher.searchRequest.IncludeRawContent.(bool); rawContent {
 		t.Fatalf("unexpected include options: %#v", searcher.searchRequest)
 	}
 	if len(searcher.searchRequest.IncludeDomains) != 1 || searcher.searchRequest.IncludeDomains[0] != "developers.openai.com" {
@@ -870,6 +873,36 @@ func TestLocalExecutorExtractWeb(t *testing.T) {
 	}
 	if result == nil || result.OutputItem.CallID != "call-8" || !strings.Contains(result.OutputItem.Output, `"raw_content":"Docs"`) {
 		t.Fatalf("unexpected web extract output: %#v", result)
+	}
+}
+
+func TestLocalExecutorWebFailuresAreRecoverable(t *testing.T) {
+	upstreamErr := errors.New("tavily unavailable")
+	tests := []struct {
+		name    string
+		handler LocalToolHandler
+		call    ToolCall
+	}{
+		{
+			name:    "search",
+			handler: SearchWebHandler{UseCase: TavilyTools{Client: &stubWebSearcher{err: upstreamErr}}},
+			call:    ToolCall{Namespace: internetNamespace, Name: internetSearchName, CallID: "call-search", Arguments: json.RawMessage(`{"query":"docs"}`)},
+		},
+		{
+			name:    "extract",
+			handler: ExtractWebHandler{UseCase: TavilyTools{Client: &stubWebSearcher{err: upstreamErr}}},
+			call:    ToolCall{Namespace: internetNamespace, Name: internetExtractName, CallID: "call-extract", Arguments: json.RawMessage(`{"urls":["https://example.com"]}`)},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := mustLocalExecutor(t, test.handler)
+			_, err := executor.Execute(t.Context(), ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, test.call)
+			if !errors.Is(err, upstreamErr) || !IsRecoverableError(err) {
+				t.Fatalf("web tool error = %v, want recoverable upstream error", err)
+			}
+		})
 	}
 }
 

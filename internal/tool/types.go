@@ -32,6 +32,7 @@ type ToolCall struct {
 type ToolExecutionResult struct {
 	OutputItem   llm.ModelItem
 	StreamEvents []stream.Event
+	Failed       bool
 }
 
 type ToolExecutor interface {

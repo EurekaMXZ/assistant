@@ -22,6 +22,9 @@ func TestDefaultToolsWithTavilyIncludesInternetNamespace(t *testing.T) {
 	if len(web.Tools) != 2 {
 		t.Fatalf("unexpected web tools: %#v", web.Tools)
 	}
+	if !strings.Contains(web.Description, "always use extract") || !strings.Contains(web.Description, "Never rely on search snippets alone") {
+		t.Fatalf("internet namespace does not enforce two-stage research: %q", web.Description)
+	}
 	wantNames := []string{
 		internetSearchName,
 		internetExtractName,
@@ -35,7 +38,7 @@ func TestDefaultToolsWithTavilyIncludesInternetNamespace(t *testing.T) {
 
 func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 	search := internetSearchDefinition()
-	if !strings.Contains(search.Description, "source URLs") || !strings.Contains(search.Description, "internet.extract") {
+	if !strings.Contains(search.Description, "First-stage") || !strings.Contains(search.Description, "always call internet.extract") || !strings.Contains(search.Description, "Do not answer") {
 		t.Fatalf("search description does not define discovery workflow: %q", search.Description)
 	}
 
@@ -53,9 +56,46 @@ func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 	if _, exists := searchSchema.Properties["query"]; !exists {
 		t.Fatal("search schema does not expose query")
 	}
+	var rawContent struct {
+		Enum        []bool `json:"enum"`
+		Default     bool   `json:"default"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(searchSchema.Properties["include_raw_content"], &rawContent); err != nil {
+		t.Fatalf("decode include_raw_content schema: %v", err)
+	}
+	if len(rawContent.Enum) != 1 || rawContent.Enum[0] || rawContent.Default || !strings.Contains(rawContent.Description, "always be false") || !strings.Contains(rawContent.Description, "internet.extract") {
+		t.Fatalf("include_raw_content is not fixed false: %#v", rawContent)
+	}
+	var maxResults struct {
+		Type        string  `json:"type"`
+		Minimum     float64 `json:"minimum"`
+		Maximum     float64 `json:"maximum"`
+		Description string  `json:"description"`
+	}
+	if err := json.Unmarshal(searchSchema.Properties["max_results"], &maxResults); err != nil {
+		t.Fatalf("decode max_results schema: %v", err)
+	}
+	if maxResults.Type != "integer" || maxResults.Minimum != 5 || maxResults.Maximum != 20 || !strings.Contains(maxResults.Description, "default 5") {
+		t.Fatalf("max_results limits are unclear: %#v", maxResults)
+	}
+	for _, name := range []string{"time_range", "start_date", "end_date"} {
+		var property struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(searchSchema.Properties[name], &property); err != nil {
+			t.Fatalf("decode %s schema: %v", name, err)
+		}
+		if name == "time_range" && (!strings.Contains(property.Description, "Mutually exclusive") || !strings.Contains(property.Description, "never both")) {
+			t.Fatalf("%s does not explain date-filter exclusivity: %q", name, property.Description)
+		}
+		if name != "time_range" && !strings.Contains(property.Description, "omit time_range") {
+			t.Fatalf("%s does not explain date-filter exclusivity: %q", name, property.Description)
+		}
+	}
 
 	extract := internetExtractDefinition()
-	if !strings.Contains(extract.Description, "internet.search") || !strings.Contains(extract.Description, "markdown or text") {
+	if !strings.Contains(extract.Description, "Mandatory second-stage") || !strings.Contains(extract.Description, "internet.search") || !strings.Contains(extract.Description, "markdown or text") {
 		t.Fatalf("extract description does not define follow-up workflow: %q", extract.Description)
 	}
 	var extractSchema struct {
@@ -68,6 +108,17 @@ func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 		if _, exists := extractSchema.Properties[property]; exists {
 			t.Fatalf("extract schema exposes %q", property)
 		}
+	}
+	var urls struct {
+		MinItems    int    `json:"minItems"`
+		MaxItems    int    `json:"maxItems"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(extractSchema.Properties["urls"], &urls); err != nil {
+		t.Fatalf("decode extract urls schema: %v", err)
+	}
+	if urls.MinItems != 1 || urls.MaxItems != 20 || !strings.Contains(urls.Description, "preceding internet.search") || !strings.Contains(urls.Description, "smallest set") {
+		t.Fatalf("extract URL limits or workflow are unclear: %#v", urls)
 	}
 }
 

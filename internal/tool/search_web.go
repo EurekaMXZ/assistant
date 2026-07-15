@@ -18,7 +18,6 @@ type SearchWebInput struct {
 	TimeRange                string
 	StartDate                string
 	EndDate                  string
-	IncludeRawContent        bool
 	IncludeImages            bool
 	IncludeImageDescriptions bool
 	IncludeFavicon           bool
@@ -92,7 +91,7 @@ func (uc TavilyTools) Search(ctx context.Context, input SearchWebInput) (*tavily
 		TimeRange:                timeRange,
 		StartDate:                startDate,
 		EndDate:                  endDate,
-		IncludeRawContent:        input.IncludeRawContent,
+		IncludeRawContent:        false,
 		IncludeImages:            input.IncludeImages,
 		IncludeImageDescriptions: input.IncludeImageDescriptions,
 		IncludeFavicon:           input.IncludeFavicon,

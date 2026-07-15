@@ -2,9 +2,11 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
@@ -49,7 +51,9 @@ func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domai
 		if execution != nil {
 			currentInput = append(currentInput, execution.OutputItem)
 		}
-		currentScope = applyToolScopeDelta(currentScope, call)
+		if execution == nil || !execution.Failed {
+			currentScope = applyToolScopeDelta(currentScope, call)
+		}
 	}
 
 	return currentInput, currentScope, nil
@@ -70,7 +74,22 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 			return &tool.ToolExecutionResult{OutputItem: llm.ModelItem{
 				Type: llm.ModelItemFunctionCallOutput, CallID: call.CallID, Output: output,
 			}}, nil
-		case domain.ToolCallStatusFailed, domain.ToolCallStatusAmbiguous:
+		case domain.ToolCallStatusFailed:
+			output := ""
+			if record.OutputBlobKey != "" && o.artifacts != nil {
+				payload, err := o.artifacts.GetBytes(ctx, record.OutputBlobKey)
+				if err != nil {
+					return nil, fmt.Errorf("load failed tool output: %w", err)
+				}
+				output = string(payload)
+			}
+			if !isRecoverableToolFailureOutput(output) {
+				return nil, fmt.Errorf("tool call %s is already failed without a recoverable result", describeToolCall(call))
+			}
+			return &tool.ToolExecutionResult{Failed: true, OutputItem: llm.ModelItem{
+				Type: llm.ModelItemFunctionCallOutput, CallID: call.CallID, Output: output,
+			}}, nil
+		case domain.ToolCallStatusAmbiguous:
 			return nil, fmt.Errorf("tool call %s is already %s", describeToolCall(call), record.Status)
 		case domain.ToolCallStatusRunning:
 			if !acquired {
@@ -82,11 +101,24 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 
 	execution, err := o.executor.Execute(ctx, scope, call)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("execute tool %s: %w", describeToolCall(call), ctx.Err())
+		}
+		if !tool.IsRecoverableError(err) && !errors.Is(err, domain.ErrInvalidInput) {
+			o.publishToolFailed(ctx, scope, record, call, err.Error(), nil)
+			if markErr := o.recordToolCallAmbiguous(ctx, record, err.Error()); markErr != nil {
+				return nil, errors.Join(fmt.Errorf("execute tool %s with uncertain outcome: %w", describeToolCall(call), err), markErr)
+			}
+			return nil, fmt.Errorf("execute tool %s with uncertain outcome: %w", describeToolCall(call), err)
+		}
+		visibleOutput := modelVisibleToolFailure(call, err)
 		o.publishToolFailed(ctx, scope, record, call, err.Error(), nil)
-		if failErr := o.recordToolCallFailure(ctx, scope, record, call, err.Error()); failErr != nil {
+		if failErr := o.recordToolCallFailure(ctx, scope, record, call, err.Error(), visibleOutput); failErr != nil {
 			return nil, failErr
 		}
-		return nil, fmt.Errorf("execute tool %s: %w", describeToolCall(call), err)
+		return &tool.ToolExecutionResult{Failed: true, OutputItem: llm.ModelItem{
+			Type: llm.ModelItemFunctionCallOutput, CallID: call.CallID, Output: visibleOutput,
+		}}, nil
 	}
 	if execution == nil {
 		if err := o.recordToolCallSuccess(ctx, scope, record, call, nil); err != nil {
@@ -104,6 +136,51 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 		o.publish(ctx, event)
 	}
 	return execution, nil
+}
+
+func isRecoverableToolFailureOutput(output string) bool {
+	var payload struct {
+		Error struct {
+			Type        string `json:"type"`
+			Recoverable bool   `json:"recoverable"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(output), &payload) != nil {
+		return false
+	}
+	return payload.Error.Type == "tool_execution_failed" && payload.Error.Recoverable
+}
+
+func modelVisibleToolFailure(call tool.ToolCall, err error) string {
+	message := "tool execution failed"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		message = boundedToolFailureMessage(err.Error(), 2048)
+	}
+	payload, marshalErr := json.Marshal(map[string]any{
+		"ok": false,
+		"error": map[string]any{
+			"type":        "tool_execution_failed",
+			"tool":        describeToolCall(call),
+			"message":     message,
+			"recoverable": true,
+		},
+		"next_action": "Adjust the arguments, try a narrower request, use another tool, or continue without this tool.",
+	})
+	if marshalErr != nil {
+		return `{"ok":false,"error":{"type":"tool_execution_failed","message":"tool execution failed","recoverable":true}}`
+	}
+	return string(payload)
+}
+
+func boundedToolFailureMessage(message string, maxBytes int) string {
+	message = strings.ToValidUTF8(strings.TrimSpace(message), "\ufffd")
+	if maxBytes <= 0 || len(message) <= maxBytes {
+		return message
+	}
+	for maxBytes > 0 && !utf8.ValidString(message[:maxBytes]) {
+		maxBytes--
+	}
+	return message[:maxBytes] + "..."
 }
 
 func modelItemsToToolCalls(items []llm.ModelItem) []tool.ToolCall {
