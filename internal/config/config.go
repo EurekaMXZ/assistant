@@ -52,9 +52,6 @@ const (
 	defaultSandboxReaperBatchSize   = 20
 	defaultSandboxCommandTimeout    = 30 * time.Second
 	defaultSandboxCommandMaxTimeout = 5 * time.Minute
-	defaultAgentBayRegionID         = "cn-hangzhou"
-	defaultAgentBayImageID          = "code_latest"
-	defaultAgentBayAPITimeout       = time.Minute
 	defaultAgentSystemPromptFile    = "prompts/system.md"
 	defaultAgentCompactPromptFile   = "prompts/compact.md"
 )
@@ -107,11 +104,6 @@ type Config struct {
 	SandboxReaperBatchSize      int
 	SandboxCommandTimeout       time.Duration
 	SandboxCommandMaxTimeout    time.Duration
-	AgentBayAPIKey              string
-	AgentBayRegionID            string
-	AgentBayImageID             string
-	AgentBayPolicyID            string
-	AgentBayAPITimeout          time.Duration
 	AgentSystemPromptFile       string
 	AgentCompactPromptFile      string
 	AgentSystemPrompt           string
@@ -175,11 +167,6 @@ func Load() Config {
 		SandboxReaperBatchSize:      getenvInt("SANDBOX_REAPER_BATCH_SIZE", defaultSandboxReaperBatchSize),
 		SandboxCommandTimeout:       getenvDuration("SANDBOX_COMMAND_DEFAULT_TIMEOUT", defaultSandboxCommandTimeout),
 		SandboxCommandMaxTimeout:    getenvDuration("SANDBOX_COMMAND_MAX_TIMEOUT", defaultSandboxCommandMaxTimeout),
-		AgentBayAPIKey:              os.Getenv("AGENTBAY_API_KEY"),
-		AgentBayRegionID:            getenv("AGENTBAY_REGION_ID", defaultAgentBayRegionID),
-		AgentBayImageID:             getenv("AGENTBAY_IMAGE_ID", defaultAgentBayImageID),
-		AgentBayPolicyID:            os.Getenv("AGENTBAY_POLICY_ID"),
-		AgentBayAPITimeout:          getenvDuration("AGENTBAY_API_TIMEOUT", defaultAgentBayAPITimeout),
 		AgentSystemPromptFile:       getenv("AGENT_SYSTEM_PROMPT_FILE", defaultAgentSystemPromptFile),
 		AgentCompactPromptFile:      getenv("AGENT_COMPACT_PROMPT_FILE", defaultAgentCompactPromptFile),
 		RemoteToolReplayMaxBytes:    getenvInt("REMOTE_TOOL_REPLAY_MAX_BYTES", defaultRemoteToolReplayMaxBytes),
@@ -363,14 +350,10 @@ func (c Config) sandboxProviderRequirement() (string, string, error) {
 	if provider == "" {
 		provider = defaultSandboxProvider
 	}
-	switch provider {
-	case "firecracker":
-		return "SANDBOX_BRIDGE_URL", c.SandboxBridgeURL, nil
-	case "agentbay":
-		return "AGENTBAY_API_KEY", c.AgentBayAPIKey, nil
-	default:
-		return "", "", fmt.Errorf("SANDBOX_PROVIDER must be firecracker or agentbay, got %q", c.SandboxProvider)
+	if provider != "firecracker" {
+		return "", "", fmt.Errorf("SANDBOX_PROVIDER must be firecracker, got %q", c.SandboxProvider)
 	}
+	return "SANDBOX_BRIDGE_URL", c.SandboxBridgeURL, nil
 }
 
 func getenv(key, fallback string) string {

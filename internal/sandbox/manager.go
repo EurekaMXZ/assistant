@@ -11,7 +11,6 @@ import (
 
 const (
 	ProviderFirecracker = "firecracker"
-	ProviderAgentBay    = "agentbay"
 )
 
 var _ tool.SandboxManager = (*Manager)(nil)
@@ -19,7 +18,6 @@ var _ tool.SandboxManager = (*Manager)(nil)
 type RuntimeSettings struct {
 	Provider string
 	HTTP     HTTPRuntimeSettings
-	AgentBay AgentBayRuntimeSettings
 }
 
 type Manager struct {
@@ -53,11 +51,11 @@ func NewRuntime(settings RuntimeSettings) (tool.SandboxManager, error) {
 	if provider == "" {
 		provider = ProviderFirecracker
 	}
-	if provider != ProviderFirecracker && provider != ProviderAgentBay {
+	if provider != ProviderFirecracker {
 		return nil, fmt.Errorf("unsupported sandbox provider %q", provider)
 	}
 
-	providers := make(map[string]tool.SandboxManager, 2)
+	providers := make(map[string]tool.SandboxManager, 1)
 	if strings.TrimSpace(settings.HTTP.BaseURL) != "" {
 		runtime, err := NewHTTPRuntime(settings.HTTP)
 		if err != nil {
@@ -65,14 +63,6 @@ func NewRuntime(settings RuntimeSettings) (tool.SandboxManager, error) {
 		}
 		providers[ProviderFirecracker] = runtime
 	}
-	if strings.TrimSpace(settings.AgentBay.APIKey) != "" {
-		runtime, err := NewAgentBayRuntime(settings.AgentBay)
-		if err != nil {
-			return nil, fmt.Errorf("configure AgentBay sandbox runtime: %w", err)
-		}
-		providers[ProviderAgentBay] = runtime
-	}
-
 	return NewManager(provider, providers)
 }
 

@@ -42,7 +42,7 @@ func TestConversationSandboxLifecycleIntegration(t *testing.T) {
 	}
 
 	repository := NewConversationSandboxRepository(pool)
-	sandbox, err := repository.CreateConversationSandbox(t.Context(), conversationID, "test", "runtime-1", json.RawMessage(`{"state":"active"}`))
+	sandbox, err := repository.CreateConversationSandbox(t.Context(), conversationID, "firecracker", "runtime-1", json.RawMessage(`{"state":"active"}`))
 	if err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}

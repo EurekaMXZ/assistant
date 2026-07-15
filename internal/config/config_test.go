@@ -134,27 +134,6 @@ func TestLoadReadsSandboxBridgeSettings(t *testing.T) {
 	}
 }
 
-func TestLoadReadsAgentBaySettings(t *testing.T) {
-	t.Setenv("SANDBOX_PROVIDER", "agentbay")
-	t.Setenv("AGENTBAY_API_KEY", "agentbay-key")
-	t.Setenv("AGENTBAY_REGION_ID", "ap-southeast-1")
-	t.Setenv("AGENTBAY_IMAGE_ID", "linux_latest")
-	t.Setenv("AGENTBAY_POLICY_ID", "policy-1")
-	t.Setenv("AGENTBAY_API_TIMEOUT", "45s")
-
-	cfg := Load()
-
-	if cfg.SandboxProvider != "agentbay" || cfg.AgentBayAPIKey != "agentbay-key" {
-		t.Fatalf("unexpected AgentBay provider settings: %+v", cfg)
-	}
-	if cfg.AgentBayRegionID != "ap-southeast-1" || cfg.AgentBayImageID != "linux_latest" || cfg.AgentBayPolicyID != "policy-1" {
-		t.Fatalf("unexpected AgentBay session settings: %+v", cfg)
-	}
-	if cfg.AgentBayAPITimeout != 45*time.Second {
-		t.Fatalf("AgentBayAPITimeout = %v, want 45s", cfg.AgentBayAPITimeout)
-	}
-}
-
 func TestValidateAPIRequiresBridgeURL(t *testing.T) {
 	cfg := validAPIConfig()
 	cfg.SandboxBridgeURL = ""
@@ -197,35 +176,13 @@ func TestValidateWorkerRequiresBridgeURL(t *testing.T) {
 	}
 }
 
-func TestValidateWorkerAcceptsAgentBayWithoutBridge(t *testing.T) {
+func TestValidateWorkerRejectsRemovedAgentBayProvider(t *testing.T) {
 	cfg := validWorkerConfig()
 	cfg.SandboxProvider = "agentbay"
-	cfg.SandboxBridgeURL = ""
-	cfg.AgentBayAPIKey = "agentbay-key"
-
-	if err := cfg.ValidateWorker(); err != nil {
-		t.Fatalf("ValidateWorker: %v", err)
-	}
-}
-
-func TestValidateWorkerRequiresAgentBayAPIKey(t *testing.T) {
-	cfg := validWorkerConfig()
-	cfg.SandboxProvider = "agentbay"
-	cfg.AgentBayAPIKey = ""
 
 	err := cfg.ValidateWorker()
-	if err == nil || !strings.Contains(err.Error(), "AGENTBAY_API_KEY") {
-		t.Fatalf("ValidateWorker error = %v, want missing AGENTBAY_API_KEY", err)
-	}
-}
-
-func TestValidateWorkerRejectsUnknownSandboxProvider(t *testing.T) {
-	cfg := validWorkerConfig()
-	cfg.SandboxProvider = "unknown"
-
-	err := cfg.ValidateWorker()
-	if err == nil || !strings.Contains(err.Error(), "SANDBOX_PROVIDER must be firecracker or agentbay") {
-		t.Fatalf("ValidateWorker error = %v, want unknown sandbox provider", err)
+	if err == nil || !strings.Contains(err.Error(), "SANDBOX_PROVIDER must be firecracker") {
+		t.Fatalf("ValidateWorker error = %v, want removed AgentBay provider rejection", err)
 	}
 }
 

@@ -271,11 +271,11 @@ func TestReaperStopsIdleAndReleasesExpiredSandbox(t *testing.T) {
 	stoppedAt := now.Add(-25 * time.Hour)
 	store := &reaperTestStore{now: now, sandboxes: map[string]*domain.ConversationSandbox{
 		"conversation-idle": {
-			ID: "sandbox-idle", ConversationID: "conversation-idle", Provider: ProviderAgentBay, RuntimeID: "session-idle",
+			ID: "sandbox-idle", ConversationID: "conversation-idle", Provider: ProviderFirecracker, RuntimeID: "vm-idle",
 			Status: domain.SandboxStatusActive, LastActivityAt: now.Add(-16 * time.Minute),
 		},
 		"conversation-expired": {
-			ID: "sandbox-expired", ConversationID: "conversation-expired", Provider: ProviderAgentBay, RuntimeID: "session-expired",
+			ID: "sandbox-expired", ConversationID: "conversation-expired", Provider: ProviderFirecracker, RuntimeID: "vm-expired",
 			Status: domain.SandboxStatusStopped, LastActivityAt: now.Add(-26 * time.Hour), StoppedAt: &stoppedAt,
 		},
 	}}
@@ -301,7 +301,7 @@ func TestReaperDoesNotStopSandboxWithActiveExecutionLease(t *testing.T) {
 	leaseUntil := now.Add(time.Minute)
 	store := &reaperTestStore{now: now, sandboxes: map[string]*domain.ConversationSandbox{
 		"conversation-busy": {
-			ID: "sandbox-busy", ConversationID: "conversation-busy", Provider: ProviderAgentBay, RuntimeID: "session-busy",
+			ID: "sandbox-busy", ConversationID: "conversation-busy", Provider: ProviderFirecracker, RuntimeID: "vm-busy",
 			Status: domain.SandboxStatusActive, LastActivityAt: now.Add(-time.Hour), ExecutionToken: "execution-token", ExecutionLeaseUntil: &leaseUntil,
 		},
 	}}
@@ -322,7 +322,7 @@ func TestReaperRetriesPendingRelease(t *testing.T) {
 	stoppedAt := now.Add(-25 * time.Hour)
 	store := &reaperTestStore{now: now, sandboxes: map[string]*domain.ConversationSandbox{
 		"conversation-releasing": {
-			ID: "sandbox-releasing", ConversationID: "conversation-releasing", Provider: ProviderAgentBay, RuntimeID: "session-releasing",
+			ID: "sandbox-releasing", ConversationID: "conversation-releasing", Provider: ProviderFirecracker, RuntimeID: "vm-releasing",
 			Status: domain.SandboxStatusReleasing, LastActivityAt: stoppedAt, StoppedAt: &stoppedAt, ReleasePreviousStatus: domain.SandboxStatusStopped,
 		},
 	}}

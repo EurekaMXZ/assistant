@@ -488,13 +488,13 @@ func TestCreateSandboxCompensatesRuntimeWhenDatabaseCreateFails(t *testing.T) {
 
 func TestCreateSandboxDoesNotDestroyReusedRuntimeOnDatabaseConflict(t *testing.T) {
 	existing := &domain.ConversationSandbox{
-		ID: "sandbox-1", ConversationID: "conv-1", Provider: "agentbay", RuntimeID: "session-1", Status: domain.SandboxStatusActive,
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "firecracker", RuntimeID: "vm-1", Status: domain.SandboxStatusActive,
 	}
 	store := &stubConversationSandboxStore{
 		createErr:           domain.ErrConflict,
 		activeOnCreateError: existing,
 	}
-	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1", Reused: true}}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "firecracker", RuntimeID: "vm-1", Reused: true}}
 
 	result, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1", RequestKey: "run-1:call-1"})
 	if err != nil || result.ID != "sandbox-1" {
@@ -507,13 +507,13 @@ func TestCreateSandboxDoesNotDestroyReusedRuntimeOnDatabaseConflict(t *testing.T
 
 func TestCreateSandboxReturnsCommittedRuntimeAfterAmbiguousDatabaseError(t *testing.T) {
 	existing := &domain.ConversationSandbox{
-		ID: "sandbox-1", ConversationID: "conv-1", Provider: "agentbay", RuntimeID: "session-1", Status: domain.SandboxStatusActive,
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "firecracker", RuntimeID: "vm-1", Status: domain.SandboxStatusActive,
 	}
 	store := &stubConversationSandboxStore{
 		createErr:           errors.New("database connection reset"),
 		activeOnCreateError: existing,
 	}
-	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1"}}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "firecracker", RuntimeID: "vm-1"}}
 
 	result, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1"})
 	if err != nil || result.ID != "sandbox-1" {
@@ -526,7 +526,7 @@ func TestCreateSandboxReturnsCommittedRuntimeAfterAmbiguousDatabaseError(t *test
 
 func TestCreateSandboxDoesNotDestroyReusedRuntimeWhenDatabaseCreateFails(t *testing.T) {
 	store := &stubConversationSandboxStore{createErr: errors.New("database unavailable")}
-	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1", Reused: true}}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "firecracker", RuntimeID: "vm-1", Reused: true}}
 
 	if _, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(t.Context(), CreateSandboxInput{ConversationID: "conv-1"}); err == nil {
 		t.Fatal("expected database create failure")
@@ -540,7 +540,7 @@ func TestCreateSandboxCompensationIgnoresCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	store := &stubConversationSandboxStore{createErr: errors.New("database unavailable")}
-	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1"}}
+	runtime := &stubSandboxManager{createResult: &domain.SandboxHandle{Provider: "firecracker", RuntimeID: "vm-1"}}
 
 	if _, err := (CreateSandbox{Sandboxes: store, Runtime: runtime}).Execute(ctx, CreateSandboxInput{ConversationID: "conv-1"}); err == nil {
 		t.Fatal("expected database create failure")

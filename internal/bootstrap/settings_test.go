@@ -35,12 +35,7 @@ func TestNewBaseSettingsMapsConfig(t *testing.T) {
 		SandboxBridgeURL:       "http://127.0.0.1:8787",
 		SandboxBridgeToken:     "bridge-token",
 		SandboxBridgeTimeout:   9 * time.Second,
-		SandboxProvider:        "agentbay",
-		AgentBayAPIKey:         "agentbay-key",
-		AgentBayRegionID:       "ap-southeast-1",
-		AgentBayImageID:        "code_latest",
-		AgentBayPolicyID:       "policy-1",
-		AgentBayAPITimeout:     45 * time.Second,
+		SandboxProvider:        "firecracker",
 	}
 
 	settings := newBaseSettings(cfg, true)
@@ -69,11 +64,8 @@ func TestNewBaseSettingsMapsConfig(t *testing.T) {
 	if settings.MinIO.Bucket != "assistant" || !settings.MinIO.UseSSL {
 		t.Fatalf("unexpected minio settings: %+v", settings.MinIO)
 	}
-	if settings.Sandbox.Provider != "agentbay" || settings.Sandbox.HTTP.BaseURL != "http://127.0.0.1:8787" || settings.Sandbox.HTTP.Token != "bridge-token" || settings.Sandbox.HTTP.HTTPClientTimeout != 9*time.Second {
+	if settings.Sandbox.Provider != "firecracker" || settings.Sandbox.HTTP.BaseURL != "http://127.0.0.1:8787" || settings.Sandbox.HTTP.Token != "bridge-token" || settings.Sandbox.HTTP.HTTPClientTimeout != 9*time.Second {
 		t.Fatalf("unexpected sandbox settings: %+v", settings.Sandbox)
-	}
-	if settings.Sandbox.AgentBay.APIKey != "agentbay-key" || settings.Sandbox.AgentBay.RegionID != "ap-southeast-1" || settings.Sandbox.AgentBay.PolicyID != "policy-1" || settings.Sandbox.AgentBay.APITimeout != 45*time.Second {
-		t.Fatalf("unexpected AgentBay settings: %+v", settings.Sandbox.AgentBay)
 	}
 }
 
@@ -88,12 +80,7 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 		SandboxBridgeURL:         "http://127.0.0.1:8787",
 		SandboxBridgeToken:       "bridge-token",
 		SandboxBridgeTimeout:     7 * time.Second,
-		SandboxProvider:          "agentbay",
-		AgentBayAPIKey:           "agentbay-key",
-		AgentBayRegionID:         "cn-hangzhou",
-		AgentBayImageID:          "linux_latest",
-		AgentBayPolicyID:         "policy-1",
-		AgentBayAPITimeout:       40 * time.Second,
+		SandboxProvider:          "firecracker",
 		MinIOEndpoint:            "127.0.0.1:9000",
 		MinIORegion:              "us-east-1",
 		MinIOBucket:              "assistant",
@@ -128,11 +115,8 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 	if !settings.SandboxExecEnabled {
 		t.Fatalf("expected sandbox exec enabled in worker settings: %+v", settings)
 	}
-	if settings.Sandbox.Provider != "agentbay" || settings.Sandbox.HTTP.BaseURL != "http://127.0.0.1:8787" || settings.Sandbox.HTTP.Token != "bridge-token" || settings.Sandbox.HTTP.HTTPClientTimeout != 7*time.Second {
+	if settings.Sandbox.Provider != "firecracker" || settings.Sandbox.HTTP.BaseURL != "http://127.0.0.1:8787" || settings.Sandbox.HTTP.Token != "bridge-token" || settings.Sandbox.HTTP.HTTPClientTimeout != 7*time.Second {
 		t.Fatalf("unexpected sandbox bridge settings: %+v", settings.Sandbox)
-	}
-	if settings.Sandbox.AgentBay.APIKey != "agentbay-key" || settings.Sandbox.AgentBay.ImageID != "linux_latest" || settings.Sandbox.AgentBay.APITimeout != 40*time.Second {
-		t.Fatalf("unexpected AgentBay settings: %+v", settings.Sandbox.AgentBay)
 	}
 	if settings.MinIO.Bucket != "assistant" || !settings.MinIO.UseSSL {
 		t.Fatalf("unexpected minio settings: %+v", settings.MinIO)

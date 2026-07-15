@@ -182,7 +182,7 @@ Fields:
 
 - `id`
 - `conversation_id`
-- `provider`: `firecracker | agentbay`
+- `provider`: `firecracker`
 - `runtime_id`
 - `status`: `active | stopped | releasing | destroyed` (`releasing` is a transient, retryable deletion state)
 - `runtime_metadata`

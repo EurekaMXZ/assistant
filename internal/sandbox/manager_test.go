@@ -39,12 +39,10 @@ func (r *trackingSandboxRuntime) ExecSandboxCommand(_ context.Context, handle do
 	return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID}, nil
 }
 
-func TestManagerCreatesWithDefaultProviderAndRoutesPersistedHandles(t *testing.T) {
+func TestManagerCreatesAndRoutesFirecrackerHandles(t *testing.T) {
 	firecracker := &trackingSandboxRuntime{provider: ProviderFirecracker}
-	agentBay := &trackingSandboxRuntime{provider: ProviderAgentBay}
-	manager, err := NewManager(ProviderAgentBay, map[string]tool.SandboxManager{
+	manager, err := NewManager(ProviderFirecracker, map[string]tool.SandboxManager{
 		ProviderFirecracker: firecracker,
-		ProviderAgentBay:    agentBay,
 	})
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -54,8 +52,8 @@ func TestManagerCreatesWithDefaultProviderAndRoutesPersistedHandles(t *testing.T
 	if err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}
-	if handle.Provider != ProviderAgentBay || agentBay.createCalls != 1 || firecracker.createCalls != 0 {
-		t.Fatalf("unexpected create routing: handle=%#v firecracker=%d agentbay=%d", handle, firecracker.createCalls, agentBay.createCalls)
+	if handle.Provider != ProviderFirecracker || firecracker.createCalls != 1 {
+		t.Fatalf("unexpected create routing: handle=%#v firecracker=%d", handle, firecracker.createCalls)
 	}
 
 	firecrackerHandle := domain.SandboxHandle{Provider: ProviderFirecracker, RuntimeID: "fc-1"}
@@ -71,15 +69,25 @@ func TestManagerCreatesWithDefaultProviderAndRoutesPersistedHandles(t *testing.T
 }
 
 func TestManagerRejectsUnconfiguredProvider(t *testing.T) {
-	manager, err := NewManager(ProviderAgentBay, map[string]tool.SandboxManager{
-		ProviderAgentBay: &trackingSandboxRuntime{provider: ProviderAgentBay},
+	manager, err := NewManager(ProviderFirecracker, map[string]tool.SandboxManager{
+		ProviderFirecracker: &trackingSandboxRuntime{provider: ProviderFirecracker},
 	})
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
 
-	_, err = manager.DestroySandbox(context.Background(), domain.SandboxHandle{Provider: ProviderFirecracker, RuntimeID: "fc-1"}, "")
-	if err == nil || !strings.Contains(err.Error(), `sandbox provider "firecracker" is not configured`) {
+	_, err = manager.DestroySandbox(context.Background(), domain.SandboxHandle{Provider: "agentbay", RuntimeID: "session-1"}, "")
+	if err == nil || !strings.Contains(err.Error(), `sandbox provider "agentbay" is not configured`) {
 		t.Fatalf("error = %v, want unconfigured provider", err)
+	}
+}
+
+func TestNewRuntimeRejectsRemovedAgentBayProvider(t *testing.T) {
+	_, err := NewRuntime(RuntimeSettings{
+		Provider: "agentbay",
+		HTTP:     HTTPRuntimeSettings{BaseURL: "http://127.0.0.1:8787"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported sandbox provider "agentbay"`) {
+		t.Fatalf("error = %v, want removed AgentBay provider rejection", err)
 	}
 }

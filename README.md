@@ -24,7 +24,7 @@ Agentic AI 对话助手，基于 OpenAI Responses API，支持网络搜索、文
       <br />
       <strong>隔离沙箱执行</strong>
       <br />
-      <sub>在 Firecracker 或 AgentBay 沙箱中执行不受信任命令并返回结果。</sub>
+      <sub>在 Firecracker 沙箱中执行不受信任命令并返回结果。</sub>
     </td>
   </tr>
   <tr>
@@ -112,7 +112,7 @@ Compose 不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 
 
 ### 沙箱生命周期
 
-沙箱在没有命令活动一段时间后会自动进入 `stopped`，下次创建或执行命令时自动恢复。Firecracker 停止 VM 进程但保留可写 rootfs；AgentBay 使用 `BetaPause` / `BetaResume`。超过 stopped 保留时间后，沙箱会先进入可重试的 `releasing`，Provider 确认删除后再进入 `destroyed`。时间均可通过环境变量调整：
+沙箱在没有命令活动一段时间后会自动进入 `stopped`，下次创建或执行命令时自动恢复。Firecracker 停止 VM 进程但保留可写 rootfs。超过 stopped 保留时间后，沙箱会先进入可重试的 `releasing`，Firecracker bridge 确认删除后再进入 `destroyed`。时间均可通过环境变量调整：
 
 ```bash
 SANDBOX_IDLE_STOP_AFTER=15m
@@ -144,22 +144,6 @@ SANDBOX_BRIDGE_TOKEN=your-secret-token
 SANDBOX_EXEC_ENABLED=true
 ```
 
-### 阿里云 AgentBay 沙箱部署
-
-后端可通过官方 AgentBay Go SDK 直接创建云端 Agent Sandbox，不需要启动 Firecracker bridge。AgentBay session 保持手动释放生命周期，由应用的空闲 reaper 负责 pause、resume 和最终 delete，数据库状态保持为 `active` / `stopped` / `releasing` / `destroyed`。
-
-```bash
-SANDBOX_PROVIDER=agentbay
-AGENTBAY_API_KEY=your-agentbay-api-key
-AGENTBAY_REGION_ID=cn-hangzhou
-AGENTBAY_IMAGE_ID=aio-ubuntu-2404
-AGENTBAY_POLICY_ID=                 # 可选：AgentBay 安全策略 ID
-AGENTBAY_API_TIMEOUT=1m
-SANDBOX_EXEC_ENABLED=true
-```
-
-`AGENTBAY_REGION_ID` 支持 AgentBay 当前区域，默认 `cn-hangzhou`；`AGENTBAY_IMAGE_ID` 默认 `aio-ubuntu-2404`。切换 provider 后，数据库中已有 sandbox 仍按其持久化的 `provider` 路由：存在 active Firecracker sandbox 时需保留 `SANDBOX_BRIDGE_URL`，存在 active AgentBay sandbox 时需保留 `AGENTBAY_API_KEY`。
-
 ### 数据库迁移
 
 ```bash
@@ -168,7 +152,7 @@ go run ./cmd/migrate down     # 回滚最近一次迁移
 go run ./cmd/migrate version  # 查看当前迁移版本
 ```
 
-部署 `000006_sandbox_lifecycle` 前应先停止旧版本 Worker 并等待正在执行的沙箱命令结束，再执行迁移和启动新版本 Worker。回滚前必须确保没有 `stopped` / `releasing` 沙箱或执行租约；迁移会在条件不满足时拒绝回滚，避免遗留 Provider 资源。
+部署 `000006_sandbox_lifecycle` 前应先停止旧版本 Worker 并等待正在执行的沙箱命令结束，再执行迁移和启动新版本 Worker。回滚前必须确保没有 `stopped` / `releasing` 沙箱或执行租约。部署 `000009_remove_agentbay_provider` 前必须先通过旧版本终止所有 AgentBay Session 并将对应记录标记为 `destroyed`；迁移会在仍有未销毁的 AgentBay sandbox 时拒绝执行。
 
 ## 开源协议
 
