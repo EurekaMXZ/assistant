@@ -586,10 +586,14 @@ func (c *cubeSDKClient) RunCommand(ctx context.Context, sandbox *cubeSandbox, co
 			}
 		}
 		if end := event.GetEnd(); end != nil {
-			if message := strings.TrimSpace(end.GetError()); message != "" {
-				return nil, fmt.Errorf("cube sandbox command failed: %s", message)
+			exitCode, err := cubeCommandExitCode(end)
+			if err != nil {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return &cubeCommandResult{Output: "command timed out", ExitCode: -1, TimedOut: true}, nil
+				}
+				return nil, fmt.Errorf("cube sandbox command failed: %w", err)
 			}
-			result.ExitCode = int(end.GetExitCode())
+			result.ExitCode = exitCode
 			sawEnd = true
 		}
 	}
@@ -603,6 +607,33 @@ func (c *cubeSDKClient) RunCommand(ctx context.Context, sandbox *cubeSandbox, co
 	}
 	result.Output = output.String()
 	return result, nil
+}
+
+func cubeCommandExitCode(end *process.ProcessEvent_EndEvent) (int, error) {
+	if end == nil {
+		return 0, errors.New("process ended without an end event")
+	}
+	if end.GetExited() {
+		return int(end.GetExitCode()), nil
+	}
+	for _, message := range []string{end.GetError(), end.GetStatus()} {
+		value, ok := strings.CutPrefix(strings.TrimSpace(message), "exit status ")
+		if !ok {
+			continue
+		}
+		exitCode, err := strconv.Atoi(strings.TrimSpace(value))
+		if err == nil {
+			return exitCode, nil
+		}
+	}
+	message := strings.TrimSpace(end.GetError())
+	if message == "" {
+		message = strings.TrimSpace(end.GetStatus())
+	}
+	if message == "" {
+		message = "process did not report an exit status"
+	}
+	return 0, errors.New(message)
 }
 
 func (c *cubeSDKClient) WriteFile(ctx context.Context, sandbox *cubeSandbox, path string, data []byte) error {

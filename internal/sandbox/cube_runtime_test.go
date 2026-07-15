@@ -206,6 +206,24 @@ func TestCubeRuntimeExecUsesArgvAndGuestTimeout(t *testing.T) {
 	}
 }
 
+func TestCubeRuntimeExecReturnsNonzeroExitAsCommandResult(t *testing.T) {
+	client := &stubCubeRuntimeClient{
+		connected:     &cubeSandbox{ID: "cube-1", TemplateID: "tpl-1"},
+		commandResult: &cubeCommandResult{Output: "missing file\n", ExitCode: 1},
+	}
+	runtime := mustCubeRuntime(t, client)
+
+	result, err := runtime.ExecSandboxCommand(t.Context(), domain.SandboxHandle{
+		Provider: ProviderCubeSandbox, RuntimeID: "cube-1",
+	}, domain.SandboxCommandRequest{Command: "cat", Args: []string{"missing.txt"}}, "exec-key")
+	if err != nil {
+		t.Fatalf("exec nonzero command: %v", err)
+	}
+	if result.ExitCode != 1 || result.Output != "missing file\n" || result.TimedOut {
+		t.Fatalf("nonzero command result = %#v", result)
+	}
+}
+
 func TestCubeRuntimeWritesFileThroughConnectedEnvdSession(t *testing.T) {
 	client := &stubCubeRuntimeClient{connected: &cubeSandbox{ID: "cube-1", TemplateID: "tpl-1"}}
 	runtime := mustCubeRuntime(t, client)
@@ -219,6 +237,7 @@ func TestCubeRuntimeWritesFileThroughConnectedEnvdSession(t *testing.T) {
 }
 
 func TestCubeSDKClientRunCommandUsesGeneratedEnvdClient(t *testing.T) {
+	exitStatus := "exit status 3"
 	handler := connect.NewServerStreamHandler(
 		processconnect.ProcessStartProcedure,
 		func(_ context.Context, request *connect.Request[process.StartRequest], stream *connect.ServerStream[process.StartResponse]) error {
@@ -244,7 +263,7 @@ func TestCubeSDKClientRunCommandUsesGeneratedEnvdClient(t *testing.T) {
 				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stdout{Stdout: []byte("one\n")}}}}},
 				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stderr{Stderr: []byte("two\n")}}}}},
 				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stdout{Stdout: []byte(strings.Repeat("x", 40))}}}}},
-				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_End{End: &process.ProcessEvent_EndEvent{ExitCode: 3, Exited: true, Status: "exit status 3"}}}},
+				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_End{End: &process.ProcessEvent_EndEvent{ExitCode: 3, Exited: true, Status: exitStatus, Error: &exitStatus}}}},
 			} {
 				if err := stream.Send(response); err != nil {
 					return err
@@ -280,6 +299,24 @@ func TestCubeSDKClientRunCommandUsesGeneratedEnvdClient(t *testing.T) {
 	}
 	if result.ExitCode != 3 || len(result.Output) > 32 || !strings.HasPrefix(result.Output, "one\ntwo\n") || !strings.Contains(result.Output, "truncated") {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestCubeCommandExitCodeClassifiesProcessExitAndInfrastructureFailure(t *testing.T) {
+	exitStatus := "exit status 1"
+	for _, end := range []*process.ProcessEvent_EndEvent{
+		{ExitCode: 1, Exited: true, Error: &exitStatus},
+		{Error: &exitStatus},
+	} {
+		exitCode, err := cubeCommandExitCode(end)
+		if err != nil || exitCode != 1 {
+			t.Fatalf("exit event = %#v, exitCode=%d err=%v", end, exitCode, err)
+		}
+	}
+
+	infrastructureError := "process transport failed"
+	if _, err := cubeCommandExitCode(&process.ProcessEvent_EndEvent{Error: &infrastructureError}); err == nil || !strings.Contains(err.Error(), infrastructureError) {
+		t.Fatalf("infrastructure error = %v", err)
 	}
 }
 
