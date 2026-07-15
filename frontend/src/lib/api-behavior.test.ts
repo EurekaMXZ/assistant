@@ -5,6 +5,7 @@ import {
   createConversationShare,
   disableAdminBillingRedemptionCode,
   getAdminOverview,
+  getConversationShare,
   getStreamUrl,
   handleSessionUnauthorized,
   issueAdminBillingRedemptionCodes,
@@ -119,6 +120,35 @@ describe("conversation sharing", () => {
     expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe(
       "share-operation-1",
     );
+  });
+
+  it("loads a public conversation snapshot without requiring a share creation route", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        share: {
+          id: "share/1",
+          title: "Shared conversation",
+          last_message_seq: 1,
+          created_at: "2026-07-14T12:00:00Z",
+          messages: [
+            {
+              id: "message-1",
+              conversation_id: "conversation-1",
+              seq: 1,
+              role: "user",
+              content_text: "hello",
+              metadata: {},
+              created_at: "2026-07-14T12:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    const result = await getConversationShare("share/1");
+
+    expect(result.messages[0]?.content_text).toBe("hello");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/conversation-shares/share%2F1");
   });
 });
 

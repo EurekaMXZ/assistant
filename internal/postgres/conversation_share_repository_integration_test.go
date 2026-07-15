@@ -73,6 +73,13 @@ func TestConversationShareCreationIntegration(t *testing.T) {
 	`, conversationID); err != nil {
 		t.Fatalf("extend conversation: %v", err)
 	}
+	snapshot, err := repository.GetConversationShare(t.Context(), first.ID)
+	if err != nil {
+		t.Fatalf("get share snapshot: %v", err)
+	}
+	if snapshot.Title != "Snapshot title" || snapshot.LastMessageSeq != 2 || len(snapshot.Messages) != 2 || snapshot.Messages[1].ContentText != "second" {
+		t.Fatalf("unexpected share snapshot: %#v", snapshot)
+	}
 
 	second, replayed, err := repository.CreateConversationShare(t.Context(), CreateConversationShareParams{
 		ConversationID: conversationID, CreatedByUserID: ownerID, IdempotencyKey: "share-operation-1",

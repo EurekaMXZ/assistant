@@ -176,9 +176,10 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				}
 				return &server.CreateConversationShareResult{Share: *share, Replayed: replayed}, nil
 			},
-			InitialTurn:       initialTurnService.Execute,
-			ListConversations: conversationRepository.ListConversationsByOwner,
-			GetConversation:   ensureOwnedConversation,
+			GetConversationShare: conversationShareRepository.GetConversationShare,
+			InitialTurn:          initialTurnService.Execute,
+			ListConversations:    conversationRepository.ListConversationsByOwner,
+			GetConversation:      ensureOwnedConversation,
 			UpdateConversation: func(ctx context.Context, ownerUserID string, input server.UpdateConversationInput) (*domain.Conversation, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, input.ConversationID); err != nil {
 					return nil, err

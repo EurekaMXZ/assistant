@@ -243,6 +243,7 @@ type UserUseCases struct {
 type ConversationUseCases struct {
 	CreateConversation      func(ctx context.Context, ownerUserID string, title string, metadata json.RawMessage) (*domain.Conversation, error)
 	CreateConversationShare func(ctx context.Context, ownerUserID string, conversationID string, idempotencyKey string) (*CreateConversationShareResult, error)
+	GetConversationShare    func(ctx context.Context, shareID string) (*domain.ConversationShareSnapshot, error)
 	InitialTurn             func(ctx context.Context, ownerUserID string, idempotencyKey string, input InitialTurnInput) (*InitialTurnResult, error)
 	ListConversations       func(ctx context.Context, ownerUserID string, limit int) ([]domain.Conversation, error)
 	GetConversation         func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error)

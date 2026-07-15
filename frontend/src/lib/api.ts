@@ -10,6 +10,7 @@ import type {
   BillingUsageEvent,
   Conversation,
   ConversationShareResult,
+  ConversationShareSnapshot,
   CursorPageResponse,
   Message,
   Model,
@@ -34,6 +35,7 @@ import {
   billingUsageEventSchema,
   committedInitialTurnSchema,
   conversationShareSchema,
+  conversationShareSnapshotSchema,
   conversationSchema,
   cursorPageSchema,
   initialTurnResultSchema,
@@ -758,6 +760,14 @@ export async function createConversationShare(conversationId: string, idempotenc
     },
     z.object({ share: conversationShareSchema, replayed: z.boolean() }),
   );
+}
+
+export async function getConversationShare(shareId: string, signal?: AbortSignal) {
+  return apiFetch<{ share: ConversationShareSnapshot }>(
+    `/conversation-shares/${encodeURIComponent(shareId)}`,
+    { signal },
+    z.object({ share: conversationShareSnapshotSchema }),
+  ).then((result) => result.share);
 }
 
 // Attachments

@@ -167,6 +167,18 @@ func (a *API) handleCreateConversationShare(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+func (a *API) handleGetConversationShare(c *gin.Context) {
+	snapshot, err := a.useCases.Conversations.GetConversationShare(
+		c.Request.Context(),
+		c.Param("shareID"),
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"share": snapshot})
+}
+
 func (a *API) handleListMessages(c *gin.Context) {
 	messages, err := a.useCases.Conversations.ListMessages(
 		c.Request.Context(),

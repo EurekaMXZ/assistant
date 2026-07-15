@@ -83,6 +83,14 @@ export const messageSchema = z.object({
   created_at: dateTime,
 });
 
+export const conversationShareSnapshotSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  last_message_seq: z.number().int().nonnegative(),
+  created_at: dateTime,
+  messages: z.array(messageSchema),
+});
+
 export const turnSchema = z.object({
   id: z.string(),
   conversation_id: z.string(),

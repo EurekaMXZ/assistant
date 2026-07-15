@@ -23,14 +23,21 @@ export interface MobileHeaderTitleAction {
   onLongPress: () => void;
 }
 
+export interface MobileHeaderStatus {
+  icon: ReactNode;
+  label: string;
+}
+
 interface MobileHeaderContextValue {
   setAction: Dispatch<SetStateAction<MobileHeaderAction | null>>;
+  setStatus: Dispatch<SetStateAction<MobileHeaderStatus | null>>;
   setTitle: Dispatch<SetStateAction<string>>;
   setTitleAction: Dispatch<SetStateAction<MobileHeaderTitleAction | null>>;
 }
 
 export const MobileHeaderContext = createContext<MobileHeaderContextValue>({
   setAction: () => undefined,
+  setStatus: () => undefined,
   setTitle: () => undefined,
   setTitleAction: () => undefined,
 });

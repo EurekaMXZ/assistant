@@ -258,6 +258,14 @@ export interface ConversationShareResult {
   replayed: boolean;
 }
 
+export interface ConversationShareSnapshot {
+  id: string;
+  title?: string;
+  last_message_seq: number;
+  created_at: string;
+  messages: Message[];
+}
+
 export interface Attachment {
   id: string;
   conversation_id: string;

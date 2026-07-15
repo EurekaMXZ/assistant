@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -162,6 +163,45 @@ func TestHandleCreateConversationShare(t *testing.T) {
 	srv.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"id":"share-id"`) || !strings.Contains(rec.Body.String(), `"last_message_seq":4`) || !strings.Contains(rec.Body.String(), `"replayed":false`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGetConversationShareIsPublic(t *testing.T) {
+	createdAt := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	srv := newTestServer(UseCases{
+		Conversations: ConversationUseCases{GetConversationShare: func(_ context.Context, shareID string) (*domain.ConversationShareSnapshot, error) {
+			if shareID != "share-1" {
+				t.Fatalf("share ID = %q, want share-1", shareID)
+			}
+			return &domain.ConversationShareSnapshot{
+				ID: "share-1", Title: "Shared conversation", LastMessageSeq: 2, CreatedAt: createdAt,
+				Messages: []domain.Message{{ID: "message-1", Seq: 1, Role: domain.RoleUser, ContentText: "hello", Metadata: json.RawMessage(`{}`), CreatedAt: createdAt}},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversation-shares/share-1", nil)
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"title":"Shared conversation"`) || !strings.Contains(rec.Body.String(), `"content_text":"hello"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGetConversationShareReturnsNotFound(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Conversations: ConversationUseCases{GetConversationShare: func(context.Context, string) (*domain.ConversationShareSnapshot, error) {
+			return nil, domain.ErrNotFound
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversation-shares/missing", nil)
+	rec := httptest.NewRecorder()
+
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

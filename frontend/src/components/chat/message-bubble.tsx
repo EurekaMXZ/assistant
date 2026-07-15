@@ -14,10 +14,12 @@ import { ImagePreview } from "./image-preview";
 
 interface MessageBubbleProps {
   message: Message;
+  allowAttachmentPreviews?: boolean;
   canEdit?: boolean;
   onEdit?: (message: Message) => void;
   onRetry?: (message: Message) => void;
   isStreaming?: boolean;
+  showActions?: boolean;
 }
 
 interface AssistantTurnBubbleProps {
@@ -180,12 +182,20 @@ function AttachmentImagePreviews({
   );
 }
 
-function MessageBody({ isStreaming, message }: { isStreaming?: boolean; message: Message }) {
+function MessageBody({
+  allowAttachmentPreviews = true,
+  isStreaming,
+  message,
+}: {
+  allowAttachmentPreviews?: boolean;
+  isStreaming?: boolean;
+  message: Message;
+}) {
   const isUser = message.role === "user";
   const metadata = message.metadata || {};
   const isError = metadata.display_kind === "assistant_error";
   const attachments = attachmentsFromMetadata(metadata);
-  const imageAttachments = attachments.filter(isImageAttachment);
+  const imageAttachments = allowAttachmentPreviews ? attachments.filter(isImageAttachment) : [];
   const attachmentCount = attachmentCountFromMetadata(metadata);
   const hiddenAttachmentCount = Math.max(0, attachmentCount - imageAttachments.length);
 
@@ -242,10 +252,12 @@ function MessageBody({ isStreaming, message }: { isStreaming?: boolean; message:
 
 export function MessageBubble({
   message,
+  allowAttachmentPreviews = true,
   canEdit = false,
   onEdit,
   onRetry,
   isStreaming,
+  showActions = true,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const displayKind =
@@ -265,10 +277,16 @@ export function MessageBubble({
               : "w-full text-foreground",
           )}
         >
-          {!isThinkingBlock ? <MessageBody isStreaming={isStreaming} message={message} /> : null}
+          {!isThinkingBlock ? (
+            <MessageBody
+              allowAttachmentPreviews={allowAttachmentPreviews}
+              isStreaming={isStreaming}
+              message={message}
+            />
+          ) : null}
         </div>
 
-        {isThinkingBlock ? null : isUser ? (
+        {!showActions || isThinkingBlock ? null : isUser ? (
           <div className="mt-1 flex w-full justify-end gap-1 opacity-0 transition-opacity group-hover/message:opacity-100">
             <Tooltip>
               <TooltipTrigger

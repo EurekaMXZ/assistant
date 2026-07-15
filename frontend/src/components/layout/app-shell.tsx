@@ -8,6 +8,7 @@ import { AuthDialog } from "@/components/auth/auth-dialog";
 import {
   MobileHeaderContext,
   type MobileHeaderAction,
+  type MobileHeaderStatus,
   type MobileHeaderTitleAction,
 } from "@/components/layout/mobile-header-context";
 import { MobileHeaderTitle } from "@/components/layout/mobile-header-title";
@@ -31,6 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [mobileHeaderTitle, setMobileHeaderTitle] = useState("Assistant");
   const [mobileHeaderAction, setMobileHeaderAction] = useState<MobileHeaderAction | null>(null);
+  const [mobileHeaderStatus, setMobileHeaderStatus] = useState<MobileHeaderStatus | null>(null);
   const [mobileHeaderTitleAction, setMobileHeaderTitleAction] =
     useState<MobileHeaderTitleAction | null>(null);
   const [authMode, setAuthMode] = useState<AuthDialogMode | null>(null);
@@ -38,7 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isAuthRoute = pathname.startsWith("/auth/");
-  const isProtectedRoute = pathname !== "/" && !isAuthRoute;
+  const isConversationShareRoute = pathname.startsWith("/share/");
+  const isProtectedRoute = pathname !== "/" && !isAuthRoute && !isConversationShareRoute;
   const currentConversationId = extractConversationId(pathname);
   const mobileHeaderActionIsCurrent =
     !mobileHeaderAction?.conversationId ||
@@ -124,7 +127,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  if (authStatus === "error") {
+  if (authStatus === "error" && !isConversationShareRoute) {
     return (
       <main className="flex h-dvh items-center justify-center px-6">
         <div className="max-w-sm text-center">
@@ -162,6 +165,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <MobileHeaderContext.Provider
       value={{
         setAction: setMobileHeaderAction,
+        setStatus: setMobileHeaderStatus,
         setTitle: setMobileHeaderTitle,
         setTitleAction: setMobileHeaderTitleAction,
       }}
@@ -229,7 +233,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               title={mobileHeaderTitle}
             />
 
-            {!user && !isLoading ? (
+            {mobileHeaderStatus ? (
+              <span className="flex items-center justify-end gap-1.5 pr-1 text-xs text-muted-foreground">
+                {mobileHeaderStatus.icon}
+                {mobileHeaderStatus.label}
+              </span>
+            ) : !user && !isLoading ? (
               <div className="flex items-center justify-end gap-1">
                 <Button variant="ghost" size="xs" onClick={() => openAuthDialog("login")}>
                   登录

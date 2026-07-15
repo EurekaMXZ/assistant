@@ -74,6 +74,7 @@ func (a *API) registerRoutes(router *gin.Engine) {
 	v1.POST("/auth/resend-verification", a.handleResendVerification)
 	v1.POST("/auth/forgot-password", a.handleForgotPassword)
 	v1.POST("/auth/reset-password", a.handleResetPassword)
+	v1.GET("/conversation-shares/:shareID", a.handleGetConversationShare)
 
 	userRoutes := v1.Group("")
 	userRoutes.Use(a.requireMinimumRole(domain.UserRoleUser))

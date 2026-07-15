@@ -109,6 +109,75 @@ func (r *ConversationShareRepository) CreateConversationShare(ctx context.Contex
 	return share, true, nil
 }
 
+func (r *ConversationShareRepository) GetConversationShare(ctx context.Context, shareID string) (*domain.ConversationShareSnapshot, error) {
+	shareID = strings.TrimSpace(shareID)
+	if uuid.Validate(shareID) != nil {
+		return nil, domain.ErrNotFound
+	}
+
+	var (
+		snapshot       domain.ConversationShareSnapshot
+		conversationID string
+	)
+	if err := r.pool.QueryRow(ctx, `
+		SELECT
+			share.id::text,
+			share.conversation_id::text,
+			share.title,
+			share.last_message_seq,
+			share.created_at
+		FROM conversation_shares share
+		WHERE share.id = $1::uuid
+	`, shareID).Scan(
+		&snapshot.ID,
+		&conversationID,
+		&snapshot.Title,
+		&snapshot.LastMessageSeq,
+		&snapshot.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get conversation share: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			id::text,
+			conversation_id::text,
+			COALESCE(turn_id::text, ''),
+			seq,
+			role,
+			COALESCE(content_text, ''),
+			token_count,
+			metadata,
+			context_excluded,
+			created_at
+		FROM messages
+		WHERE conversation_id = $1::uuid
+		  AND seq <= $2
+		  AND role IN ($3, $4)
+		ORDER BY seq ASC
+	`, conversationID, snapshot.LastMessageSeq, domain.RoleUser, domain.RoleAssistant)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation share messages: %w", err)
+	}
+	defer rows.Close()
+
+	snapshot.Messages = make([]domain.Message, 0)
+	for rows.Next() {
+		message, scanErr := scanMessage(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		snapshot.Messages = append(snapshot.Messages, *message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation share messages: %w", err)
+	}
+	return &snapshot, nil
+}
+
 func scanConversationShare(row scanRow) (*domain.ConversationShare, error) {
 	var share domain.ConversationShare
 	if err := row.Scan(
