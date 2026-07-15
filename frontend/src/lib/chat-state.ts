@@ -1,6 +1,6 @@
 import type { PendingHomeTurn } from "./pending-home-turn";
 import type { Message, TimelineItem } from "./types";
-import { isAssistantOutputItem } from "./turn-stream-events";
+import { isAssistantOutputItem, isTimelineItem } from "./turn-stream-events";
 
 export function thinkingMessageId(turnId: string) {
   return `thinking-${turnId}`;
@@ -165,6 +165,41 @@ export function assistantOutputPhase(item: TimelineItem) {
   return phase === "commentary" || phase === "final_answer" ? phase : null;
 }
 
+export function assistantTimelineThinkingState(turnId: string, items: TimelineItem[]) {
+  let afterMessageId: string | null = null;
+  let pendingMessageId: string | null = null;
+
+  items.forEach((item, index) => {
+    if (!isAssistantOutputItem(item) || item.status !== "completed" || item.content_text == null) {
+      return;
+    }
+
+    const messageId = assistantTextMessageId(turnId, item.id);
+    const phase = assistantOutputPhase(item);
+    if (phase === "commentary") {
+      afterMessageId = messageId;
+      pendingMessageId = null;
+      return;
+    }
+    if (phase === "final_answer") {
+      pendingMessageId = null;
+      return;
+    }
+
+    const hasContinuation = items
+      .slice(index + 1)
+      .some((next) => isAssistantOutputItem(next) || isTimelineItem(next));
+    if (hasContinuation) {
+      afterMessageId = messageId;
+      pendingMessageId = null;
+      return;
+    }
+    pendingMessageId = messageId;
+  });
+
+  return { afterMessageId, pendingMessageId };
+}
+
 export function applyAssistantTimelineSnapshot(
   messages: Message[],
   turnId: string,
@@ -179,7 +214,7 @@ export function applyAssistantTimelineSnapshot(
       (typeof message.metadata?.timeline_item_id === "string" &&
         assistantItemIds.has(message.metadata.timeline_item_id)),
   );
-  return items.reduce(
+  const projected = items.reduce(
     (next, item) =>
       isAssistantOutputItem(item) && item.content_text != null
         ? upsertAssistantTextContent(
@@ -193,4 +228,6 @@ export function applyAssistantTimelineSnapshot(
         : next,
     retained,
   );
+  const { afterMessageId } = assistantTimelineThinkingState(turnId, items);
+  return afterMessageId ? moveThinkingAfter(projected, turnId, afterMessageId) : projected;
 }

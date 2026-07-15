@@ -14,6 +14,7 @@ import {
   applyAssistantTimelineSnapshot,
   assistantOutputPhase,
   assistantTextMessageId,
+  assistantTimelineThinkingState,
   moveThinkingAfter,
   upsertAssistantTextContent,
   upsertTurnFailureMessage,
@@ -195,6 +196,9 @@ export function useTurnTimelineController({
         onSnapshot(snapshot) {
           applyAction({ type: "snapshot", turnId, snapshot });
           if (mirrorMessages) {
+            const thinkingState = assistantTimelineThinkingState(turnId, snapshot.items);
+            pendingDoneTextMessageIdRef.current =
+              snapshot.status === "processing" ? thinkingState.pendingMessageId : null;
             setMessages((previous) =>
               applyAssistantTimelineSnapshot(previous, turnId, conversationId, snapshot.items),
             );
@@ -331,6 +335,7 @@ export function useTurnTimelineController({
           getTurn,
           onEvent: (event) => {
             if (activeConversationIdRef.current === requestedConversationId) {
+              if (mode === "restore") settlePendingThinking(event, turnId);
               dispatchTurnStreamEvent(context, event);
             }
           },
@@ -355,7 +360,7 @@ export function useTurnTimelineController({
         }
       }
     },
-    [applyAction, conversationId, createStreamContext, setMessages],
+    [applyAction, conversationId, createStreamContext, setMessages, settlePendingThinking],
   );
 
   const openTimeline = useCallback(
