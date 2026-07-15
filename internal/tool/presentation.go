@@ -257,13 +257,20 @@ func presentationToolName(namespace string, serverLabel string, name string) str
 	if namespace == "" {
 		namespace = serverLabel
 	}
-	if namespace == "" {
-		return name
+	toolName := name
+	if namespace != "" && name == "" {
+		toolName = namespace
+	} else if namespace != "" && !strings.HasPrefix(name, namespace+".") {
+		toolName = namespace + "." + name
 	}
-	if name == "" {
-		return namespace
+	switch toolName {
+	case "tavily.search":
+		return WebSearch
+	case "tavily.extract":
+		return WebExtract
+	default:
+		return toolName
 	}
-	return namespace + "." + name
 }
 
 func summarizeKnownTool(toolName string, status string, args map[string]any, result any) (string, []string) {

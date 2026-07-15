@@ -74,6 +74,32 @@ func TestBuildPublicToolPresentationUsesInternetToolSpecificFields(t *testing.T)
 	}
 }
 
+func TestBuildPublicToolPresentationRecognizesTavilyNamespaceAliases(t *testing.T) {
+	tests := []struct {
+		name  string
+		title string
+	}{
+		{name: "search", title: "Searching the Web"},
+		{name: "extract", title: "Reading Web Content"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			presentation := BuildPublicToolPresentation(
+				"tavily",
+				"",
+				test.name,
+				"completed",
+				json.RawMessage(`{"query":"docs","urls":["https://example.com"]}`),
+				[]byte(`{"results":[]}`),
+				"",
+			)
+			if presentation.Title != test.title || strings.HasPrefix(presentation.Summary, "Used ") {
+				t.Fatalf("unexpected Tavily alias presentation: %#v", presentation)
+			}
+		})
+	}
+}
+
 func TestBuildPublicToolPresentationDoesNotTreatContentAsLink(t *testing.T) {
 	presentation := BuildPublicToolPresentation(
 		"internet",

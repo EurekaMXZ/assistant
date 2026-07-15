@@ -32,15 +32,19 @@ type stubTurnStreamEventStore struct {
 	turnID         string
 	eventType      string
 	payload        []byte
+	eventIndex     int64
 	err            error
 }
 
-func (s *stubTurnStreamEventStore) AppendTurnStreamEvent(_ context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) error {
+func (s *stubTurnStreamEventStore) AppendTurnStreamEvent(_ context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) (*domain.TurnStreamEvent, error) {
 	s.conversationID = conversationID
 	s.turnID = turnID
 	s.eventType = eventType
 	s.payload = append([]byte(nil), payload...)
-	return s.err
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &domain.TurnStreamEvent{EventIndex: s.eventIndex}, nil
 }
 
 func (s *stubTurnArtifactStore) PutBytes(_ context.Context, key string, data []byte, _ string) error {
@@ -87,7 +91,7 @@ func (s *stubTurnArtifactStore) TurnModelContextKey(conversationID, turnID strin
 func TestArchivingStreamPublisherPublishesAndArchivesEvents(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
 	store := &stubTurnArtifactStore{}
-	events := &stubTurnStreamEventStore{}
+	events := &stubTurnStreamEventStore{eventIndex: 42}
 	publisher := NewArchivingStreamPublisher(next, store, events)
 
 	event := stream.Event{
@@ -103,6 +107,9 @@ func TestArchivingStreamPublisherPublishesAndArchivesEvents(t *testing.T) {
 	}
 	if len(next.events) != 1 || next.events[0].Type != stream.EventToolCompleted {
 		t.Fatalf("unexpected forwarded events: %#v", next.events)
+	}
+	if next.events[0].EventIndex != 42 {
+		t.Fatalf("forwarded event index = %d, want 42", next.events[0].EventIndex)
 	}
 	key := "stream-events/conv-1/turn-1.jsonl"
 	got := string(store.data[key])

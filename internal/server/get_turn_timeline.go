@@ -138,6 +138,9 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 			return nil, err
 		}
 	}
+	if len(events) > 0 {
+		timeline.LastEventIndex = events[len(events)-1].EventIndex
+	}
 
 	assistantMessages, err := uc.loadAssistantMessages(ctx, turnID)
 	if err != nil {
@@ -149,6 +152,10 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 			reasoningItems = nil
 		}
 		items, _, err := buildTimelineFromEvents(events, reasoningItems)
+		if err != nil {
+			return nil, err
+		}
+		items, err = uc.reconcileDurableToolCalls(ctx, turn.ID, items)
 		if err != nil {
 			return nil, err
 		}
@@ -316,6 +323,80 @@ func (uc GetTurnTimeline) buildFallbackToolCallItem(ctx context.Context, call do
 	}, nil
 }
 
+func (uc GetTurnTimeline) reconcileDurableToolCalls(ctx context.Context, turnID string, items []TurnTimelineItem) ([]TurnTimelineItem, error) {
+	if uc.ToolCalls == nil {
+		return items, nil
+	}
+	calls, err := uc.ToolCalls.ListToolCallsByTurn(ctx, turnID)
+	if err != nil {
+		return nil, err
+	}
+	for _, call := range calls {
+		durable, err := uc.buildFallbackToolCallItem(ctx, call)
+		if err != nil {
+			return nil, err
+		}
+		if index := durableToolCallIndex(items, call); index != -1 {
+			items[index] = reconcileDurableToolCallItem(items[index], durable)
+			continue
+		}
+		items = insertTimelineItemByCreatedAt(items, durable)
+	}
+	return items, nil
+}
+
+func durableToolCallIndex(items []TurnTimelineItem, call domain.ToolCallRecord) int {
+	id := stableTimelineToolID(call.ID, call.CallID, call.ToolName)
+	for index, item := range items {
+		if item.Type != turnTimelineItemToolCall {
+			continue
+		}
+		if item.ID == id || metadataString(item.Metadata, "tool_call_record_id") == call.ID {
+			return index
+		}
+		if call.CallID != "" && metadataString(item.Metadata, "call_id") == call.CallID {
+			return index
+		}
+	}
+	return -1
+}
+
+func reconcileDurableToolCallItem(existing TurnTimelineItem, durable TurnTimelineItem) TurnTimelineItem {
+	if len(durable.Arguments) == 0 {
+		durable.Arguments = existing.Arguments
+	}
+	if len(durable.Output) == 0 {
+		durable.Output = existing.Output
+	}
+	if durable.Summary == "" {
+		durable.Summary = existing.Summary
+	}
+	if len(durable.Details) == 0 {
+		durable.Details = existing.Details
+	}
+	if !existing.CreatedAt.IsZero() {
+		durable.CreatedAt = existing.CreatedAt
+	}
+	durable.Metadata = mergeTimelineMetadata(existing.Metadata, durable.Metadata)
+	return durable
+}
+
+func insertTimelineItemByCreatedAt(items []TurnTimelineItem, item TurnTimelineItem) []TurnTimelineItem {
+	insertAt := len(items)
+	if !item.CreatedAt.IsZero() {
+		for index := range items {
+			if !items[index].CreatedAt.IsZero() && items[index].CreatedAt.After(item.CreatedAt) {
+				insertAt = index
+				break
+			}
+		}
+	}
+	items = append(items, TurnTimelineItem{})
+	copy(items[insertAt+1:], items[insertAt:])
+	items[insertAt] = item
+	return items
+}
+
 func buildTimelineFromEvents(events []domain.TurnStreamEvent, reasoningItems []reasoningTimelineItem) ([]TurnTimelineItem, bool, error) {
 	reducer := newTimelineReducer(nil, nil, reasoningItems)
 	for _, stored := range events {
@@ -446,6 +527,7 @@ func decodeStoredStreamEvent(stored domain.TurnStreamEvent) (stream.Event, error
 	if err := json.Unmarshal(stored.Payload, &event); err != nil {
 		return stream.Event{}, fmt.Errorf("decode stored stream event: %w", err)
 	}
+	event.EventIndex = stored.EventIndex
 	return event, nil
 }
 

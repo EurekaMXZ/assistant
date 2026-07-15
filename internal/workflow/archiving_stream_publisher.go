@@ -31,9 +31,11 @@ func NewArchivingStreamPublisher(next stream.Publisher, store TurnArtifactStore,
 func (p *ArchivingStreamPublisher) Publish(ctx context.Context, event stream.Event) error {
 	var errs []error
 
-	if err := p.archiveEvent(ctx, event); err != nil {
+	archivedEvent, err := p.archiveEvent(ctx, event)
+	if err != nil {
 		errs = append(errs, err)
 	}
+	event = archivedEvent
 
 	if p.next != nil {
 		if err := p.next.Publish(ctx, event); err != nil {
@@ -44,17 +46,17 @@ func (p *ArchivingStreamPublisher) Publish(ctx context.Context, event stream.Eve
 	return errors.Join(errs...)
 }
 
-func (p *ArchivingStreamPublisher) archiveEvent(ctx context.Context, event stream.Event) error {
+func (p *ArchivingStreamPublisher) archiveEvent(ctx context.Context, event stream.Event) (stream.Event, error) {
 	if p == nil {
-		return nil
+		return event, nil
 	}
 	if strings.TrimSpace(event.ConversationID) == "" || strings.TrimSpace(event.TurnID) == "" {
-		return nil
+		return event, nil
 	}
 
 	raw, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("marshal stream event archive payload: %w", err)
+		return event, fmt.Errorf("marshal stream event archive payload: %w", err)
 	}
 
 	p.mu.Lock()
@@ -87,12 +89,15 @@ func (p *ArchivingStreamPublisher) archiveEvent(ctx context.Context, event strea
 	}
 
 	if p.events != nil {
-		if err := p.events.AppendTurnStreamEvent(ctx, event.ConversationID, event.TurnID, event.Type, raw); err != nil {
+		stored, err := p.events.AppendTurnStreamEvent(ctx, event.ConversationID, event.TurnID, event.Type, raw)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("persist turn stream event for turn %q: %w", event.TurnID, err))
+		} else if stored != nil {
+			event.EventIndex = stored.EventIndex
 		}
 	}
 
-	return errors.Join(errs...)
+	return event, errors.Join(errs...)
 }
 
 var _ stream.Publisher = (*ArchivingStreamPublisher)(nil)

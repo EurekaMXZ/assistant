@@ -8,7 +8,7 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/domain"
 )
 
-func (r *TurnStreamEventRepository) AppendTurnStreamEvent(ctx context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) error {
+func (r *TurnStreamEventRepository) AppendTurnStreamEvent(ctx context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) (*domain.TurnStreamEvent, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO turn_stream_events (
 			turn_id,
@@ -27,10 +27,11 @@ func (r *TurnStreamEventRepository) AppendTurnStreamEvent(ctx context.Context, c
 			created_at
 	`, turnID, conversationID, eventType, normalizedJSON(payload))
 
-	if _, err := scanTurnStreamEvent(row); err != nil {
-		return fmt.Errorf("insert turn stream event: %w", err)
+	event, err := scanTurnStreamEvent(row)
+	if err != nil {
+		return nil, fmt.Errorf("insert turn stream event: %w", err)
 	}
-	return nil
+	return event, nil
 }
 
 func (r *TurnStreamEventRepository) ListTurnStreamEventsByTurn(ctx context.Context, turnID string) ([]domain.TurnStreamEvent, error) {

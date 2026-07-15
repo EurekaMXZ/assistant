@@ -125,7 +125,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 
 	itemRegistry := newPresentationItemRegistry()
 	eventRegistry := newPresentationEventRegistry()
-	snapshot, lastResponseID, outputSlots, err := a.loadTurnStreamSnapshot(c.Request.Context(), userID, turn, itemRegistry)
+	snapshot, lastResponseID, outputSlots, lastEventIndex, err := a.loadTurnStreamSnapshot(c.Request.Context(), userID, turn, itemRegistry)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -133,6 +133,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 	presentationState := newPresentationStreamState(turn, itemRegistry, snapshot.Items)
 	presentationState.responseID(lastResponseID)
 	presentationState.outputSlots = outputSlots
+	presentationState.snapshotEventIndex = lastEventIndex
 	if err := writeSSE(c.Writer, streamUIEventTurnSnapshot, snapshot); err != nil {
 		return
 	}
@@ -217,9 +218,9 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 	}
 }
 
-func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, turn *domain.Turn, items *presentationItemRegistry) (TurnStreamSnapshot, string, *responseOutputSlotResolver, error) {
+func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, turn *domain.Turn, items *presentationItemRegistry) (TurnStreamSnapshot, string, *responseOutputSlotResolver, int64, error) {
 	if turn == nil {
-		return TurnStreamSnapshot{}, "", newResponseOutputSlotResolver(), nil
+		return TurnStreamSnapshot{}, "", newResponseOutputSlotResolver(), 0, nil
 	}
 	timeline, err := a.useCases.Turns.GetTurnTimeline(ctx, ownerUserID, turn.ID)
 	if err == nil && timeline != nil {
@@ -231,10 +232,10 @@ func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, tu
 			StartedAt:      turn.StartedAt,
 			CompletedAt:    turn.CompletedAt,
 			FailedAt:       turn.FailedAt,
-		}, lastTimelineResponseID(timeline.Items, turnResponseID(turn)), responseOutputSlotsFromTimeline(timeline.Items), nil
+		}, lastTimelineResponseID(timeline.Items, turnResponseID(turn)), responseOutputSlotsFromTimeline(timeline.Items), timeline.LastEventIndex, nil
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		return TurnStreamSnapshot{}, "", nil, err
+		return TurnStreamSnapshot{}, "", nil, 0, err
 	}
 
 	snapshot := TurnStreamSnapshot{
@@ -253,7 +254,7 @@ func (a *API) loadTurnStreamSnapshot(ctx context.Context, ownerUserID string, tu
 			}
 		}
 	}
-	return snapshot, turnResponseID(turn), newResponseOutputSlotResolver(), nil
+	return snapshot, turnResponseID(turn), newResponseOutputSlotResolver(), 0, nil
 }
 
 func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWriter, ownerUserID string, turnID string, items *presentationItemRegistry) error {
@@ -264,7 +265,7 @@ func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWrit
 	if turn == nil || (turn.Status != domain.TurnStatusCompleted && turn.Status != domain.TurnStatusFailed) {
 		return errors.New("terminal stream event arrived before durable turn completion")
 	}
-	snapshot, _, _, err := a.loadTurnStreamSnapshot(ctx, ownerUserID, turn, items)
+	snapshot, _, _, _, err := a.loadTurnStreamSnapshot(ctx, ownerUserID, turn, items)
 	if err != nil {
 		return err
 	}

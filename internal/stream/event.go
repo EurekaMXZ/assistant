@@ -27,6 +27,7 @@ const (
 
 type Event struct {
 	Type           string `json:"type"`
+	EventIndex     int64  `json:"event_index,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	TurnID         string `json:"turn_id,omitempty"`
 	ResponseID     string `json:"response_id,omitempty"`

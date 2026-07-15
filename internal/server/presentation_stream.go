@@ -35,6 +35,9 @@ func (r *presentationEventRegistry) Filter(state *presentationStreamState, event
 	if !isTimelineReducerEvent(event.Type) {
 		return nil, nil
 	}
+	if event.EventIndex > 0 && event.EventIndex <= state.snapshotEventIndex {
+		return nil, nil
+	}
 	state.reducer.outputSlots = state.outputSlots
 	mutations, err := state.reducer.Apply(normalizedTimelineEvent{Event: event, CreatedAt: createdAt})
 	if err != nil {
@@ -122,11 +125,14 @@ func filterReasoningPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 }
 
 func filterToolPresentationItem(item TurnTimelineItem) TurnTimelineItem {
-	toolName := strings.TrimSpace(item.Title)
+	toolName := metadataString(item.Metadata, "tool_name")
+	if toolName == "" {
+		toolName = strings.TrimSpace(item.Title)
+	}
 	presentation := tool.BuildPublicToolPresentation(
 		"",
 		"",
-		item.Title,
+		toolName,
 		item.Status,
 		item.Arguments,
 		item.Output,
@@ -139,7 +145,7 @@ func filterToolPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 	if len(links) == 0 {
 		links = nil
 	}
-	title := item.Title
+	title := toolName
 	if presentation.Title != "" {
 		title = presentation.Title
 	}
@@ -199,9 +205,10 @@ func metadataString(metadata map[string]any, key string) string {
 }
 
 type presentationStreamState struct {
-	items       *presentationItemRegistry
-	reducer     *timelineReducer
-	outputSlots *responseOutputSlotResolver
+	items              *presentationItemRegistry
+	reducer            *timelineReducer
+	outputSlots        *responseOutputSlotResolver
+	snapshotEventIndex int64
 }
 
 func newPresentationStreamState(turn *domain.Turn, items *presentationItemRegistry, snapshot []TurnTimelineItem) *presentationStreamState {

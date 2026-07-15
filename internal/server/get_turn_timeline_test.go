@@ -62,6 +62,55 @@ func TestBuildTimelineDropsDuplicateAndOutOfOrderSequences(t *testing.T) {
 	}
 }
 
+func TestGetTurnTimelineReconcilesPartialToolEventsFromDurableCalls(t *testing.T) {
+	now := time.Now().UTC()
+	raw, err := json.Marshal(stream.Event{
+		Type:     stream.EventToolStarted,
+		ToolName: "Reading_Content",
+		Payload:  `{"tool_call_record_id":"tool-1","call_id":"call-1","tool_name":"Reading_Content","status":"started"}`,
+	})
+	if err != nil {
+		t.Fatalf("marshal tool event: %v", err)
+	}
+	uc := GetTurnTimeline{
+		Turns: &stubTraceTurnGetter{turn: &domain.Turn{
+			ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing, CreatedAt: now,
+		}},
+		Runs: &stubTurnRunLister{},
+		Events: &stubTurnTimelineEventLister{events: []domain.TurnStreamEvent{{
+			ID: "event-1", TurnID: "turn-1", ConversationID: "conv-1", EventIndex: 42,
+			EventType: stream.EventToolStarted, Payload: raw, CreatedAt: now.Add(time.Second),
+		}}},
+		ToolCalls: &stubToolCallLister{calls: []domain.ToolCallRecord{{
+			ID: "tool-1", TurnID: "turn-1", TurnRunID: "run-1", CallID: "call-1",
+			Namespace: "internet", ToolName: "search", Status: domain.ToolCallStatusCompleted,
+			ArgumentsBlobKey: "tool-args", OutputBlobKey: "tool-output", StartedAt: now,
+		}}},
+		Artifacts: &stubTurnRunArtifactReader{data: map[string][]byte{
+			"tool-args":   []byte(`{"query":"latest docs"}`),
+			"tool-output": []byte(`{"results":[{"url":"https://example.com"}]}`),
+		}},
+	}
+
+	timeline, err := uc.Execute(t.Context(), "turn-1")
+	if err != nil {
+		t.Fatalf("execute timeline: %v", err)
+	}
+	if timeline.LastEventIndex != 42 {
+		t.Fatalf("last event index = %d, want 42", timeline.LastEventIndex)
+	}
+	if len(timeline.Items) != 1 {
+		t.Fatalf("timeline items = %#v, want one reconciled tool", timeline.Items)
+	}
+	item := timeline.Items[0]
+	if item.ID != "tool:tool-1" || item.Title != "internet.search" || item.Status != domain.ToolCallStatusCompleted {
+		t.Fatalf("reconciled tool identity = %#v", item)
+	}
+	if !strings.Contains(string(item.Arguments), "latest docs") || !strings.Contains(string(item.Output), "example.com") {
+		t.Fatalf("reconciled tool payload = %#v", item)
+	}
+}
+
 func TestBuildTimelineCoalescesAndRedactsResponseFailures(t *testing.T) {
 	now := time.Now().UTC()
 	streamEvents := []stream.Event{

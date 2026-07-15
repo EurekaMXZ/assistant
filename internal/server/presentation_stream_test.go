@@ -183,6 +183,80 @@ func TestPresentationStreamDropsEventsAlreadyIncludedInSnapshot(t *testing.T) {
 	}
 }
 
+func TestPresentationStreamDropsUnsequencedEventsIncludedInSnapshotByEventIndex(t *testing.T) {
+	const responseID = "response-1"
+	const itemID = "item-1"
+	presentationItemID := stableTimelineAssistantTextItemID(responseID, itemID, 0, 0, "", 0)
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		newPresentationItemRegistry(),
+		[]TurnTimelineItem{{ID: presentationItemID, Type: turnTimelineItemOutputText, ContentText: "snapshot"}},
+	)
+	state.snapshotEventIndex = 42
+	registry := newPresentationEventRegistry()
+
+	frames, err := registry.Filter(state, stream.Event{
+		Type:       responseEventOutputTextDelta,
+		EventIndex: 42,
+		Payload:    `{"response_id":"response-1","item_id":"item-1","delta":"duplicate"}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("filter snapshot duplicate: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("snapshot event-index duplicate produced frames: %#v", frames)
+	}
+
+	frames, err = registry.Filter(state, stream.Event{
+		Type:       responseEventOutputTextDelta,
+		EventIndex: 43,
+		Payload:    `{"response_id":"response-1","item_id":"item-1","delta":"new"}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("filter new event: %v", err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemDelta {
+		t.Fatalf("new event-index frames = %#v, want one item.delta", frames)
+	}
+}
+
+func TestPresentationStreamKeepsTavilyPresentationAfterRefresh(t *testing.T) {
+	registry := newPresentationItemRegistry()
+	started, ok := registry.Filter(TurnTimelineItem{
+		ID:        "tool:tool-1",
+		Type:      turnTimelineItemToolCall,
+		Title:     "internet.extract",
+		Status:    stream.ToolEventStatusStarted,
+		Arguments: json.RawMessage(`{"urls":["https://example.com"]}`),
+	})
+	if !ok {
+		t.Fatal("started Tavily item was dropped")
+	}
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		registry,
+		[]TurnTimelineItem{started},
+	)
+	state.snapshotEventIndex = 42
+
+	frames, err := newPresentationEventRegistry().Filter(state, stream.Event{
+		Type:       stream.EventToolCompleted,
+		EventIndex: 43,
+		ToolName:   "internet.extract",
+		Payload:    `{"tool_call_record_id":"tool-1","call_id":"call-1","tool_name":"internet.extract","status":"completed","arguments":{"urls":["https://example.com"]},"output":{"results":[]}}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("filter completed Tavily event: %v", err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemUpsert {
+		t.Fatalf("completed Tavily frames = %#v", frames)
+	}
+	item, ok := frames[0].Payload.(TurnTimelineItem)
+	if !ok || item.Title != "Reading Web Content" || strings.HasPrefix(item.Summary, "Used ") {
+		t.Fatalf("refreshed Tavily presentation = %#v", frames[0].Payload)
+	}
+}
+
 func TestPresentationProviderFailureWaitsForDurableFailure(t *testing.T) {
 	state := newPresentationStreamState(
 		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},

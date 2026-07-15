@@ -90,6 +90,7 @@ type TurnTimeline struct {
 	ConversationID string             `json:"conversation_id"`
 	Status         string             `json:"status"`
 	Items          []TurnTimelineItem `json:"items"`
+	LastEventIndex int64              `json:"-"`
 }
 
 type TurnStreamSnapshot struct {

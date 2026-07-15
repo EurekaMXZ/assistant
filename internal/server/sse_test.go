@@ -188,7 +188,7 @@ func TestFallbackTurnStreamSnapshotUsesEmptyItemsArray(t *testing.T) {
 			return nil, domain.ErrNotFound
 		},
 	}}}
-	snapshot, _, _, err := api.loadTurnStreamSnapshot(
+	snapshot, _, _, _, err := api.loadTurnStreamSnapshot(
 		t.Context(),
 		"user-1",
 		&domain.Turn{ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusProcessing},

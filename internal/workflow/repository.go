@@ -89,5 +89,5 @@ type ToolCallStore interface {
 }
 
 type TurnStreamEventStore interface {
-	AppendTurnStreamEvent(ctx context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) error
+	AppendTurnStreamEvent(ctx context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) (*domain.TurnStreamEvent, error)
 }
