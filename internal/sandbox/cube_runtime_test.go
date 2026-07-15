@@ -3,17 +3,19 @@ package sandbox
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	process "github.com/TencentCloudAgentRuntime/ags-go-sdk/pb/process"
+	"github.com/TencentCloudAgentRuntime/ags-go-sdk/pb/process/processconnect"
 	cubesandbox "github.com/tencentcloud/CubeSandbox/sdk/go"
 )
 
@@ -195,25 +197,67 @@ func TestCubeRuntimeExecUsesArgvAndGuestTimeout(t *testing.T) {
 	}
 }
 
-func TestParseCubeCommandStreamPreservesOrderAndLimitsOutput(t *testing.T) {
-	var stream bytes.Buffer
-	writeCubeTestEnvelope(t, &stream, 0, map[string]any{"event": map[string]any{"data": map[string]any{
-		"stdout": base64.StdEncoding.EncodeToString([]byte("one\n")),
-	}}})
-	writeCubeTestEnvelope(t, &stream, 0, map[string]any{"event": map[string]any{"data": map[string]any{
-		"stderr": base64.StdEncoding.EncodeToString([]byte("two\n")),
-	}}})
-	writeCubeTestEnvelope(t, &stream, 0, map[string]any{"event": map[string]any{"data": map[string]any{
-		"stdout": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", 40))),
-	}}})
-	writeCubeTestEnvelope(t, &stream, 0, map[string]any{"event": map[string]any{"end": map[string]any{"exitCode": 0}}})
-	writeCubeTestEnvelope(t, &stream, 0x02, map[string]any{})
+func TestCubeSDKClientRunCommandUsesGeneratedEnvdClient(t *testing.T) {
+	handler := connect.NewServerStreamHandler(
+		processconnect.ProcessStartProcedure,
+		func(_ context.Context, request *connect.Request[process.StartRequest], stream *connect.ServerStream[process.StartResponse]) error {
+			if got := request.Header().Get("Authorization"); got != "Basic cm9vdDo=" {
+				t.Errorf("Authorization = %q", got)
+			}
+			if got := request.Header().Get("X-Access-Token"); got != "envd-token" {
+				t.Errorf("X-Access-Token = %q", got)
+			}
+			if got := request.Header().Get("Connect-Timeout-Ms"); got == "" {
+				t.Error("Connect-Timeout-Ms is empty")
+			}
+			if request.Msg.GetProcess().GetCmd() != "/bin/sh" || request.Msg.GetProcess().GetCwd() != "/" {
+				t.Errorf("unexpected process config: %#v", request.Msg.GetProcess())
+			}
+			wantArgs := []string{"-c", "printf one", "assistant-sandbox"}
+			if strings.Join(request.Msg.GetProcess().GetArgs(), "\x00") != strings.Join(wantArgs, "\x00") {
+				t.Errorf("args = %#v, want %#v", request.Msg.GetProcess().GetArgs(), wantArgs)
+			}
 
-	result, err := parseCubeCommandStream(&stream, 32)
-	if err != nil {
-		t.Fatalf("parse command stream: %v", err)
+			for _, response := range []*process.StartResponse{
+				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Start{Start: &process.ProcessEvent_StartEvent{Pid: 7}}}},
+				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stdout{Stdout: []byte("one\n")}}}}},
+				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stderr{Stderr: []byte("two\n")}}}}},
+				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stdout{Stdout: []byte(strings.Repeat("x", 40))}}}}},
+				{Event: &process.ProcessEvent{Event: &process.ProcessEvent_End{End: &process.ProcessEvent_EndEvent{ExitCode: 3, Exited: true, Status: "exit status 3"}}}},
+			} {
+				if err := stream.Send(response); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{Timeout: time.Second}
+	transport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, server.Listener.Addr().String())
 	}
-	if result.ExitCode != 0 || len(result.Output) > 32 || !strings.HasPrefix(result.Output, "one\ntwo\n") || !strings.Contains(result.Output, "truncated") {
+	client := &cubeSDKClient{
+		data:          &http.Client{Transport: transport},
+		proxyScheme:   "http",
+		sandboxDomain: "cube.test",
+	}
+	result, err := client.RunCommand(t.Context(), &cubeSandbox{
+		ID:              "cube-1",
+		EnvdAccessToken: "envd-token",
+	}, "/bin/sh", cubeCommandOptions{
+		Args:           []string{"-c", "printf one", "assistant-sandbox"},
+		Timeout:        3 * time.Second,
+		Cwd:            "/",
+		MaxOutputBytes: 32,
+	})
+	if err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	if result.ExitCode != 3 || len(result.Output) > 32 || !strings.HasPrefix(result.Output, "one\ntwo\n") || !strings.Contains(result.Output, "truncated") {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
@@ -355,19 +399,6 @@ func mustCubeRuntime(t *testing.T, client cubeRuntimeClient) *CubeRuntime {
 		t.Fatalf("new cube runtime: %v", err)
 	}
 	return runtime
-}
-
-func writeCubeTestEnvelope(t *testing.T, buffer *bytes.Buffer, flags byte, value any) {
-	t.Helper()
-	payload, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var header [5]byte
-	header[0] = flags
-	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
-	buffer.Write(header[:])
-	buffer.Write(payload)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

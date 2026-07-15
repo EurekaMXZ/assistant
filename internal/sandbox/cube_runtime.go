@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,8 +17,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"connectrpc.com/connect"
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/tool"
+	process "github.com/TencentCloudAgentRuntime/ags-go-sdk/pb/process"
+	"github.com/TencentCloudAgentRuntime/ags-go-sdk/pb/process/processconnect"
 	cubesandbox "github.com/tencentcloud/CubeSandbox/sdk/go"
 )
 
@@ -522,161 +524,63 @@ func (c *cubeSDKClient) RunCommand(ctx context.Context, sandbox *cubeSandbox, co
 		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 	}
-	payload, err := json.Marshal(map[string]any{
-		"process": map[string]any{
-			"cmd":  command,
-			"args": append([]string(nil), opts.Args...),
-			"envs": map[string]string{},
-			"cwd":  opts.Cwd,
-		},
-		"stdin": false,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal cube sandbox command: %w", err)
-	}
 	domain := sandbox.Domain
 	if domain == "" {
 		domain = c.sandboxDomain
 	}
 	host := "49983-" + sandbox.ID + "." + domain
-	target := c.proxyScheme + "://" + host + "/process.Process/Start"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create cube sandbox command request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/connect+json")
-	req.Header.Set("Connect-Protocol-Version", "1")
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("root:")))
+	processClient := processconnect.NewProcessClient(c.data, c.proxyScheme+"://"+host, connect.WithProtoJSON())
+	workingDirectory := opts.Cwd
+	req := connect.NewRequest(&process.StartRequest{Process: &process.ProcessConfig{
+		Cmd:  command,
+		Args: append([]string(nil), opts.Args...),
+		Envs: map[string]string{},
+		Cwd:  &workingDirectory,
+	}})
+	req.Header().Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("root:")))
 	if sandbox.EnvdAccessToken != "" {
-		req.Header.Set("X-Access-Token", sandbox.EnvdAccessToken)
+		req.Header().Set("X-Access-Token", sandbox.EnvdAccessToken)
 	}
-	if opts.Timeout > 0 {
-		req.Header.Set("Connect-Timeout-Ms", strconv.FormatInt(opts.Timeout.Milliseconds(), 10))
-	}
-	response, err := c.data.Do(req)
+	stream, err := processClient.Start(ctx, req)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return &cubeCommandResult{Output: "command timed out", ExitCode: -1, TimedOut: true}, nil
 		}
-		return nil, fmt.Errorf("send cube sandbox command request: %w", err)
+		return nil, fmt.Errorf("start cube sandbox command: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode >= http.StatusBadRequest {
-		return nil, decodeCubeHTTPError(response)
-	}
-	result, err := parseCubeCommandStream(response.Body, opts.MaxOutputBytes)
-	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return &cubeCommandResult{Output: "command timed out", ExitCode: -1, TimedOut: true}, nil
-	}
-	return result, err
-}
+	defer stream.Close()
 
-type cubeProcessResponse struct {
-	Event *struct {
-		Data *struct {
-			Stdout string `json:"stdout,omitempty"`
-			Stderr string `json:"stderr,omitempty"`
-			PTY    string `json:"pty,omitempty"`
-		} `json:"data,omitempty"`
-		End *struct {
-			ExitCode      *int   `json:"exitCode,omitempty"`
-			ExitCodeSnake *int   `json:"exit_code,omitempty"`
-			Error         string `json:"error,omitempty"`
-		} `json:"end,omitempty"`
-	} `json:"event"`
-}
-
-func parseCubeCommandStream(reader io.Reader, maxOutputBytes int) (*cubeCommandResult, error) {
-	if maxOutputBytes <= 0 {
-		maxOutputBytes = defaultCubeMaxOutputBytes
-	}
-	output := &cubeOutputBuffer{limit: maxOutputBytes}
+	output := &cubeOutputBuffer{limit: opts.MaxOutputBytes}
 	result := &cubeCommandResult{}
 	sawEnd := false
-	for {
-		flags, payload, err := readCubeConnectEnvelope(reader, maxOutputBytes)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if flags&0x01 != 0 {
-			return nil, errors.New("compressed cube sandbox command events are not supported")
-		}
-		if flags&0x02 != 0 {
-			var end struct {
-				Error *struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error,omitempty"`
-			}
-			if len(payload) > 0 {
-				if err := json.Unmarshal(payload, &end); err != nil {
-					return nil, fmt.Errorf("decode cube sandbox end stream: %w", err)
-				}
-				if end.Error != nil {
-					return nil, fmt.Errorf("cube sandbox command stream %s: %s", end.Error.Code, end.Error.Message)
-				}
-			}
+	for stream.Receive() {
+		event := stream.Msg().GetEvent()
+		if event == nil {
 			continue
 		}
-
-		var event cubeProcessResponse
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return nil, fmt.Errorf("decode cube sandbox command event: %w", err)
-		}
-		if event.Event == nil {
-			continue
-		}
-		if event.Event.Data != nil {
-			for _, encoded := range []string{event.Event.Data.Stdout, event.Event.Data.Stderr, event.Event.Data.PTY} {
-				if encoded == "" {
-					continue
-				}
-				decoded, err := base64.StdEncoding.DecodeString(encoded)
-				if err != nil {
-					return nil, fmt.Errorf("decode cube sandbox command output: %w", err)
-				}
-				_, _ = output.Write(decoded)
+		if data := event.GetData(); data != nil {
+			for _, chunk := range [][]byte{data.GetStdout(), data.GetStderr(), data.GetPty()} {
+				_, _ = output.Write(chunk)
 			}
 		}
-		if event.Event.End != nil {
-			switch {
-			case event.Event.End.ExitCode != nil:
-				result.ExitCode = *event.Event.End.ExitCode
-			case event.Event.End.ExitCodeSnake != nil:
-				result.ExitCode = *event.Event.End.ExitCodeSnake
-			case event.Event.End.Error != "":
-				return nil, fmt.Errorf("cube sandbox command failed: %s", event.Event.End.Error)
-			default:
-				return nil, errors.New("cube sandbox command ended without an exit code")
+		if end := event.GetEnd(); end != nil {
+			if message := strings.TrimSpace(end.GetError()); message != "" {
+				return nil, fmt.Errorf("cube sandbox command failed: %s", message)
 			}
+			result.ExitCode = int(end.GetExitCode())
 			sawEnd = true
 		}
+	}
+	if err := stream.Err(); err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &cubeCommandResult{Output: "command timed out", ExitCode: -1, TimedOut: true}, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("receive cube sandbox command stream: %w", err)
 	}
 	if !sawEnd {
 		return nil, errors.New("cube sandbox command stream ended without an end event")
 	}
 	result.Output = output.String()
 	return result, nil
-}
-
-func readCubeConnectEnvelope(reader io.Reader, maxOutputBytes int) (byte, []byte, error) {
-	var header [5]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return 0, nil, err
-	}
-	size := int64(binary.BigEndian.Uint32(header[1:]))
-	maxEnvelopeBytes := int64(maxOutputBytes)*2 + 64*1024
-	if size > maxEnvelopeBytes {
-		return 0, nil, fmt.Errorf("cube sandbox command event is too large: %d bytes", size)
-	}
-	payload := make([]byte, size)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		return 0, nil, err
-	}
-	return header[0], payload, nil
 }
 
 type cubeOutputBuffer struct {
