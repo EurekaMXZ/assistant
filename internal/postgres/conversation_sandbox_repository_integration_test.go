@@ -42,9 +42,16 @@ func TestConversationSandboxLifecycleIntegration(t *testing.T) {
 	}
 
 	repository := NewConversationSandboxRepository(pool)
-	sandbox, err := repository.CreateConversationSandbox(t.Context(), conversationID, "firecracker", "runtime-1", json.RawMessage(`{"state":"active"}`))
+	sandbox, err := repository.CreateConversationSandbox(t.Context(), conversationID, "cubesandbox", "runtime-1", json.RawMessage(`{"state":"active"}`))
 	if err != nil {
 		t.Fatalf("create sandbox: %v", err)
+	}
+	providers, err := repository.ListNonDestroyedSandboxProviders(t.Context())
+	if err != nil {
+		t.Fatalf("list non-destroyed providers: %v", err)
+	}
+	if len(providers) != 1 || providers[0] != "cubesandbox" {
+		t.Fatalf("providers = %#v, want cubesandbox", providers)
 	}
 	firstToken := uuid.NewString()
 	if err := repository.AcquireConversationSandboxExecution(t.Context(), sandbox.ID, firstToken, time.Minute); err != nil {
@@ -103,5 +110,12 @@ func TestConversationSandboxLifecycleIntegration(t *testing.T) {
 	}
 	if destroyed.Status != domain.SandboxStatusDestroyed || destroyed.DestroyedAt == nil {
 		t.Fatalf("unexpected destroyed sandbox: %#v", destroyed)
+	}
+	providers, err = repository.ListNonDestroyedSandboxProviders(t.Context())
+	if err != nil {
+		t.Fatalf("list providers after destroy: %v", err)
+	}
+	if len(providers) != 0 {
+		t.Fatalf("providers after destroy = %#v, want empty", providers)
 	}
 }

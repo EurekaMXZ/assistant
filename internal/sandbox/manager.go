@@ -11,6 +11,7 @@ import (
 
 const (
 	ProviderFirecracker = "firecracker"
+	ProviderCubeSandbox = "cubesandbox"
 )
 
 var _ tool.SandboxManager = (*Manager)(nil)
@@ -18,6 +19,7 @@ var _ tool.SandboxManager = (*Manager)(nil)
 type RuntimeSettings struct {
 	Provider string
 	HTTP     HTTPRuntimeSettings
+	Cube     CubeRuntimeSettings
 }
 
 type Manager struct {
@@ -51,17 +53,24 @@ func NewRuntime(settings RuntimeSettings) (tool.SandboxManager, error) {
 	if provider == "" {
 		provider = ProviderFirecracker
 	}
-	if provider != ProviderFirecracker {
+	if provider != ProviderFirecracker && provider != ProviderCubeSandbox {
 		return nil, fmt.Errorf("unsupported sandbox provider %q", provider)
 	}
 
-	providers := make(map[string]tool.SandboxManager, 1)
+	providers := make(map[string]tool.SandboxManager, 2)
 	if strings.TrimSpace(settings.HTTP.BaseURL) != "" {
 		runtime, err := NewHTTPRuntime(settings.HTTP)
 		if err != nil {
 			return nil, fmt.Errorf("configure firecracker sandbox runtime: %w", err)
 		}
 		providers[ProviderFirecracker] = runtime
+	}
+	if strings.TrimSpace(settings.Cube.APIURL) != "" {
+		runtime, err := NewCubeRuntime(settings.Cube)
+		if err != nil {
+			return nil, fmt.Errorf("configure cube sandbox runtime: %w", err)
+		}
+		providers[ProviderCubeSandbox] = runtime
 	}
 	return NewManager(provider, providers)
 }
@@ -81,6 +90,7 @@ func (m *Manager) CreateSandbox(ctx context.Context, conversationID string, requ
 	if provider := normalizeProvider(handle.Provider); provider != m.defaultProvider {
 		return nil, fmt.Errorf("sandbox provider %q returned handle for provider %q", m.defaultProvider, provider)
 	}
+	handle.Provider = m.defaultProvider
 	return handle, nil
 }
 
@@ -129,6 +139,13 @@ func (m *Manager) runtime(provider string) (tool.SandboxManager, error) {
 		return nil, fmt.Errorf("sandbox provider %q is not configured", provider)
 	}
 	return runtime, nil
+}
+
+func (m *Manager) SupportsProvider(provider string) bool {
+	if m == nil {
+		return false
+	}
+	return m.providers[normalizeProvider(provider)] != nil
 }
 
 func normalizeProvider(provider string) string {

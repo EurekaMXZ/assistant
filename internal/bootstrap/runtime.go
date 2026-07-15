@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
@@ -10,6 +11,8 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/postgres"
 	"github.com/EurekaMXZ/assistant/internal/server"
 	"github.com/EurekaMXZ/assistant/internal/stream"
+	"github.com/EurekaMXZ/assistant/internal/tool"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type turnStreamSubscriber interface {
@@ -74,6 +77,10 @@ func newBaseAssembly(ctx context.Context, settings baseSettings) (*baseAssembly,
 		lifecycle.close()
 		return nil, err
 	}
+	if err := ensureSandboxProvidersConfigured(ctx, pool, sandboxRuntime); err != nil {
+		lifecycle.close()
+		return nil, err
+	}
 
 	serverUseCases, workflows := buildApplication(pool, artifactStore, artifactStore, settings.BillingCurrency, authService, sandboxRuntime, settings.SandboxLifecycle, credentialCipher, settings.Server.WebOrigin)
 	assembled := &baseAssembly{
@@ -94,4 +101,26 @@ func newBaseAssembly(ctx context.Context, settings baseSettings) (*baseAssembly,
 	assembled.streamHub = stream
 
 	return assembled, nil
+}
+
+type sandboxProviderSet interface {
+	SupportsProvider(provider string) bool
+}
+
+func ensureSandboxProvidersConfigured(ctx context.Context, pool *pgxpool.Pool, runtime tool.SandboxManager) error {
+	repository := postgres.NewConversationSandboxRepository(pool)
+	providers, err := repository.ListNonDestroyedSandboxProviders(ctx)
+	if err != nil {
+		return err
+	}
+	configured, ok := runtime.(sandboxProviderSet)
+	if !ok {
+		return fmt.Errorf("sandbox runtime does not expose configured providers")
+	}
+	for _, provider := range providers {
+		if !configured.SupportsProvider(provider) {
+			return fmt.Errorf("sandbox provider %q has non-destroyed database records but is not configured", provider)
+		}
+	}
+	return nil
 }

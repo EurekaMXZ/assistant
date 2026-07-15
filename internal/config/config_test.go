@@ -134,6 +134,38 @@ func TestLoadReadsSandboxBridgeSettings(t *testing.T) {
 	}
 }
 
+func TestLoadReadsCubeSandboxSettings(t *testing.T) {
+	t.Setenv("SANDBOX_PROVIDER", "cubesandbox")
+	t.Setenv("SANDBOX_CUBE_API_URL", "https://cube-api.internal")
+	t.Setenv("SANDBOX_CUBE_API_KEY", "cube-key")
+	t.Setenv("SANDBOX_CUBE_TEMPLATE_ID", "tpl-1")
+	t.Setenv("SANDBOX_CUBE_PROXY_NODE_IP", "10.0.0.12")
+	t.Setenv("SANDBOX_CUBE_PROXY_PORT_HTTP", "443")
+	t.Setenv("SANDBOX_CUBE_PROXY_SCHEME", "https")
+	t.Setenv("SANDBOX_CUBE_DOMAIN", "cube.internal")
+	t.Setenv("SANDBOX_CUBE_CLUSTER_ID", "cluster-1")
+	t.Setenv("SANDBOX_CUBE_REQUEST_TIMEOUT", "45s")
+	t.Setenv("SANDBOX_CUBE_PAUSE_TIMEOUT", "50s")
+	t.Setenv("SANDBOX_CUBE_MAX_OUTPUT_BYTES", "2048")
+	t.Setenv("SANDBOX_CUBE_ALLOW_INTERNET", "true")
+	t.Setenv("SANDBOX_CUBE_ALLOW_OUT", "api.example.com, 10.0.0.0/8")
+	t.Setenv("SANDBOX_CUBE_DENY_OUT", "0.0.0.0/0")
+
+	cfg := Load()
+	if cfg.SandboxProvider != "cubesandbox" || cfg.SandboxCubeAPIURL != "https://cube-api.internal" || cfg.SandboxCubeAPIKey != "cube-key" || cfg.SandboxCubeTemplateID != "tpl-1" {
+		t.Fatalf("unexpected cube sandbox control settings: %+v", cfg)
+	}
+	if cfg.SandboxCubeProxyNodeIP != "10.0.0.12" || cfg.SandboxCubeProxyPortHTTP != 443 || cfg.SandboxCubeProxyScheme != "https" || cfg.SandboxCubeDomain != "cube.internal" {
+		t.Fatalf("unexpected cube sandbox proxy settings: %+v", cfg)
+	}
+	if cfg.SandboxCubeRequestTimeout != 45*time.Second || cfg.SandboxCubePauseTimeout != 50*time.Second || cfg.SandboxCubeMaxOutputBytes != 2048 || !cfg.SandboxCubeAllowInternet {
+		t.Fatalf("unexpected cube sandbox runtime settings: %+v", cfg)
+	}
+	if len(cfg.SandboxCubeAllowOut) != 2 || len(cfg.SandboxCubeDenyOut) != 1 {
+		t.Fatalf("unexpected cube sandbox network settings: %+v", cfg)
+	}
+}
+
 func TestValidateAPIRequiresBridgeURL(t *testing.T) {
 	cfg := validAPIConfig()
 	cfg.SandboxBridgeURL = ""
@@ -181,8 +213,46 @@ func TestValidateWorkerRejectsRemovedAgentBayProvider(t *testing.T) {
 	cfg.SandboxProvider = "agentbay"
 
 	err := cfg.ValidateWorker()
-	if err == nil || !strings.Contains(err.Error(), "SANDBOX_PROVIDER must be firecracker") {
+	if err == nil || !strings.Contains(err.Error(), "SANDBOX_PROVIDER must be firecracker or cubesandbox") {
 		t.Fatalf("ValidateWorker error = %v, want removed AgentBay provider rejection", err)
+	}
+}
+
+func TestValidateAPIRequiresCubeSandboxSettings(t *testing.T) {
+	for name, clear := range map[string]func(*Config){
+		"api url":     func(cfg *Config) { cfg.SandboxCubeAPIURL = "" },
+		"api key":     func(cfg *Config) { cfg.SandboxCubeAPIKey = "" },
+		"template id": func(cfg *Config) { cfg.SandboxCubeTemplateID = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validCubeAPIConfig()
+			clear(&cfg)
+			if err := cfg.ValidateAPI(); err == nil || !strings.Contains(err.Error(), "SANDBOX_CUBE_") {
+				t.Fatalf("ValidateAPI error = %v, want missing CubeSandbox setting", err)
+			}
+		})
+	}
+}
+
+func TestValidateWorkerAcceptsCubeSandboxWithoutFirecrackerBridge(t *testing.T) {
+	cfg := validCubeWorkerConfig()
+	cfg.SandboxBridgeURL = ""
+	if err := cfg.ValidateWorker(); err != nil {
+		t.Fatalf("ValidateWorker: %v", err)
+	}
+}
+
+func TestValidateWorkerRejectsUnsafeCubeSandboxDomainAllowList(t *testing.T) {
+	cfg := validCubeWorkerConfig()
+	cfg.SandboxCubeAllowInternet = true
+	cfg.SandboxCubeAllowOut = []string{"api.example.com"}
+	cfg.SandboxCubeDenyOut = nil
+	if err := cfg.ValidateWorker(); err == nil || !strings.Contains(err.Error(), "SANDBOX_CUBE_ALLOW_OUT domains") {
+		t.Fatalf("ValidateWorker error = %v, want unsafe domain allow-list rejection", err)
+	}
+	cfg.SandboxCubeDenyOut = []string{"0.0.0.0/0"}
+	if err := cfg.ValidateWorker(); err != nil {
+		t.Fatalf("ValidateWorker with deny-all: %v", err)
 	}
 }
 
@@ -312,6 +382,29 @@ func validWorkerConfig() Config {
 
 func validAPIConfig() Config {
 	cfg := validWorkerConfig()
+	cfg.WebOrigin = "https://assistant.example.com"
+	cfg.JWTSecret = "jwt-secret"
+	cfg.SystemUserEmail = "system@example.com"
+	cfg.SystemUserUsername = "system"
+	cfg.SystemUserPasswordHash = "hash"
+	return cfg
+}
+
+func validCubeWorkerConfig() Config {
+	cfg := validWorkerConfig()
+	cfg.SandboxProvider = "cubesandbox"
+	cfg.SandboxCubeAPIURL = "https://cube-api.internal"
+	cfg.SandboxCubeAPIKey = "cube-key"
+	cfg.SandboxCubeTemplateID = "tpl-1"
+	cfg.SandboxCubeProxyPortHTTP = 80
+	cfg.SandboxCubeRequestTimeout = 30 * time.Second
+	cfg.SandboxCubePauseTimeout = 30 * time.Second
+	cfg.SandboxCubeMaxOutputBytes = 1 << 20
+	return cfg
+}
+
+func validCubeAPIConfig() Config {
+	cfg := validCubeWorkerConfig()
 	cfg.WebOrigin = "https://assistant.example.com"
 	cfg.JWTSecret = "jwt-secret"
 	cfg.SystemUserEmail = "system@example.com"

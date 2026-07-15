@@ -46,19 +46,11 @@ type workerSettings struct {
 
 func newBaseSettings(cfg config.Config, enableAuth bool) baseSettings {
 	return baseSettings{
-		DatabaseURL:     cfg.DatabaseURL,
-		Address:         cfg.Address(),
-		EnableAuth:      enableAuth,
-		BillingCurrency: cfg.BillingCurrency,
-		Sandbox: assistantsandbox.RuntimeSettings{
-			Provider: cfg.SandboxProvider,
-			HTTP: assistantsandbox.HTTPRuntimeSettings{
-				BaseURL:           cfg.SandboxBridgeURL,
-				Token:             cfg.SandboxBridgeToken,
-				HTTPClientTimeout: cfg.SandboxBridgeTimeout,
-				CommandTimeout:    cfg.SandboxCommandMaxTimeout,
-			},
-		},
+		DatabaseURL:      cfg.DatabaseURL,
+		Address:          cfg.Address(),
+		EnableAuth:       enableAuth,
+		BillingCurrency:  cfg.BillingCurrency,
+		Sandbox:          sandboxRuntimeSettings(cfg),
 		SandboxLifecycle: sandboxLifecycleSettings(cfg),
 		Stream: streamredis.Settings{
 			Addr:          cfg.RedisAddr,
@@ -108,16 +100,8 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			HTTPClientTimeout: cfg.HTTPClientTimeout,
 		},
 		SandboxExecEnabled: cfg.SandboxExecEnabled,
-		Sandbox: assistantsandbox.RuntimeSettings{
-			Provider: cfg.SandboxProvider,
-			HTTP: assistantsandbox.HTTPRuntimeSettings{
-				BaseURL:           cfg.SandboxBridgeURL,
-				Token:             cfg.SandboxBridgeToken,
-				HTTPClientTimeout: cfg.SandboxBridgeTimeout,
-				CommandTimeout:    cfg.SandboxCommandMaxTimeout,
-			},
-		},
-		SandboxLifecycle: sandboxLifecycleSettings(cfg),
+		Sandbox:            sandboxRuntimeSettings(cfg),
+		SandboxLifecycle:   sandboxLifecycleSettings(cfg),
 		MinIO: minio.Settings{
 			Endpoint:  cfg.MinIOEndpoint,
 			Region:    cfg.MinIORegion,
@@ -148,6 +132,34 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			WorkerConcurrency:  cfg.WorkerConcurrency,
 			WorkerPollInterval: cfg.WorkerPollInterval,
 			WorkerLeaseTimeout: cfg.WorkerLeaseTimeout,
+		},
+	}
+}
+
+func sandboxRuntimeSettings(cfg config.Config) assistantsandbox.RuntimeSettings {
+	return assistantsandbox.RuntimeSettings{
+		Provider: cfg.SandboxProvider,
+		HTTP: assistantsandbox.HTTPRuntimeSettings{
+			BaseURL:           cfg.SandboxBridgeURL,
+			Token:             cfg.SandboxBridgeToken,
+			HTTPClientTimeout: cfg.SandboxBridgeTimeout,
+			CommandTimeout:    cfg.SandboxCommandMaxTimeout,
+		},
+		Cube: assistantsandbox.CubeRuntimeSettings{
+			APIURL:              cfg.SandboxCubeAPIURL,
+			APIKey:              cfg.SandboxCubeAPIKey,
+			TemplateID:          cfg.SandboxCubeTemplateID,
+			ProxyNodeIP:         cfg.SandboxCubeProxyNodeIP,
+			ProxyPortHTTP:       cfg.SandboxCubeProxyPortHTTP,
+			ProxyScheme:         cfg.SandboxCubeProxyScheme,
+			SandboxDomain:       cfg.SandboxCubeDomain,
+			ClusterID:           cfg.SandboxCubeClusterID,
+			RequestTimeout:      cfg.SandboxCubeRequestTimeout,
+			PauseTimeout:        cfg.SandboxCubePauseTimeout,
+			MaxOutputBytes:      cfg.SandboxCubeMaxOutputBytes,
+			AllowInternetAccess: cfg.SandboxCubeAllowInternet,
+			AllowOut:            append([]string(nil), cfg.SandboxCubeAllowOut...),
+			DenyOut:             append([]string(nil), cfg.SandboxCubeDenyOut...),
 		},
 	}
 }

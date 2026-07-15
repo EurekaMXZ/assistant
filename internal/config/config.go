@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -13,47 +14,51 @@ import (
 )
 
 const (
-	defaultHost                     = "0.0.0.0"
-	defaultPort                     = 8080
-	defaultReadTimeout              = 15 * time.Second
-	defaultWriteTimeout             = 15 * time.Second
-	defaultIdleTimeout              = 60 * time.Second
-	defaultShutdownTimeout          = 10 * time.Second
-	defaultDatabaseURL              = "postgres://assistant:assistant@127.0.0.1:5432/assistant?sslmode=disable"
-	defaultWorkerPollInterval       = 2 * time.Second
-	defaultWorkerLeaseTimeout       = 2 * time.Minute
-	defaultWorkerConcurrency        = 4
-	defaultKafkaTopic               = "assistant.workflow"
-	defaultKafkaGroup               = "assistant-workers"
-	defaultRedisAddr                = "127.0.0.1:6379"
-	defaultRedisDB                  = 0
-	defaultStreamChannelPrefix      = "assistant:stream"
-	defaultMinIOEndpoint            = "127.0.0.1:9000"
-	defaultMinIORegion              = "us-east-1"
-	defaultMinIOBucket              = "assistant"
-	defaultMinIOUseSSL              = false
-	defaultMinIOAccessKey           = "assistantminio"
-	defaultMinIOSecretKey           = "assistantminio123"
-	defaultOpenAIUserAgent          = "assistant"
-	defaultRemoteToolReplayMaxBytes = 16384
-	defaultCompactOutputTokens      = 1536
-	defaultCompactTriggerTokens     = 12000
-	defaultCacheMaxConversations    = 1024
-	defaultCacheTailCapacity        = 256
-	defaultOutboxBatchSize          = 100
-	defaultHTTPClientTimeout        = 5 * time.Minute
-	defaultJWTIssuer                = "assistant"
-	defaultAccessTokenTTL           = 24 * time.Hour
-	defaultSandboxProvider          = "firecracker"
-	defaultSandboxBridgeTimeout     = time.Minute
-	defaultSandboxIdleStopAfter     = 15 * time.Minute
-	defaultSandboxStoppedRetention  = 24 * time.Hour
-	defaultSandboxReaperInterval    = time.Minute
-	defaultSandboxReaperBatchSize   = 20
-	defaultSandboxCommandTimeout    = 30 * time.Second
-	defaultSandboxCommandMaxTimeout = 5 * time.Minute
-	defaultAgentSystemPromptFile    = "prompts/system.md"
-	defaultAgentCompactPromptFile   = "prompts/compact.md"
+	defaultHost                      = "0.0.0.0"
+	defaultPort                      = 8080
+	defaultReadTimeout               = 15 * time.Second
+	defaultWriteTimeout              = 15 * time.Second
+	defaultIdleTimeout               = 60 * time.Second
+	defaultShutdownTimeout           = 10 * time.Second
+	defaultDatabaseURL               = "postgres://assistant:assistant@127.0.0.1:5432/assistant?sslmode=disable"
+	defaultWorkerPollInterval        = 2 * time.Second
+	defaultWorkerLeaseTimeout        = 2 * time.Minute
+	defaultWorkerConcurrency         = 4
+	defaultKafkaTopic                = "assistant.workflow"
+	defaultKafkaGroup                = "assistant-workers"
+	defaultRedisAddr                 = "127.0.0.1:6379"
+	defaultRedisDB                   = 0
+	defaultStreamChannelPrefix       = "assistant:stream"
+	defaultMinIOEndpoint             = "127.0.0.1:9000"
+	defaultMinIORegion               = "us-east-1"
+	defaultMinIOBucket               = "assistant"
+	defaultMinIOUseSSL               = false
+	defaultMinIOAccessKey            = "assistantminio"
+	defaultMinIOSecretKey            = "assistantminio123"
+	defaultOpenAIUserAgent           = "assistant"
+	defaultRemoteToolReplayMaxBytes  = 16384
+	defaultCompactOutputTokens       = 1536
+	defaultCompactTriggerTokens      = 12000
+	defaultCacheMaxConversations     = 1024
+	defaultCacheTailCapacity         = 256
+	defaultOutboxBatchSize           = 100
+	defaultHTTPClientTimeout         = 5 * time.Minute
+	defaultJWTIssuer                 = "assistant"
+	defaultAccessTokenTTL            = 24 * time.Hour
+	defaultSandboxProvider           = "firecracker"
+	defaultSandboxBridgeTimeout      = time.Minute
+	defaultSandboxIdleStopAfter      = 15 * time.Minute
+	defaultSandboxStoppedRetention   = 24 * time.Hour
+	defaultSandboxReaperInterval     = time.Minute
+	defaultSandboxReaperBatchSize    = 20
+	defaultSandboxCommandTimeout     = 30 * time.Second
+	defaultSandboxCommandMaxTimeout  = 5 * time.Minute
+	defaultSandboxCubeProxyPort      = 80
+	defaultSandboxCubeRequestTimeout = 30 * time.Second
+	defaultSandboxCubePauseTimeout   = 30 * time.Second
+	defaultSandboxCubeMaxOutputBytes = 1 << 20
+	defaultAgentSystemPromptFile     = "prompts/system.md"
+	defaultAgentCompactPromptFile    = "prompts/compact.md"
 )
 
 type Config struct {
@@ -98,6 +103,20 @@ type Config struct {
 	SandboxBridgeURL            string
 	SandboxBridgeToken          string
 	SandboxBridgeTimeout        time.Duration
+	SandboxCubeAPIURL           string
+	SandboxCubeAPIKey           string
+	SandboxCubeTemplateID       string
+	SandboxCubeProxyNodeIP      string
+	SandboxCubeProxyPortHTTP    int
+	SandboxCubeProxyScheme      string
+	SandboxCubeDomain           string
+	SandboxCubeClusterID        string
+	SandboxCubeRequestTimeout   time.Duration
+	SandboxCubePauseTimeout     time.Duration
+	SandboxCubeMaxOutputBytes   int
+	SandboxCubeAllowInternet    bool
+	SandboxCubeAllowOut         []string
+	SandboxCubeDenyOut          []string
 	SandboxIdleStopAfter        time.Duration
 	SandboxStoppedRetention     time.Duration
 	SandboxReaperInterval       time.Duration
@@ -161,6 +180,20 @@ func Load() Config {
 		SandboxBridgeURL:            os.Getenv("SANDBOX_BRIDGE_URL"),
 		SandboxBridgeToken:          os.Getenv("SANDBOX_BRIDGE_TOKEN"),
 		SandboxBridgeTimeout:        getenvDuration("SANDBOX_BRIDGE_TIMEOUT", defaultSandboxBridgeTimeout),
+		SandboxCubeAPIURL:           os.Getenv("SANDBOX_CUBE_API_URL"),
+		SandboxCubeAPIKey:           os.Getenv("SANDBOX_CUBE_API_KEY"),
+		SandboxCubeTemplateID:       os.Getenv("SANDBOX_CUBE_TEMPLATE_ID"),
+		SandboxCubeProxyNodeIP:      os.Getenv("SANDBOX_CUBE_PROXY_NODE_IP"),
+		SandboxCubeProxyPortHTTP:    getenvInt("SANDBOX_CUBE_PROXY_PORT_HTTP", defaultSandboxCubeProxyPort),
+		SandboxCubeProxyScheme:      getenv("SANDBOX_CUBE_PROXY_SCHEME", "http"),
+		SandboxCubeDomain:           getenv("SANDBOX_CUBE_DOMAIN", "cube.app"),
+		SandboxCubeClusterID:        getenv("SANDBOX_CUBE_CLUSTER_ID", "default"),
+		SandboxCubeRequestTimeout:   getenvDuration("SANDBOX_CUBE_REQUEST_TIMEOUT", defaultSandboxCubeRequestTimeout),
+		SandboxCubePauseTimeout:     getenvDuration("SANDBOX_CUBE_PAUSE_TIMEOUT", defaultSandboxCubePauseTimeout),
+		SandboxCubeMaxOutputBytes:   getenvInt("SANDBOX_CUBE_MAX_OUTPUT_BYTES", defaultSandboxCubeMaxOutputBytes),
+		SandboxCubeAllowInternet:    getenvBool("SANDBOX_CUBE_ALLOW_INTERNET", false),
+		SandboxCubeAllowOut:         getenvList("SANDBOX_CUBE_ALLOW_OUT", nil),
+		SandboxCubeDenyOut:          getenvList("SANDBOX_CUBE_DENY_OUT", nil),
 		SandboxIdleStopAfter:        getenvDuration("SANDBOX_IDLE_STOP_AFTER", defaultSandboxIdleStopAfter),
 		SandboxStoppedRetention:     getenvDuration("SANDBOX_STOPPED_RETENTION", defaultSandboxStoppedRetention),
 		SandboxReaperInterval:       getenvDuration("SANDBOX_REAPER_INTERVAL", defaultSandboxReaperInterval),
@@ -229,11 +262,13 @@ func (c Config) ValidateAPI() error {
 		"SYSTEM_USER_PASSWORD_HASH":      c.SystemUserPasswordHash,
 		"PROVIDER_CREDENTIAL_MASTER_KEY": c.ProviderCredentialMasterKey,
 	}
-	key, value, err := c.sandboxProviderRequirement()
+	sandboxRequired, err := c.sandboxProviderRequirements()
 	if err != nil {
 		return fmt.Errorf("invalid api config: %w", err)
 	}
-	required[key] = value
+	for key, value := range sandboxRequired {
+		required[key] = value
+	}
 
 	for key, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -278,11 +313,13 @@ func (c Config) ValidateWorker() error {
 		"AGENT_SYSTEM_PROMPT_FILE":       c.AgentSystemPromptFile,
 		"AGENT_COMPACT_PROMPT_FILE":      c.AgentCompactPromptFile,
 	}
-	key, value, err := c.sandboxProviderRequirement()
+	sandboxRequired, err := c.sandboxProviderRequirements()
 	if err != nil {
 		return fmt.Errorf("invalid worker config: %w", err)
 	}
-	required[key] = value
+	for key, value := range sandboxRequired {
+		required[key] = value
+	}
 
 	for key, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -345,15 +382,61 @@ func (c Config) ValidateMigration() error {
 	return nil
 }
 
-func (c Config) sandboxProviderRequirement() (string, string, error) {
+func (c Config) sandboxProviderRequirements() (map[string]string, error) {
 	provider := strings.ToLower(strings.TrimSpace(c.SandboxProvider))
 	if provider == "" {
 		provider = defaultSandboxProvider
 	}
-	if provider != "firecracker" {
-		return "", "", fmt.Errorf("SANDBOX_PROVIDER must be firecracker, got %q", c.SandboxProvider)
+	switch provider {
+	case "firecracker":
+		return map[string]string{"SANDBOX_BRIDGE_URL": c.SandboxBridgeURL}, nil
+	case "cubesandbox":
+		if c.SandboxCubeProxyPortHTTP <= 0 {
+			return nil, errors.New("SANDBOX_CUBE_PROXY_PORT_HTTP must be positive")
+		}
+		if c.SandboxCubeRequestTimeout <= 0 {
+			return nil, errors.New("SANDBOX_CUBE_REQUEST_TIMEOUT must be positive")
+		}
+		if c.SandboxCubePauseTimeout <= 0 {
+			return nil, errors.New("SANDBOX_CUBE_PAUSE_TIMEOUT must be positive")
+		}
+		if c.SandboxCubeMaxOutputBytes <= 0 {
+			return nil, errors.New("SANDBOX_CUBE_MAX_OUTPUT_BYTES must be positive")
+		}
+		if c.SandboxCubeAllowInternet && cubeAllowOutHasDomain(c.SandboxCubeAllowOut) && !stringListContains(c.SandboxCubeDenyOut, "0.0.0.0/0") {
+			return nil, errors.New("SANDBOX_CUBE_ALLOW_OUT domains require SANDBOX_CUBE_ALLOW_INTERNET=false or SANDBOX_CUBE_DENY_OUT containing 0.0.0.0/0")
+		}
+		return map[string]string{
+			"SANDBOX_CUBE_API_URL":     c.SandboxCubeAPIURL,
+			"SANDBOX_CUBE_API_KEY":     c.SandboxCubeAPIKey,
+			"SANDBOX_CUBE_TEMPLATE_ID": c.SandboxCubeTemplateID,
+		}, nil
+	default:
+		return nil, fmt.Errorf("SANDBOX_PROVIDER must be firecracker or cubesandbox, got %q", c.SandboxProvider)
 	}
-	return "SANDBOX_BRIDGE_URL", c.SandboxBridgeURL, nil
+}
+
+func cubeAllowOutHasDomain(values []string) bool {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || net.ParseIP(value) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(value); err == nil {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func stringListContains(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func getenv(key, fallback string) string {

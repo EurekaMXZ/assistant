@@ -13,6 +13,7 @@ require (
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/segmentio/kafka-go v0.4.51
+	github.com/tencentcloud/CubeSandbox/sdk/go v0.0.0-20260711063325-a164417f4972
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
 )

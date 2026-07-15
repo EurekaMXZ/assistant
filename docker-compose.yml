@@ -137,7 +137,7 @@ services:
       frontend:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./deploy/nginx/api.conf:/etc/nginx/nginx.conf:ro
     healthcheck:

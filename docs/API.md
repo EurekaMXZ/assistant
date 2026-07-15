@@ -182,7 +182,7 @@ Fields:
 
 - `id`
 - `conversation_id`
-- `provider`: `firecracker`
+- `provider`: `firecracker | cubesandbox`
 - `runtime_id`
 - `status`: `active | stopped | releasing | destroyed` (`releasing` is a transient, retryable deletion state)
 - `runtime_metadata`

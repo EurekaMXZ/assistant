@@ -42,6 +42,31 @@ func (r *ConversationSandboxRepository) db(ctx context.Context) conversationSand
 	return r.pool
 }
 
+func (r *ConversationSandboxRepository) ListNonDestroyedSandboxProviders(ctx context.Context) ([]string, error) {
+	rows, err := r.db(ctx).Query(ctx, `
+		SELECT DISTINCT provider
+		FROM sandboxes
+		WHERE status <> $1
+		ORDER BY provider
+	`, domain.SandboxStatusDestroyed)
+	if err != nil {
+		return nil, fmt.Errorf("list non-destroyed sandbox providers: %w", err)
+	}
+	defer rows.Close()
+	providers := make([]string, 0, 2)
+	for rows.Next() {
+		var provider string
+		if err := rows.Scan(&provider); err != nil {
+			return nil, fmt.Errorf("scan non-destroyed sandbox provider: %w", err)
+		}
+		providers = append(providers, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate non-destroyed sandbox providers: %w", err)
+	}
+	return providers, nil
+}
+
 func (r *ConversationSandboxRepository) GetActiveConversationSandbox(ctx context.Context, conversationID string) (*domain.ConversationSandbox, error) {
 	row := r.db(ctx).QueryRow(ctx, `SELECT `+conversationSandboxColumns+`
 		FROM sandboxes

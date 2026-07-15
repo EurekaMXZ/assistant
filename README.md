@@ -106,13 +106,13 @@ docker compose up -d --build
 
 单机部署到其他域名时，将域名或 TLS 入口指向 Nginx 的 `8080` 端口，并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。该值同时用于 CORS 和邮箱验证、密码重置链接。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
 
-Compose 不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 进程默认提供 4 个 request slot，但只建立一个 Kafka group consumer；同一 conversation 在分区稳定期间固定命中同一进程。
+Compose 不包含独立部署的 CubeSandbox 集群，也不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 进程默认提供 4 个 request slot，但只建立一个 Kafka group consumer；同一 conversation 在分区稳定期间固定命中同一进程。
 
 若镜像构建或容器内 Worker 访问外部服务超时，而宿主机访问正常，需配置 `.env` 中 `DOCKER_HTTP_PROXY` / `DOCKER_HTTPS_PROXY`。该地址必须同时可被 BuildKit 和运行中的容器访问。
 
 ### 沙箱生命周期
 
-沙箱在没有命令活动一段时间后会自动进入 `stopped`，下次创建或执行命令时自动恢复。Firecracker 停止 VM 进程但保留可写 rootfs。超过 stopped 保留时间后，沙箱会先进入可重试的 `releasing`，Firecracker bridge 确认删除后再进入 `destroyed`。时间均可通过环境变量调整：
+沙箱在没有命令活动一段时间后会自动进入 `stopped`，下次创建或执行命令时自动恢复。Firecracker 停止 VM 进程但保留可写 rootfs；CubeSandbox 对 MicroVM 执行 pause 并保留快照。超过 stopped 保留时间后，沙箱会先进入可重试的 `releasing`，provider 确认删除后再进入 `destroyed`。时间均可通过环境变量调整：
 
 ```bash
 SANDBOX_IDLE_STOP_AFTER=15m
@@ -122,6 +122,35 @@ SANDBOX_REAPER_BATCH_SIZE=20
 SANDBOX_COMMAND_DEFAULT_TIMEOUT=30s
 SANDBOX_COMMAND_MAX_TIMEOUT=5m
 ```
+
+### PVM / CubeSandbox 沙箱部署
+
+应用通过 CubeAPI 和 CubeProxy 使用 CubeSandbox；PVM 是 CubeSandbox 计算节点上的 KVM 后端，不直接暴露给应用。当前适配基于 CubeSandbox `v0.5.1`。PVM 节点要求 x86_64、root 权限、定制 host/guest kernel 和重启；如果宿主机已经提供原生 `/dev/kvm`，应优先使用原生 KVM。
+
+1. 按 [CubeSandbox PVM deployment](https://github.com/TencentCloud/CubeSandbox/blob/v0.5.1/docs/guide/pvm-deploy.md) 安装 PVM host kernel，加载 `kvm_pvm`，并以 `CUBE_PVM_ENABLE=1` 安装 CubeSandbox。
+2. 创建包含 envd 和 `/workspace` 的 READY 模板。
+3. 将 CubeAPI、CubeMaster、Cubelet、Redis、MySQL 和 WebUI 放在私网；CubeAPI 必须启用 `AUTH_CALLBACK_URL`，CubeProxy 只允许 API/Worker 访问。
+4. 初期将 Cubelet 的 `host.quota.paused_resource_release_ratio` 设为 `0`，保证 paused sandbox 可以恢复后删除。
+5. 配置 API 与 Worker：
+
+```bash
+SANDBOX_PROVIDER=cubesandbox
+SANDBOX_CUBE_API_URL=http://cube-api.internal:3000
+SANDBOX_CUBE_API_KEY=your-private-api-key
+SANDBOX_CUBE_TEMPLATE_ID=tpl-xxxxxxxx
+SANDBOX_CUBE_PROXY_NODE_IP=10.0.0.12
+SANDBOX_CUBE_PROXY_PORT_HTTP=80
+SANDBOX_CUBE_PROXY_SCHEME=http
+SANDBOX_CUBE_DOMAIN=cube.app
+SANDBOX_CUBE_CLUSTER_ID=production
+SANDBOX_CUBE_ALLOW_INTERNET=false
+SANDBOX_CUBE_DENY_OUT=0.0.0.0/0
+SANDBOX_EXEC_ENABLED=true
+```
+
+Assistant 是生命周期的唯一控制方：创建时会向 CubeSandbox 传递 `NeverTimeout`，空闲 pause 和超期 destroy 仍由本项目的 reaper 执行。CubeSandbox 当前不能直接删除 paused sandbox，runtime 会先恢复再删除。CubeSandbox create API 尚不支持服务端 `Idempotency-Key`；runtime 会将 conversation 和 request key 写入远端 metadata 便于排障，但生产环境仍需监控并清理响应丢失产生的孤立沙箱。
+
+切换默认 provider 时不要立即删除旧 provider 配置。`Manager` 会按数据库中保存的 provider 路由，必须等旧 Firecracker 沙箱全部进入 `destroyed` 后才能停止 bridge。
 
 ### Firecracker 沙箱部署
 
@@ -152,7 +181,7 @@ go run ./cmd/migrate down     # 回滚最近一次迁移
 go run ./cmd/migrate version  # 查看当前迁移版本
 ```
 
-部署 `000006_sandbox_lifecycle` 前应先停止旧版本 Worker 并等待正在执行的沙箱命令结束，再执行迁移和启动新版本 Worker。回滚前必须确保没有 `stopped` / `releasing` 沙箱或执行租约。部署 `000009_remove_agentbay_provider` 前必须先通过旧版本终止所有 AgentBay Session 并将对应记录标记为 `destroyed`；迁移会在仍有未销毁的 AgentBay sandbox 时拒绝执行。
+部署 `000006_sandbox_lifecycle` 前应先停止旧版本 Worker 并等待正在执行的沙箱命令结束，再执行迁移和启动新版本 Worker。回滚前必须确保没有 `stopped` / `releasing` 沙箱或执行租约。部署 `000009_remove_agentbay_provider` 前必须先通过旧版本终止所有 AgentBay Session 并将对应记录标记为 `destroyed`；迁移会在仍有未销毁的 AgentBay sandbox 时拒绝执行。回滚 `000010_add_cubesandbox_provider` 前必须先销毁所有 CubeSandbox sandbox，并将其历史记录归档到 `sandboxes` 表之外或删除；否则迁移会拒绝执行。
 
 ## 开源协议
 

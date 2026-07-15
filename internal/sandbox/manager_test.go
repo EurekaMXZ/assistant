@@ -68,6 +68,51 @@ func TestManagerCreatesAndRoutesFirecrackerHandles(t *testing.T) {
 	}
 }
 
+func TestManagerCreatesCubeSandboxAndRoutesPersistedFirecrackerHandle(t *testing.T) {
+	firecracker := &trackingSandboxRuntime{provider: ProviderFirecracker}
+	cube := &trackingSandboxRuntime{provider: ProviderCubeSandbox}
+	manager, err := NewManager(ProviderCubeSandbox, map[string]tool.SandboxManager{
+		ProviderFirecracker: firecracker,
+		ProviderCubeSandbox: cube,
+	})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	handle, err := manager.CreateSandbox(t.Context(), "conv-1", "create-key")
+	if err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	if handle.Provider != ProviderCubeSandbox || cube.createCalls != 1 {
+		t.Fatalf("unexpected create routing: handle=%#v cube=%d", handle, cube.createCalls)
+	}
+	if _, err := manager.DestroySandbox(t.Context(), domain.SandboxHandle{Provider: ProviderFirecracker, RuntimeID: "fc-1"}, "destroy-key"); err != nil {
+		t.Fatalf("destroy persisted firecracker sandbox: %v", err)
+	}
+	if firecracker.destroyCalls != 1 {
+		t.Fatalf("firecracker destroy calls = %d, want 1", firecracker.destroyCalls)
+	}
+	if !manager.SupportsProvider(ProviderFirecracker) || !manager.SupportsProvider(ProviderCubeSandbox) || manager.SupportsProvider("agentbay") {
+		t.Fatal("unexpected configured provider set")
+	}
+}
+
+func TestManagerCanonicalizesCreatedProvider(t *testing.T) {
+	cube := &trackingSandboxRuntime{provider: " CubeSandbox "}
+	manager, err := NewManager(ProviderCubeSandbox, map[string]tool.SandboxManager{ProviderCubeSandbox: cube})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	handle, err := manager.CreateSandbox(t.Context(), "conv-1", "")
+	if err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	if handle.Provider != ProviderCubeSandbox {
+		t.Fatalf("provider = %q, want canonical provider", handle.Provider)
+	}
+}
+
 func TestManagerRejectsUnconfiguredProvider(t *testing.T) {
 	manager, err := NewManager(ProviderFirecracker, map[string]tool.SandboxManager{
 		ProviderFirecracker: &trackingSandboxRuntime{provider: ProviderFirecracker},
