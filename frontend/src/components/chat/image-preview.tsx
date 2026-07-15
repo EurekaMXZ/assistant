@@ -1,13 +1,13 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Download, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  TransformComponent,
+  TransformWrapper,
+  useControls,
+  useTransformComponent,
+} from "react-zoom-pan-pinch";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
@@ -25,16 +25,6 @@ interface ImagePreviewProps extends Omit<ComponentProps<"img">, "alt" | "src"> {
   src: string;
   streamdown?: boolean;
   wrapperClassName?: string;
-}
-
-interface ViewportState {
-  scale: number;
-  x: number;
-  y: number;
-}
-
-function clampScale(scale: number) {
-  return Math.min(maxScale, Math.max(minScale, Number(scale.toFixed(1))));
 }
 
 function extensionForBlob(blob: Blob) {
@@ -82,129 +72,77 @@ async function downloadImage(src: string, alt: string, requestedName?: string) {
   }
 }
 
-function ImagePanZoom({ alt, src }: { alt: string; src: string }) {
-  const [viewport, setViewport] = useState<ViewportState>({ scale: 1, x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dragStartRef = useRef({ pointerX: 0, pointerY: 0, x: 0, y: 0 });
-
-  const changeScale = (delta: number) => {
-    setViewport((current) => ({ ...current, scale: clampScale(current.scale + delta) }));
-  };
-
-  const reset = () => setViewport({ scale: 1, x: 0, y: 0 });
-
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !event.isPrimary) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragStartRef.current = {
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      x: viewport.x,
-      y: viewport.y,
-    };
-    setIsPanning(true);
-  };
-
-  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isPanning) return;
-    event.preventDefault();
-    const start = dragStartRef.current;
-    setViewport((current) => ({
-      ...current,
-      x: start.x + event.clientX - start.pointerX,
-      y: start.y + event.clientY - start.pointerY,
-    }));
-  };
-
-  const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isPanning) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    setIsPanning(false);
-  };
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const delta = event.deltaY > 0 ? -scaleStep : scaleStep;
-      setViewport((current) => ({
-        ...current,
-        scale: clampScale(current.scale + delta),
-      }));
-    };
-
-    container.addEventListener("wheel", handleWheel, { passive: false });
-    return () => container.removeEventListener("wheel", handleWheel);
-  }, []);
+function ImagePanZoomControls() {
+  const { resetTransform, zoomIn, zoomOut } = useControls();
+  const scale = useTransformComponent(({ state }) => state.scale);
 
   return (
-    <div
-      className="relative size-full overflow-hidden"
-      data-image-preview="viewport"
-      ref={containerRef}
-    >
-      <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-1 rounded-md border border-border bg-background/80 p-1 supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:backdrop-blur-sm">
-        <button
-          type="button"
-          title="放大"
-          aria-label="放大"
-          className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={viewport.scale >= maxScale}
-          onClick={() => changeScale(scaleStep)}
-        >
-          <ZoomIn className="size-4" />
-        </button>
-        <button
-          type="button"
-          title="缩小"
-          aria-label="缩小"
-          className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={viewport.scale <= minScale}
-          onClick={() => changeScale(-scaleStep)}
-        >
-          <ZoomOut className="size-4" />
-        </button>
-        <button
-          type="button"
-          title="重置缩放与位置"
-          aria-label="重置缩放与位置"
-          className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          onClick={reset}
-        >
-          <RotateCcw className="size-4" />
-        </button>
-      </div>
-
-      <div
-        role="application"
-        aria-label="可缩放图片预览"
-        className={cn(
-          "flex size-full touch-none select-none items-center justify-center origin-center transition-transform duration-150 ease-out",
-          isPanning ? "cursor-grabbing" : "cursor-grab",
-        )}
-        onPointerCancel={handlePointerEnd}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerEnd}
-        style={{
-          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
-          transformOrigin: "center center",
-          willChange: "transform",
-        }}
+    <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-1 rounded-md border border-border bg-background/80 p-1 supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:backdrop-blur-sm">
+      <button
+        type="button"
+        title="放大"
+        aria-label="放大"
+        className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={scale >= maxScale}
+        onClick={() => zoomIn(scaleStep, 0)}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={alt}
-          className="pointer-events-none max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] object-contain"
-          draggable={false}
-        />
-      </div>
+        <ZoomIn className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="缩小"
+        aria-label="缩小"
+        className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={scale <= minScale}
+        onClick={() => zoomOut(scaleStep, 0)}
+      >
+        <ZoomOut className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="重置缩放与位置"
+        aria-label="重置缩放与位置"
+        className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        onClick={() => resetTransform(0)}
+      >
+        <RotateCcw className="size-4" />
+      </button>
+    </div>
+  );
+}
+
+function ImagePanZoom({ alt, src }: { alt: string; src: string }) {
+  return (
+    <div className="relative size-full overflow-hidden" data-image-preview="viewport">
+      <TransformWrapper
+        centerOnInit
+        centerZoomedOut
+        disablePadding
+        initialScale={1}
+        limitToBounds
+        maxScale={maxScale}
+        minScale={minScale}
+        doubleClick={{ disabled: true }}
+        pinch={{ allowPanning: true }}
+        wheel={{ step: 0.015 }}
+      >
+        <ImagePanZoomControls />
+        <TransformComponent
+          contentClass="image-preview-transform !size-full items-center justify-center"
+          contentStyle={{ height: "100%", width: "100%" }}
+          wrapperClass="!size-full touch-none cursor-grab active:cursor-grabbing"
+          wrapperStyle={{ height: "100%", width: "100%" }}
+          wrapperProps={{ role: "application", "aria-label": "可缩放图片预览" }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={alt}
+            className="max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] object-contain"
+            draggable={false}
+          />
+        </TransformComponent>
+      </TransformWrapper>
     </div>
   );
 }
