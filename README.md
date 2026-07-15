@@ -104,7 +104,7 @@ docker compose up -d --build
 
 默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。浏览器统一访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。前端使用同源相对地址 `/api/v1`，Go API 和 Next.js 均只暴露在 Compose 内部网络，不单独发布宿主机端口。Nginx 对 SSE 路径关闭压缩、缓存和代理缓冲。
 
-单机部署到其他域名时，将域名或 TLS 入口指向 Nginx 的 `8080` 端口，并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。该值同时用于 CORS 和邮箱验证、密码重置链接；修改后需重新创建 API 容器。不要把服务器的 `localhost` 写入生产配置。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
+单机部署到其他域名时，将域名或 TLS 入口指向 Nginx 的 `8080` 端口，并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。该值同时用于 CORS 和邮箱验证、密码重置链接。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
 
 Compose 不包含必须在宿主机运行的 Firecracker bridge。每个 Worker 进程默认提供 4 个 request slot，但只建立一个 Kafka group consumer；同一 conversation 在分区稳定期间固定命中同一进程。
 

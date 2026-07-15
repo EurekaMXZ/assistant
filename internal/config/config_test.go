@@ -88,6 +88,14 @@ func TestLoadReadsOpenAIUserAgent(t *testing.T) {
 	}
 }
 
+func TestLoadDoesNotDefaultWebOrigin(t *testing.T) {
+	t.Setenv("WEB_ORIGIN", "")
+
+	if got := Load().WebOrigin; got != "" {
+		t.Fatalf("WebOrigin = %q, want empty value", got)
+	}
+}
+
 func TestLoadReadsSandboxExecEnabled(t *testing.T) {
 	t.Setenv("SANDBOX_EXEC_ENABLED", "true")
 
@@ -148,25 +156,34 @@ func TestLoadReadsAgentBaySettings(t *testing.T) {
 }
 
 func TestValidateAPIRequiresBridgeURL(t *testing.T) {
-	cfg := Config{
-		DatabaseURL:              "postgres://db",
-		RedisAddr:                "127.0.0.1:6379",
-		JWTSecret:                "jwt-secret",
-		SystemUserEmail:          "system@example.com",
-		SystemUserUsername:       "system",
-		SystemUserPasswordHash:   "hash",
-		SandboxBridgeURL:         "",
-		SandboxIdleStopAfter:     15 * time.Minute,
-		SandboxStoppedRetention:  24 * time.Hour,
-		SandboxReaperInterval:    time.Minute,
-		SandboxReaperBatchSize:   20,
-		SandboxCommandTimeout:    30 * time.Second,
-		SandboxCommandMaxTimeout: 5 * time.Minute,
-	}
+	cfg := validAPIConfig()
+	cfg.SandboxBridgeURL = ""
 
 	err := cfg.ValidateAPI()
 	if err == nil || !strings.Contains(err.Error(), "SANDBOX_BRIDGE_URL") {
 		t.Fatalf("ValidateAPI error = %v, want missing SANDBOX_BRIDGE_URL", err)
+	}
+}
+
+func TestValidateAPIRequiresWebOrigin(t *testing.T) {
+	cfg := validAPIConfig()
+	cfg.WebOrigin = ""
+
+	err := cfg.ValidateAPI()
+	if err == nil || !strings.Contains(err.Error(), "WEB_ORIGIN") {
+		t.Fatalf("ValidateAPI error = %v, want missing WEB_ORIGIN", err)
+	}
+}
+
+func TestValidateAPIRejectsInvalidWebOrigin(t *testing.T) {
+	for _, value := range []string{"localhost:3000", "ftp://example.com", "https://example.com/app", "https://example.com?source=mail"} {
+		t.Run(value, func(t *testing.T) {
+			cfg := validAPIConfig()
+			cfg.WebOrigin = value
+			if err := cfg.ValidateAPI(); err == nil || !strings.Contains(err.Error(), "WEB_ORIGIN") {
+				t.Fatalf("ValidateAPI error = %v, want invalid WEB_ORIGIN", err)
+			}
+		})
 	}
 }
 
@@ -334,4 +351,14 @@ func validWorkerConfig() Config {
 		SandboxCommandTimeout:       30 * time.Second,
 		SandboxCommandMaxTimeout:    5 * time.Minute,
 	}
+}
+
+func validAPIConfig() Config {
+	cfg := validWorkerConfig()
+	cfg.WebOrigin = "https://assistant.example.com"
+	cfg.JWTSecret = "jwt-secret"
+	cfg.SystemUserEmail = "system@example.com"
+	cfg.SystemUserUsername = "system"
+	cfg.SystemUserPasswordHash = "hash"
+	return cfg
 }

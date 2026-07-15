@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -41,7 +42,6 @@ const (
 	defaultCacheTailCapacity        = 256
 	defaultOutboxBatchSize          = 100
 	defaultHTTPClientTimeout        = 5 * time.Minute
-	defaultWebOrigin                = "http://localhost:3000"
 	defaultJWTIssuer                = "assistant"
 	defaultAccessTokenTTL           = 24 * time.Hour
 	defaultSandboxProvider          = "firecracker"
@@ -138,7 +138,7 @@ func Load() Config {
 		WorkerLeaseTimeout:          getenvDuration("WORKER_LEASE_TIMEOUT", defaultWorkerLeaseTimeout),
 		WorkerConcurrency:           getenvInt("WORKER_CONCURRENCY", defaultWorkerConcurrency),
 		OutboxBatchSize:             getenvInt("OUTBOX_BATCH_SIZE", defaultOutboxBatchSize),
-		WebOrigin:                   getenv("WEB_ORIGIN", defaultWebOrigin),
+		WebOrigin:                   strings.TrimSpace(os.Getenv("WEB_ORIGIN")),
 		JWTSecret:                   os.Getenv("AUTH_JWT_SECRET"),
 		JWTIssuer:                   getenv("AUTH_JWT_ISSUER", defaultJWTIssuer),
 		AccessTokenTTL:              getenvDuration("AUTH_ACCESS_TOKEN_TTL", defaultAccessTokenTTL),
@@ -235,6 +235,7 @@ func (c Config) ValidateAPI() error {
 	required := map[string]string{
 		"DATABASE_URL":                   c.DatabaseURL,
 		"REDIS_ADDR":                     c.RedisAddr,
+		"WEB_ORIGIN":                     c.WebOrigin,
 		"AUTH_JWT_SECRET":                c.JWTSecret,
 		"SYSTEM_USER_EMAIL":              c.SystemUserEmail,
 		"SYSTEM_USER_USERNAME":           c.SystemUserUsername,
@@ -256,7 +257,21 @@ func (c Config) ValidateAPI() error {
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required api config: %s", strings.Join(missing, ", "))
 	}
+	if err := validateWebOrigin(c.WebOrigin); err != nil {
+		return fmt.Errorf("invalid api config: %w", err)
+	}
 
+	return nil
+}
+
+func validateWebOrigin(value string) error {
+	origin, err := url.Parse(value)
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" {
+		return errors.New("WEB_ORIGIN must be an absolute HTTP(S) origin")
+	}
+	if origin.User != nil || (origin.Path != "" && origin.Path != "/") || origin.RawQuery != "" || origin.Fragment != "" {
+		return errors.New("WEB_ORIGIN must not include credentials, a path, query parameters, or a fragment")
+	}
 	return nil
 }
 

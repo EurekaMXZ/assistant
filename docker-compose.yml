@@ -123,7 +123,6 @@ services:
       DATABASE_URL: postgres://assistant:assistant@postgres:5432/assistant?sslmode=disable
       REDIS_ADDR: redis:6379
       MINIO_ENDPOINT: minio:9000
-      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
     expose:
       - "8080"
     extra_hosts:
