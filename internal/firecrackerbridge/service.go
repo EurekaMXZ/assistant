@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -195,6 +196,8 @@ func (s *Service) handleSandbox(w http.ResponseWriter, r *http.Request) {
 			status := http.StatusInternalServerError
 			if errors.Is(err, errSandboxNotFound) {
 				status = http.StatusNotFound
+			} else if errors.Is(err, errRequestEntityTooLarge) {
+				status = http.StatusRequestEntityTooLarge
 			} else if errors.Is(err, errBadRequest) {
 				status = http.StatusBadRequest
 			}
@@ -202,6 +205,26 @@ func (s *Service) handleSandbox(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "files" && r.Method == http.MethodPut {
+		if r.ContentLength > domain.SandboxFileMaxBytes {
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds %d bytes", domain.SandboxFileMaxBytes))
+			return
+		}
+		err := s.writeFile(r.Context(), runtimeID, r.URL.Query().Get("path"), io.LimitReader(r.Body, domain.SandboxFileMaxBytes+1), r.ContentLength)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errSandboxNotFound) {
+				status = http.StatusNotFound
+			} else if errors.Is(err, errBadRequest) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -437,8 +460,9 @@ func (s *Service) agentHealth(ctx context.Context, sb *sandbox) error {
 }
 
 var (
-	errSandboxNotFound = errors.New("sandbox not found")
-	errBadRequest      = errors.New("bad request")
+	errSandboxNotFound       = errors.New("sandbox not found")
+	errBadRequest            = errors.New("bad request")
+	errRequestEntityTooLarge = errors.New("request entity too large")
 )
 
 type sandboxNetwork struct {
@@ -872,6 +896,54 @@ func (s *Service) execCommand(ctx context.Context, runtimeID string, request dom
 	}
 	result.RuntimeID = runtimeID
 	return &result, nil
+}
+
+func (s *Service) writeFile(ctx context.Context, runtimeID string, targetPath string, body io.Reader, contentLength int64) error {
+	targetPath = strings.TrimSpace(targetPath)
+	if targetPath == "" {
+		return fmt.Errorf("%w: file path is required", errBadRequest)
+	}
+	s.mu.Lock()
+	sb := s.sandboxes[runtimeID]
+	s.mu.Unlock()
+	if sb == nil {
+		return errSandboxNotFound
+	}
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.resumeSandboxResources(ctx, sb); err != nil {
+		return fmt.Errorf("resume sandbox before file write: %w", err)
+	}
+
+	client := newVsockHTTPClient(sb.vsockPath, sb.agentPort, 5*time.Minute)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://sandbox/files?path="+url.QueryEscape(targetPath), body)
+	if err != nil {
+		return err
+	}
+	if contentLength >= 0 {
+		req.ContentLength = contentLength
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send sandbox agent file request: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= http.StatusBadRequest {
+		message := readErrorMessage(res.Body)
+		if message == "" {
+			message = fmt.Sprintf("sandbox agent file write failed: status=%d", res.StatusCode)
+		}
+		if res.StatusCode == http.StatusRequestEntityTooLarge {
+			return fmt.Errorf("%w: %s", errRequestEntityTooLarge, message)
+		}
+		if res.StatusCode == http.StatusBadRequest {
+			return fmt.Errorf("%w: %s", errBadRequest, message)
+		}
+		return errors.New(message)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	return nil
 }
 
 func (sb *sandbox) metadata(extra map[string]any) (json.RawMessage, error) {

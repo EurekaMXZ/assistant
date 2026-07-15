@@ -74,6 +74,15 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 				MaximumTimeout: settings.SandboxLifecycle.CommandMaximum,
 			},
 		},
+		tool.ImportSandboxAttachmentHandler{
+			UseCase: tool.ImportSandboxAttachment{
+				Attachments: workflows.Attachments,
+				Blobs:       artifactStore,
+				Sandboxes:   workflows.Sandboxes,
+				Runtime:     sandboxRuntime,
+				Locker:      workflows.Locker,
+			},
+		},
 	}
 	if tavilyEnabled {
 		tavilyClient := tavilyclient.New(settings.Tavily)

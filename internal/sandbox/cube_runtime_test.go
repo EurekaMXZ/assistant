@@ -32,6 +32,9 @@ type stubCubeRuntimeClient struct {
 	pauseCalls    int
 	connectCalls  int
 	killCalls     int
+	writtenPath   string
+	writtenData   []byte
+	writeErr      error
 }
 
 func (s *stubCubeRuntimeClient) Create(_ context.Context, opts cubeCreateOptions) (*cubeSandbox, error) {
@@ -65,6 +68,12 @@ func (s *stubCubeRuntimeClient) RunCommand(_ context.Context, _ *cubeSandbox, co
 	s.command = command
 	s.commandOpts = opts
 	return s.commandResult, nil
+}
+
+func (s *stubCubeRuntimeClient) WriteFile(_ context.Context, _ *cubeSandbox, path string, data []byte) error {
+	s.writtenPath = path
+	s.writtenData = append([]byte(nil), data...)
+	return s.writeErr
 }
 
 func TestCubeRuntimeCreateUsesNeverTimeoutPolicyAndSafeMetadata(t *testing.T) {
@@ -194,6 +203,18 @@ func TestCubeRuntimeExecUsesArgvAndGuestTimeout(t *testing.T) {
 	}
 	if result.Output != "command output" {
 		t.Fatalf("output = %q", result.Output)
+	}
+}
+
+func TestCubeRuntimeWritesFileThroughConnectedEnvdSession(t *testing.T) {
+	client := &stubCubeRuntimeClient{connected: &cubeSandbox{ID: "cube-1", TemplateID: "tpl-1"}}
+	runtime := mustCubeRuntime(t, client)
+	handle := domain.SandboxHandle{Provider: ProviderCubeSandbox, RuntimeID: "cube-1"}
+	if err := runtime.WriteSandboxFile(t.Context(), handle, "/workspace/input.csv", []byte("a,b\n"), "write-key"); err != nil {
+		t.Fatalf("write sandbox file: %v", err)
+	}
+	if client.connectCalls != 1 || client.writtenPath != "/workspace/input.csv" || string(client.writtenData) != "a,b\n" {
+		t.Fatalf("unexpected file write: %#v", client)
 	}
 }
 

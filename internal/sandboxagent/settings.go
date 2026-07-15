@@ -10,12 +10,14 @@ const (
 	defaultPort           = 52
 	defaultWorkdir        = "/workspace"
 	defaultMaxOutputBytes = 1 << 20
+	defaultMaxFileBytes   = 128 << 20
 )
 
 type Settings struct {
 	Port           uint32
 	Workdir        string
 	MaxOutputBytes int
+	MaxFileBytes   int64
 }
 
 func LoadSettingsFromEnv() Settings {
@@ -23,6 +25,7 @@ func LoadSettingsFromEnv() Settings {
 		Port:           uint32(getenvInt("SANDBOX_AGENT_PORT", defaultPort)),
 		Workdir:        getenv("SANDBOX_AGENT_WORKDIR", defaultWorkdir),
 		MaxOutputBytes: getenvInt("SANDBOX_AGENT_MAX_OUTPUT_BYTES", defaultMaxOutputBytes),
+		MaxFileBytes:   int64(getenvInt("SANDBOX_AGENT_MAX_FILE_BYTES", defaultMaxFileBytes)),
 	}
 }
 

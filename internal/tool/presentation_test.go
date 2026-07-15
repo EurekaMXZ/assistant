@@ -118,3 +118,22 @@ func TestBuildPublicToolPresentationExposesSandboxCommandResult(t *testing.T) {
 		t.Fatalf("legacy command output = %q", legacy.CommandOutput)
 	}
 }
+
+func TestBuildPublicToolPresentationExposesImportedAttachmentPath(t *testing.T) {
+	presentation := BuildPublicToolPresentation(
+		"",
+		"",
+		SandboxImportAttachment,
+		"completed",
+		json.RawMessage(`{"attachment_id":"11111111-1111-4111-8111-111111111111"}`),
+		[]byte(`{"attachment":{"filename":"report.csv","sandbox_path":"/workspace/attachment-11111111-1111-4111-8111-111111111111.csv"}}`),
+		"",
+	)
+	if presentation.Title != "附件已导入沙箱" || presentation.InputText != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("unexpected attachment presentation: %#v", presentation)
+	}
+	details := strings.Join(presentation.Details, "\n")
+	if !strings.Contains(details, "report.csv") || !strings.Contains(details, "/workspace/attachment-") {
+		t.Fatalf("attachment details = %q", presentation.Details)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -38,6 +39,29 @@ func NewHandler(settings Settings) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("/files", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		maxFileBytes := settings.MaxFileBytes
+		if maxFileBytes <= 0 {
+			maxFileBytes = defaultMaxFileBytes
+		}
+		reader := http.MaxBytesReader(w, r.Body, maxFileBytes)
+		if err := WriteFile(r.Context(), settings, r.URL.Query().Get("path"), reader); err != nil {
+			status := http.StatusInternalServerError
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) || errors.Is(err, errFileTooLarge) {
+				status = http.StatusRequestEntityTooLarge
+			} else if errors.Is(err, errInvalidFileRequest) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/network/configure", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -193,6 +217,74 @@ func Exec(ctx context.Context, settings Settings, request domain.SandboxCommandR
 		TimedOut:         timedOut,
 	}, nil
 }
+
+func WriteFile(ctx context.Context, settings Settings, requestedPath string, reader io.Reader) error {
+	if reader == nil {
+		return fmt.Errorf("%w: file content is required", errInvalidFileRequest)
+	}
+	root := strings.TrimSpace(settings.Workdir)
+	if root == "" {
+		root = defaultWorkdir
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve sandbox workdir: %w", err)
+	}
+	target := strings.TrimSpace(requestedPath)
+	if target == "" {
+		return fmt.Errorf("%w: file path is required", errInvalidFileRequest)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(root, target)
+	}
+	target = filepath.Clean(target)
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: file path must be inside the sandbox workspace", errInvalidFileRequest)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create file directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".sandbox-upload-*")
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+
+	maxBytes := settings.MaxFileBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxFileBytes
+	}
+	written, copyErr := io.Copy(temporary, io.LimitReader(reader, maxBytes+1))
+	if copyErr == nil && written > maxBytes {
+		copyErr = fmt.Errorf("%w: file exceeds %d bytes", errFileTooLarge, maxBytes)
+	}
+	if copyErr == nil {
+		copyErr = ctx.Err()
+	}
+	if copyErr == nil {
+		copyErr = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return fmt.Errorf("write sandbox file: %w", copyErr)
+	}
+	if err := os.Chmod(temporaryPath, 0o644); err != nil {
+		return fmt.Errorf("set sandbox file permissions: %w", err)
+	}
+	if err := os.Rename(temporaryPath, target); err != nil {
+		return fmt.Errorf("replace sandbox file: %w", err)
+	}
+	return nil
+}
+
+var (
+	errInvalidFileRequest = errors.New("invalid file request")
+	errFileTooLarge       = errors.New("file too large")
+)
 
 func resolveWorkdir(root string, requested string) (string, error) {
 	root = strings.TrimSpace(root)

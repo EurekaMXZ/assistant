@@ -48,6 +48,40 @@ type ExecSandboxCommandHandler struct {
 	UseCase ExecSandboxCommand
 }
 
+type ImportSandboxAttachmentHandler struct {
+	UseCase ImportSandboxAttachment
+}
+
+func (h ImportSandboxAttachmentHandler) ToolName() string {
+	return SandboxImportAttachment
+}
+
+func (h ImportSandboxAttachmentHandler) Execute(ctx context.Context, scope ToolScope, call ToolCall) (*ToolExecutionResult, error) {
+	var input struct {
+		AttachmentID string `json:"attachment_id"`
+	}
+	if err := decodeToolArguments(call, SandboxImportAttachment, &input); err != nil {
+		return nil, err
+	}
+
+	result, err := h.UseCase.Execute(ctx, ImportSandboxAttachmentInput{
+		ConversationID: scope.ConversationID,
+		AttachmentID:   input.AttachmentID,
+		RequestKey:     call.RequestKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalToolOutput(SandboxImportAttachment, map[string]any{
+		"conversation_id": scope.ConversationID,
+		"attachment":      result,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return outputOnlyExecutionResult(call.CallID, payload), nil
+}
+
 func (h ExecSandboxCommandHandler) ToolName() string {
 	return SandboxExec
 }

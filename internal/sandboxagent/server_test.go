@@ -1,7 +1,11 @@
 package sandboxagent
 
 import (
+	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,6 +69,57 @@ func TestExecMarksTimeout(t *testing.T) {
 	}
 	if !result.TimedOut || result.ExitCode != -1 {
 		t.Fatalf("unexpected timeout result: %#v", result)
+	}
+}
+
+func TestWriteFileAtomicallyWritesInsideWorkspace(t *testing.T) {
+	workdir := t.TempDir()
+	target := filepath.Join(workdir, "input.bin")
+	if err := WriteFile(t.Context(), Settings{Workdir: workdir, MaxFileBytes: 1024}, target, bytes.NewReader([]byte{0, 1, 2, 3})); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if !bytes.Equal(data, []byte{0, 1, 2, 3}) {
+		t.Fatalf("data = %v", data)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("file mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestWriteFileRejectsTraversalAndOversizedContent(t *testing.T) {
+	workdir := t.TempDir()
+	err := WriteFile(t.Context(), Settings{Workdir: workdir, MaxFileBytes: 4}, filepath.Join(workdir, "..", "outside"), strings.NewReader("data"))
+	if err == nil || !strings.Contains(err.Error(), "inside the sandbox workspace") {
+		t.Fatalf("traversal error = %v", err)
+	}
+	err = WriteFile(t.Context(), Settings{Workdir: workdir, MaxFileBytes: 4}, filepath.Join(workdir, "large"), strings.NewReader("12345"))
+	if err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
+		t.Fatalf("oversize error = %v", err)
+	}
+}
+
+func TestFileHandlerMapsValidationAndSizeErrors(t *testing.T) {
+	workdir := t.TempDir()
+	handler := NewHandler(Settings{Workdir: workdir, MaxFileBytes: 4})
+
+	invalid := httptest.NewRecorder()
+	handler.ServeHTTP(invalid, httptest.NewRequest(http.MethodPut, "/files?path=/outside", strings.NewReader("data")))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid path status = %d, want %d", invalid.Code, http.StatusBadRequest)
+	}
+
+	oversized := httptest.NewRecorder()
+	handler.ServeHTTP(oversized, httptest.NewRequest(http.MethodPut, "/files?path="+filepath.Join(workdir, "large"), strings.NewReader("12345")))
+	if oversized.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized status = %d, want %d", oversized.Code, http.StatusRequestEntityTooLarge)
 	}
 }
 

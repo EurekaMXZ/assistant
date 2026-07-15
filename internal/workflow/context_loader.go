@@ -255,27 +255,20 @@ func (l *ContextLoader) userMessageInputItems(ctx context.Context, conversationI
 		})
 	}
 
-	var unavailable []string
 	for _, attachment := range attachments {
-		part, reason, err := l.attachmentContentPart(ctx, attachment)
+		part, _, err := l.attachmentContentPart(ctx, attachment)
 		if err != nil {
 			return nil, false, err
 		}
 		if len(part) > 0 {
 			content = append(content, part)
-			continue
-		}
-		if reason != "" {
-			unavailable = append(unavailable, reason)
 		}
 	}
 
-	if len(unavailable) > 0 {
-		content = append(content, map[string]string{
-			"type": "input_text",
-			"text": formatUnavailableAttachmentNote(unavailable),
-		})
-	}
+	content = append(content, map[string]string{
+		"type": "input_text",
+		"text": formatSandboxAttachmentNote(attachments),
+	})
 	if len(content) == 0 {
 		return nil, true, nil
 	}
@@ -339,11 +332,16 @@ func messageAttachmentIDs(metadata json.RawMessage) []string {
 	return ids
 }
 
-func formatUnavailableAttachmentNote(names []string) string {
-	if len(names) == 0 {
+func formatSandboxAttachmentNote(attachments []domain.Attachment) string {
+	if len(attachments) == 0 {
 		return ""
 	}
-	return "User attached files stored for later sandbox analysis and not available for direct model inspection yet: " + strings.Join(names, ", ")
+	var builder strings.Builder
+	builder.WriteString("User attachments available for on-demand sandbox import. Create a sandbox first, then call sandbox.import_attachment only for files needed by the task:\n")
+	for _, attachment := range attachments {
+		fmt.Fprintf(&builder, "- attachment_id=%s filename=%q content_type=%s size_bytes=%d\n", attachment.ID, attachment.Filename, attachment.ContentType, attachment.SizeBytes)
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func isSupportedModelImageType(contentType string) bool {

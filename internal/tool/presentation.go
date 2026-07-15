@@ -79,6 +79,16 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 		}
 		presentation.Command = commandLineRaw(commandSource)
 		presentation.WorkingDirectory = strings.TrimSpace(rawStringField(commandSource, "working_directory"))
+	case SandboxImportAttachment:
+		presentation.Title = statusSummary(status, "正在导入附件", "附件已导入沙箱", "导入附件失败")
+		presentation.InputLabel = "Attachment"
+		presentation.InputText = stringField(args, "attachment_id")
+		if attachment := nestedObject(result, "attachment"); attachment != nil {
+			presentation.Details = compactDetails([]string{
+				"File: " + rawStringField(attachment, "filename"),
+				"Sandbox path: " + rawStringField(attachment, "sandbox_path"),
+			})
+		}
 	}
 }
 

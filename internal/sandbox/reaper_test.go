@@ -257,6 +257,9 @@ func (r *reaperTestRuntime) DestroySandbox(_ context.Context, handle domain.Sand
 func (r *reaperTestRuntime) ExecSandboxCommand(context.Context, domain.SandboxHandle, domain.SandboxCommandRequest, string) (*domain.SandboxCommandResult, error) {
 	return nil, nil
 }
+func (r *reaperTestRuntime) WriteSandboxFile(context.Context, domain.SandboxHandle, string, []byte, string) error {
+	return nil
+}
 
 type reaperTestLocker struct{ mu sync.Mutex }
 

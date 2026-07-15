@@ -105,6 +105,14 @@ func (s *Store) GetBytes(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
+func (s *Store) OpenReader(ctx context.Context, key string) (io.ReadCloser, error) {
+	object, err := s.client.GetObject(ctx, s.bucket, key, miniosdk.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get object %s: %w", key, normalizeObjectStoreReadError(err))
+	}
+	return object, nil
+}
+
 func (s *Store) GetJSON(ctx context.Context, key string, target any) error {
 	data, err := s.GetBytes(ctx, key)
 	if err != nil {

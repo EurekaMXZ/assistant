@@ -1,9 +1,13 @@
 package tool
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -241,6 +245,37 @@ type stubSandboxManager struct {
 	resumeCalls           int
 	destroyContextErr     error
 	requestKeys           []string
+	writtenHandle         domain.SandboxHandle
+	writtenPath           string
+	writtenData           []byte
+}
+
+type stubSandboxAttachmentStore struct {
+	conversationID string
+	attachment     domain.Attachment
+	err            error
+}
+
+func (s *stubSandboxAttachmentStore) ListAttachmentsByIDs(_ context.Context, conversationID string, ids []string) ([]domain.Attachment, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if conversationID != s.conversationID || len(ids) != 1 || ids[0] != s.attachment.ID {
+		return nil, domain.ErrNotFound
+	}
+	return []domain.Attachment{s.attachment}, nil
+}
+
+type stubSandboxAttachmentBlobs struct {
+	data []byte
+	err  error
+}
+
+func (s *stubSandboxAttachmentBlobs) OpenReader(context.Context, string) (io.ReadCloser, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return io.NopCloser(bytes.NewReader(s.data)), nil
 }
 
 func (s *stubSandboxManager) CreateSandbox(_ context.Context, conversationID string, requestKey string) (*domain.SandboxHandle, error) {
@@ -274,6 +309,14 @@ func (s *stubSandboxManager) ResumeSandbox(_ context.Context, handle domain.Sand
 	s.resumeCalls++
 	s.requestKeys = append(s.requestKeys, requestKey)
 	return &handle, nil
+}
+
+func (s *stubSandboxManager) WriteSandboxFile(_ context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error {
+	s.requestKeys = append(s.requestKeys, requestKey)
+	s.writtenHandle = handle
+	s.writtenPath = path
+	s.writtenData = append([]byte(nil), data...)
+	return s.err
 }
 
 func TestCreateSandboxResumesStoppedSandbox(t *testing.T) {
@@ -312,6 +355,65 @@ func TestExecSandboxCommandResumesStoppedSandboxAndEnforcesTimeout(t *testing.T)
 	}
 	if _, err := useCase.Execute(t.Context(), ExecSandboxCommandInput{ConversationID: "conv-1", Command: "sleep", TimeoutSeconds: 41}); err == nil {
 		t.Fatal("expected command timeout validation error")
+	}
+}
+
+func TestImportSandboxAttachmentAuthorizesVerifiesAndWritesFile(t *testing.T) {
+	const attachmentID = "11111111-1111-4111-8111-111111111111"
+	data := []byte("a,b\n1,2\n")
+	digest := sha256.Sum256(data)
+	attachments := &stubSandboxAttachmentStore{
+		conversationID: "conv-1",
+		attachment: domain.Attachment{
+			ID:             attachmentID,
+			ConversationID: "conv-1",
+			Filename:       "report.CSV",
+			ContentType:    "text/csv",
+			SizeBytes:      int64(len(data)),
+			SHA256:         hex.EncodeToString(digest[:]),
+			ObjectKey:      "attachments/conv-1/attachment/report.CSV",
+		},
+	}
+	store := &stubConversationSandboxStore{active: &domain.ConversationSandbox{
+		ID: "sandbox-1", ConversationID: "conv-1", Provider: "cubesandbox", RuntimeID: "runtime-1", Status: domain.SandboxStatusActive,
+	}}
+	runtime := &stubSandboxManager{}
+	result, err := (ImportSandboxAttachment{
+		Attachments: attachments,
+		Blobs:       &stubSandboxAttachmentBlobs{data: data},
+		Sandboxes:   store,
+		Runtime:     runtime,
+	}).Execute(t.Context(), ImportSandboxAttachmentInput{
+		ConversationID: "conv-1",
+		AttachmentID:   attachmentID,
+		RequestKey:     "run-1:call-1",
+	})
+	if err != nil {
+		t.Fatalf("import attachment: %v", err)
+	}
+	wantPath := "/workspace/attachment-" + attachmentID + ".csv"
+	if result.SandboxPath != wantPath || runtime.writtenPath != wantPath || string(runtime.writtenData) != string(data) {
+		t.Fatalf("unexpected import: result=%#v runtime=%#v", result, runtime)
+	}
+	if runtime.writtenHandle.RuntimeID != "runtime-1" || store.active.ExecutionToken != "" || store.active.ExecutionLeaseUntil != nil {
+		t.Fatalf("sandbox execution lease was not completed: store=%#v runtime=%#v", store.active, runtime)
+	}
+}
+
+func TestImportSandboxAttachmentRejectsCrossConversationAndChecksumMismatch(t *testing.T) {
+	const attachmentID = "11111111-1111-4111-8111-111111111111"
+	attachment := domain.Attachment{ID: attachmentID, ConversationID: "conv-1", Filename: "data.bin", SizeBytes: 3, SHA256: strings.Repeat("0", 64), ObjectKey: "object"}
+	useCase := ImportSandboxAttachment{
+		Attachments: &stubSandboxAttachmentStore{conversationID: "conv-1", attachment: attachment},
+		Blobs:       &stubSandboxAttachmentBlobs{data: []byte("abc")},
+		Sandboxes:   &stubConversationSandboxStore{},
+		Runtime:     &stubSandboxManager{},
+	}
+	if _, err := useCase.Execute(t.Context(), ImportSandboxAttachmentInput{ConversationID: "conv-2", AttachmentID: attachmentID}); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-conversation error = %v, want not found", err)
+	}
+	if _, err := useCase.Execute(t.Context(), ImportSandboxAttachmentInput{ConversationID: "conv-1", AttachmentID: attachmentID}); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("checksum error = %v", err)
 	}
 }
 

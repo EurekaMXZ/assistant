@@ -15,6 +15,7 @@ const (
 	sandboxCreateName           = "create"
 	sandboxDestroyName          = "destroy"
 	sandboxExecName             = "exec"
+	sandboxImportAttachmentName = "import_attachment"
 	internetSearchName          = "search"
 	internetExtractName         = "extract"
 )
@@ -24,6 +25,7 @@ const (
 	SandboxCreate           = sandboxNamespace + "." + sandboxCreateName
 	SandboxDestroy          = sandboxNamespace + "." + sandboxDestroyName
 	SandboxExec             = sandboxNamespace + "." + sandboxExecName
+	SandboxImportAttachment = sandboxNamespace + "." + sandboxImportAttachmentName
 	WebSearch               = internetNamespace + "." + internetSearchName
 	WebExtract              = internetNamespace + "." + internetExtractName
 )
@@ -56,6 +58,7 @@ func sandboxNamespaceDefinition() llm.ModelTool {
 		sandboxCreateDefinition(),
 		sandboxDestroyDefinition(),
 		sandboxExecDefinition(),
+		sandboxImportAttachmentDefinition(),
 	)
 }
 
@@ -156,6 +159,26 @@ func sandboxExecDefinition() llm.ModelTool {
 			"required":["command"],
 			"additionalProperties":false
 		}`),
+	}
+}
+
+func sandboxImportAttachmentDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxImportAttachmentName,
+		Description: "Import one user attachment into the active sandbox on demand. Use the attachment ID shown in the user message; the tool returns the sandbox path.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"attachment_id":{
+					"type":"string",
+					"description":"The UUID of an attachment belonging to the current conversation."
+				}
+			},
+			"required":["attachment_id"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
 	}
 }
 

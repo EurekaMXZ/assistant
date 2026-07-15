@@ -77,6 +77,7 @@ type cubeSandbox struct {
 	EnvdVersion     string
 	EnvdAccessToken string
 	Domain          string
+	SDK             *cubesandbox.Sandbox
 }
 
 type cubeCommandOptions struct {
@@ -99,6 +100,7 @@ type cubeRuntimeClient interface {
 	Pause(context.Context, string, time.Duration) error
 	Kill(context.Context, string) error
 	RunCommand(context.Context, *cubeSandbox, string, cubeCommandOptions) (*cubeCommandResult, error)
+	WriteFile(context.Context, *cubeSandbox, string, []byte) error
 }
 
 type cubeSDKClient struct {
@@ -344,6 +346,26 @@ func (r *CubeRuntime) ExecSandboxCommand(ctx context.Context, handle domain.Sand
 	}, nil
 }
 
+func (r *CubeRuntime) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, data []byte, _ string) error {
+	if err := r.validateHandle(handle); err != nil {
+		return err
+	}
+	if strings.TrimSpace(path) == "" {
+		return errors.New("cube sandbox file path is required")
+	}
+	if int64(len(data)) > domain.SandboxFileMaxBytes {
+		return fmt.Errorf("cube sandbox file exceeds %d bytes", domain.SandboxFileMaxBytes)
+	}
+	sandbox, err := r.client.Connect(ctx, handle.RuntimeID)
+	if err != nil {
+		return fmt.Errorf("connect cube sandbox %q for file write: %w", handle.RuntimeID, err)
+	}
+	if err := r.client.WriteFile(ctx, sandbox, path, data); err != nil {
+		return fmt.Errorf("write cube sandbox file %q: %w", path, err)
+	}
+	return nil
+}
+
 func (r *CubeRuntime) validateHandle(handle domain.SandboxHandle) error {
 	if r == nil || r.client == nil {
 		return errors.New("cube sandbox runtime is not configured")
@@ -583,6 +605,13 @@ func (c *cubeSDKClient) RunCommand(ctx context.Context, sandbox *cubeSandbox, co
 	return result, nil
 }
 
+func (c *cubeSDKClient) WriteFile(ctx context.Context, sandbox *cubeSandbox, path string, data []byte) error {
+	if sandbox == nil || sandbox.SDK == nil {
+		return errors.New("cube sandbox file session is not connected")
+	}
+	return sandbox.SDK.Files().Write(ctx, strings.TrimSpace(path), data)
+}
+
 type cubeOutputBuffer struct {
 	buffer    bytes.Buffer
 	limit     int
@@ -728,5 +757,6 @@ func cubeSandboxFromSDK(sandbox *cubesandbox.Sandbox) *cubeSandbox {
 		EnvdVersion:     strings.TrimSpace(sandbox.EnvdVersion),
 		EnvdAccessToken: strings.TrimSpace(sandbox.EnvdAccessToken),
 		Domain:          strings.TrimSpace(sandbox.Domain),
+		SDK:             sandbox,
 	}
 }

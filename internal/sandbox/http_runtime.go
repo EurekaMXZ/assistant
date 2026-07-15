@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,6 +93,42 @@ func (r *HTTPRuntime) ExecSandboxCommand(ctx context.Context, handle domain.Sand
 	return &response, nil
 }
 
+func (r *HTTPRuntime) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("sandbox http runtime is not configured")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("sandbox file path is required")
+	}
+	if int64(len(data)) > domain.SandboxFileMaxBytes {
+		return fmt.Errorf("sandbox file exceeds %d bytes", domain.SandboxFileMaxBytes)
+	}
+	target := r.baseURL + "/sandboxes/" + pathEscape(handle.RuntimeID) + "/files?path=" + url.QueryEscape(path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create sandbox bridge file request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if r.token != "" {
+		req.Header.Set("Authorization", "Bearer "+r.token)
+	}
+	if requestKey = strings.TrimSpace(requestKey); requestKey != "" {
+		req.Header.Set("Idempotency-Key", requestKey)
+	}
+	res, err := r.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send sandbox bridge file request: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= http.StatusBadRequest {
+		message := readBridgeError(res)
+		return errors.New(message)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	return nil
+}
+
 func (r *HTTPRuntime) doJSON(ctx context.Context, method string, path string, input any, output any, requestKey string) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("sandbox http runtime is not configured")
@@ -128,14 +165,7 @@ func (r *HTTPRuntime) doJSON(ctx context.Context, method string, path string, in
 	defer res.Body.Close()
 
 	if res.StatusCode >= http.StatusBadRequest {
-		message := fmt.Sprintf("sandbox bridge request failed: status=%d", res.StatusCode)
-		var payload struct {
-			Error string `json:"error"`
-		}
-		if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&payload) == nil && strings.TrimSpace(payload.Error) != "" {
-			message = payload.Error
-		}
-		return fmt.Errorf("%s", message)
+		return errors.New(readBridgeError(res))
 	}
 	if output == nil || res.StatusCode == http.StatusNoContent {
 		return nil
@@ -144,6 +174,17 @@ func (r *HTTPRuntime) doJSON(ctx context.Context, method string, path string, in
 		return fmt.Errorf("decode sandbox bridge response: %w", err)
 	}
 	return nil
+}
+
+func readBridgeError(res *http.Response) string {
+	message := fmt.Sprintf("sandbox bridge request failed: status=%d", res.StatusCode)
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&payload) == nil && strings.TrimSpace(payload.Error) != "" {
+		return strings.TrimSpace(payload.Error)
+	}
+	return message
 }
 
 func pathEscape(value string) string {

@@ -199,8 +199,8 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 	if !strings.Contains(raw, `"type":"input_image"`) || !strings.Contains(raw, `data:image/png;base64,`) {
 		t.Fatalf("expected image payload, got %s", raw)
 	}
-	if !strings.Contains(raw, `brief.pdf`) || !strings.Contains(raw, `not available for direct model inspection yet`) {
-		t.Fatalf("expected unavailable attachment note, got %s", raw)
+	if !strings.Contains(raw, `brief.pdf`) || !strings.Contains(raw, `attachment_id=att-pdf`) || !strings.Contains(raw, `sandbox.import_attachment`) {
+		t.Fatalf("expected sandbox attachment manifest, got %s", raw)
 	}
 	if !strings.Contains(raw, `"text":"Check this"`) {
 		t.Fatalf("expected original text in payload, got %s", raw)

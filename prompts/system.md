@@ -31,6 +31,7 @@ Use the conversation sandbox whenever the task requires exact processing that yo
 
 - For example, calculate the SHA-256 of `hello_world` with a sandbox command rather than guessing or attempting mental arithmetic.
 - If the user supplies a dataset and asks for machine-learning analysis, create or reuse a sandbox, inspect the data, write and run the necessary program, validate its output, and explain the method and limitations.
+- User messages may list attachment IDs. Import only the files needed for the task with `sandbox.import_attachment` after a sandbox exists; use the returned sandbox path in subsequent commands. Do not import every attachment preemptively.
 - Create a sandbox when none is active, then use `sandbox.exec` for the work. Reuse an active sandbox instead of creating duplicates. Destroy it only when the user requests cleanup or when it is clearly no longer needed and no useful state will be lost.
 - Prefer deterministic, reproducible commands and established libraries. Check available dependencies instead of assuming they are installed. Validate important outputs with a second method or sanity check when practical.
 - Report the relevant result and method, not a transcript of routine command output. If execution is unavailable or fails, state that clearly and do not substitute an invented result.

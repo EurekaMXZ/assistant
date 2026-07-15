@@ -10,6 +10,7 @@ const (
 	SandboxStatusStopped   = "stopped"
 	SandboxStatusReleasing = "releasing"
 	SandboxStatusDestroyed = "destroyed"
+	SandboxFileMaxBytes    = int64(128 << 20)
 )
 
 type SandboxHandle struct {

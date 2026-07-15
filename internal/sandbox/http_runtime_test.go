@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,6 +45,15 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 				t.Fatalf("unexpected exec request: %#v", request)
 			}
 			_ = json.NewEncoder(w).Encode(domain.SandboxCommandResult{RuntimeID: "runtime-1", Command: "echo", Output: "hello\n"})
+		case "PUT /sandboxes/runtime-1/files":
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read file request: %v", err)
+			}
+			if r.URL.Query().Get("path") != "/workspace/input file.txt" || string(data) != "file-data" || r.Header.Get("Content-Type") != "application/octet-stream" {
+				t.Fatalf("unexpected file request: path=%q data=%q content-type=%q", r.URL.Query().Get("path"), data, r.Header.Get("Content-Type"))
+			}
+			w.WriteHeader(http.StatusNoContent)
 		case "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume":
 			_ = json.NewEncoder(w).Encode(domain.SandboxHandle{Provider: "firecracker", RuntimeID: "runtime-1"})
 		case "DELETE /sandboxes/runtime-1":
@@ -80,6 +90,9 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 	if result.Output != "hello\n" {
 		t.Fatalf("Output = %q, want hello", result.Output)
 	}
+	if err := runtime.WriteSandboxFile(context.Background(), *handle, "/workspace/input file.txt", []byte("file-data"), "write-key"); err != nil {
+		t.Fatalf("write sandbox file: %v", err)
+	}
 
 	destroyed, err := runtime.DestroySandbox(context.Background(), *handle, "destroy-key")
 	if err != nil {
@@ -89,7 +102,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 		t.Fatalf("unexpected destroyed handle: %#v", destroyed)
 	}
 
-	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "DELETE /sandboxes/runtime-1"}
+	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "PUT /sandboxes/runtime-1/files", "DELETE /sandboxes/runtime-1"}
 	if strings.Join(calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}

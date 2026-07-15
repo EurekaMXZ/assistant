@@ -14,6 +14,7 @@ type trackingSandboxRuntime struct {
 	createCalls  int
 	destroyCalls int
 	execCalls    int
+	writeCalls   int
 }
 
 func (r *trackingSandboxRuntime) CreateSandbox(context.Context, string, string) (*domain.SandboxHandle, error) {
@@ -39,6 +40,11 @@ func (r *trackingSandboxRuntime) ExecSandboxCommand(_ context.Context, handle do
 	return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID}, nil
 }
 
+func (r *trackingSandboxRuntime) WriteSandboxFile(context.Context, domain.SandboxHandle, string, []byte, string) error {
+	r.writeCalls++
+	return nil
+}
+
 func TestManagerCreatesAndRoutesFirecrackerHandles(t *testing.T) {
 	firecracker := &trackingSandboxRuntime{provider: ProviderFirecracker}
 	manager, err := NewManager(ProviderFirecracker, map[string]tool.SandboxManager{
@@ -60,10 +66,13 @@ func TestManagerCreatesAndRoutesFirecrackerHandles(t *testing.T) {
 	if _, err := manager.ExecSandboxCommand(context.Background(), firecrackerHandle, domain.SandboxCommandRequest{Command: "pwd"}, "exec-key"); err != nil {
 		t.Fatalf("exec firecracker sandbox: %v", err)
 	}
+	if err := manager.WriteSandboxFile(context.Background(), firecrackerHandle, "/workspace/input", []byte("data"), "write-key"); err != nil {
+		t.Fatalf("write firecracker sandbox file: %v", err)
+	}
 	if _, err := manager.DestroySandbox(context.Background(), firecrackerHandle, "destroy-key"); err != nil {
 		t.Fatalf("destroy firecracker sandbox: %v", err)
 	}
-	if firecracker.execCalls != 1 || firecracker.destroyCalls != 1 {
+	if firecracker.execCalls != 1 || firecracker.writeCalls != 1 || firecracker.destroyCalls != 1 {
 		t.Fatalf("unexpected persisted handle routing: %#v", firecracker)
 	}
 }

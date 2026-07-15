@@ -126,6 +126,14 @@ func (m *Manager) ExecSandboxCommand(ctx context.Context, handle domain.SandboxH
 	return runtime.ExecSandboxCommand(ctx, handle, request, requestKey)
 }
 
+func (m *Manager) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error {
+	runtime, err := m.runtime(handle.Provider)
+	if err != nil {
+		return err
+	}
+	return runtime.WriteSandboxFile(ctx, handle, path, data, requestKey)
+}
+
 func (m *Manager) runtime(provider string) (tool.SandboxManager, error) {
 	if m == nil {
 		return nil, fmt.Errorf("sandbox manager is not configured")

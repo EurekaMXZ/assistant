@@ -105,10 +105,10 @@ func TestStaticCatalogFiltersSandboxToolsByScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools with sandbox exec enabled: %v", err)
 	}
-	if len(withExec) != 1 || withExec[0].Type != llm.ModelToolTypeNamespace || len(withExec[0].Tools) != 2 {
+	if len(withExec) != 1 || withExec[0].Type != llm.ModelToolTypeNamespace || len(withExec[0].Tools) != 3 {
 		t.Fatalf("unexpected tools with sandbox exec enabled: %#v", withExec)
 	}
-	if withExec[0].Tools[0].Name != sandboxDestroyName || withExec[0].Tools[1].Name != sandboxExecName {
+	if withExec[0].Tools[0].Name != sandboxDestroyName || withExec[0].Tools[1].Name != sandboxExecName || withExec[0].Tools[2].Name != sandboxImportAttachmentName {
 		t.Fatalf("unexpected sandbox children with exec enabled: %#v", withExec[0].Tools)
 	}
 }
