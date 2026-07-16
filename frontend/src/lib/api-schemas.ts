@@ -365,9 +365,16 @@ export const turnStreamEventSchemas = {
 
 export type KnownTurnStreamEvent = keyof typeof turnStreamEventSchemas;
 
-export function parseTurnStreamFrame(event: string, data: unknown) {
+export type TurnStreamFrame = {
+  [Event in KnownTurnStreamEvent]: {
+    event: Event;
+    data: z.infer<(typeof turnStreamEventSchemas)[Event]>;
+  };
+}[KnownTurnStreamEvent];
+
+export function parseTurnStreamFrame(event: string, data: unknown): TurnStreamFrame | null {
   const schema = turnStreamEventSchemas[event as KnownTurnStreamEvent];
   if (!schema) return null;
   const parsed = schema.safeParse(data);
-  return parsed.success ? { event, data: parsed.data } : null;
+  return parsed.success ? ({ event, data: parsed.data } as TurnStreamFrame) : null;
 }

@@ -7,13 +7,13 @@ import {
   runTurnStreamController,
   type TurnStreamConnectionState,
 } from "@/lib/turn-stream-controller";
-import type { SseFrame } from "@/lib/types";
+import type { TurnStreamFrame } from "@/lib/api-schemas";
 import { toast } from "sonner";
 
 interface UseTurnStreamOptions {
   conversationId: string;
   onCompleted: () => Promise<void>;
-  onEvent: (frame: SseFrame, turnId: string) => void;
+  onEvent: (frame: TurnStreamFrame, turnId: string) => void;
   onFinished: (turnId: string) => void;
 }
 

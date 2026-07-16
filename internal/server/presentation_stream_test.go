@@ -10,10 +10,10 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/stream"
 )
 
-func TestPresentationEventRegistryDropsUnregisteredEvents(t *testing.T) {
+func TestPresentationEventChainDropsUnregisteredEvents(t *testing.T) {
 	items := newPresentationItemRegistry()
 	state := newPresentationStreamState(&domain.Turn{ID: "turn-1", ConversationID: "conv-1"}, items, nil)
-	frames, err := newPresentationEventRegistry().Filter(state, stream.Event{
+	frames, err := newPresentationEventChain().Dispatch(state, stream.Event{
 		Type:    "response.function_call_arguments.done",
 		Payload: `{"arguments":"secret"}`,
 	}, time.Now())
@@ -93,7 +93,7 @@ func TestPresentationOutputDeclarationDoesNotConsumeDeltaSequence(t *testing.T) 
 		newPresentationItemRegistry(),
 		nil,
 	)
-	frames, err := newPresentationEventRegistry().Filter(state, stream.Event{
+	frames, err := newPresentationEventChain().Dispatch(state, stream.Event{
 		Type:    responseEventOutputTextDelta,
 		Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":7,"delta":"#"}`,
 	}, time.Now())
@@ -116,7 +116,7 @@ func TestPresentationOutputDeclarationDoesNotConsumeDeltaSequence(t *testing.T) 
 		t.Fatalf("item.delta lost sequence: %#v", frames[1].Payload)
 	}
 
-	frames, err = newPresentationEventRegistry().Filter(state, stream.Event{
+	frames, err = newPresentationEventChain().Dispatch(state, stream.Event{
 		Type:    responseEventOutputTextDelta,
 		Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":8,"delta":"\n\n"}`,
 	}, time.Now())
@@ -145,6 +145,35 @@ func TestPresentationOutputDeclarationDoesNotConsumeDeltaSequence(t *testing.T) 
 	}
 }
 
+func TestPresentationEventChainProcessesEveryOutputDelta(t *testing.T) {
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		newPresentationItemRegistry(),
+		nil,
+	)
+	chain := newPresentationEventChain()
+	events := []stream.Event{
+		{Type: responseEventOutputTextDelta, Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":1,"delta":"Hel"}`},
+		{Type: responseEventOutputTextDelta, Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":2,"delta":"lo"}`},
+	}
+
+	var output string
+	for _, event := range events {
+		frames, err := chain.Dispatch(state, event, time.Now())
+		if err != nil {
+			t.Fatalf("dispatch delta: %v", err)
+		}
+		for _, frame := range frames {
+			if frame.Event == streamUIEventItemDelta {
+				output += frame.Payload.(TurnStreamItemDelta).Delta
+			}
+		}
+	}
+	if output != "Hello" {
+		t.Fatalf("streamed output = %q, want every delta to be processed", output)
+	}
+}
+
 func TestPresentationStreamDropsEventsAlreadyIncludedInSnapshot(t *testing.T) {
 	const responseID = "response-1"
 	const itemID = "item-1"
@@ -158,9 +187,9 @@ func TestPresentationStreamDropsEventsAlreadyIncludedInSnapshot(t *testing.T) {
 			Metadata: map[string]any{"sequence_number": 10},
 		}},
 	)
-	registry := newPresentationEventRegistry()
+	chain := newPresentationEventChain()
 
-	frames, err := registry.Filter(state, stream.Event{
+	frames, err := chain.Dispatch(state, stream.Event{
 		Type:    "response.output_text.delta",
 		Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":10,"delta":"duplicate"}`,
 	}, time.Now())
@@ -171,7 +200,7 @@ func TestPresentationStreamDropsEventsAlreadyIncludedInSnapshot(t *testing.T) {
 		t.Fatalf("snapshot duplicate produced presentation frames: %#v", frames)
 	}
 
-	frames, err = registry.Filter(state, stream.Event{
+	frames, err = chain.Dispatch(state, stream.Event{
 		Type:    "response.output_text.delta",
 		Payload: `{"response_id":"response-1","item_id":"item-1","sequence_number":11,"delta":"new"}`,
 	}, time.Now())
@@ -193,9 +222,9 @@ func TestPresentationStreamDropsUnsequencedEventsIncludedInSnapshotByEventIndex(
 		[]TurnTimelineItem{{ID: presentationItemID, Type: turnTimelineItemOutputText, ContentText: "snapshot"}},
 	)
 	state.snapshotEventIndex = 42
-	registry := newPresentationEventRegistry()
+	chain := newPresentationEventChain()
 
-	frames, err := registry.Filter(state, stream.Event{
+	frames, err := chain.Dispatch(state, stream.Event{
 		Type:       responseEventOutputTextDelta,
 		EventIndex: 42,
 		Payload:    `{"response_id":"response-1","item_id":"item-1","delta":"duplicate"}`,
@@ -207,7 +236,7 @@ func TestPresentationStreamDropsUnsequencedEventsIncludedInSnapshotByEventIndex(
 		t.Fatalf("snapshot event-index duplicate produced frames: %#v", frames)
 	}
 
-	frames, err = registry.Filter(state, stream.Event{
+	frames, err = chain.Dispatch(state, stream.Event{
 		Type:       responseEventOutputTextDelta,
 		EventIndex: 43,
 		Payload:    `{"response_id":"response-1","item_id":"item-1","delta":"new"}`,
@@ -239,7 +268,7 @@ func TestPresentationStreamKeepsTavilyPresentationAfterRefresh(t *testing.T) {
 	)
 	state.snapshotEventIndex = 42
 
-	frames, err := newPresentationEventRegistry().Filter(state, stream.Event{
+	frames, err := newPresentationEventChain().Dispatch(state, stream.Event{
 		Type:       stream.EventToolCompleted,
 		EventIndex: 43,
 		ToolName:   "internet.extract",
@@ -263,9 +292,9 @@ func TestPresentationProviderFailureWaitsForDurableFailure(t *testing.T) {
 		newPresentationItemRegistry(),
 		nil,
 	)
-	registry := newPresentationEventRegistry()
+	chain := newPresentationEventChain()
 
-	frames, err := registry.Filter(state, stream.Event{
+	frames, err := chain.Dispatch(state, stream.Event{
 		Type:       stream.EventResponseFailed,
 		ResponseID: "response-1",
 		Payload:    `{"error":{"message":"provider secret"}}`,
@@ -285,7 +314,7 @@ func TestPresentationProviderFailureWaitsForDurableFailure(t *testing.T) {
 		t.Fatalf("provider failure leaked raw error: %s", encoded)
 	}
 
-	frames, err = registry.Filter(state, stream.Event{
+	frames, err = chain.Dispatch(state, stream.Event{
 		Type:       stream.EventResponseFailed,
 		ResponseID: "response-1",
 		ErrorCode:  domain.TurnErrorUpstreamRequestFailed,
@@ -305,7 +334,7 @@ func TestPresentationStreamMatchesCompressedCompletedOutputToStreamedItem(t *tes
 		newPresentationItemRegistry(),
 		nil,
 	)
-	registry := newPresentationEventRegistry()
+	chain := newPresentationEventChain()
 	events := []stream.Event{
 		{Type: stream.EventResponseCreated, Payload: `{"type":"response.created","response":{"id":"resp-1"}}`},
 		{Type: "response.output_item.added", Payload: `{"type":"response.output_item.added","output_index":0,"item":{"id":"rs-1","type":"reasoning"}}`},
@@ -316,7 +345,7 @@ func TestPresentationStreamMatchesCompressedCompletedOutputToStreamedItem(t *tes
 	var doneIDs []string
 	var phaseEnrichment *TurnTimelineItem
 	for _, event := range events {
-		frames, err := registry.Filter(state, event, time.Now())
+		frames, err := chain.Dispatch(state, event, time.Now())
 		if err != nil {
 			t.Fatalf("filter %s: %v", event.Type, err)
 		}
@@ -350,8 +379,8 @@ func TestPresentationReasoningDoneEmitsOneItemPerTitleParagraph(t *testing.T) {
 		newPresentationItemRegistry(),
 		nil,
 	)
-	registry := newPresentationEventRegistry()
-	_, err := registry.Filter(state, stream.Event{
+	chain := newPresentationEventChain()
+	_, err := chain.Dispatch(state, stream.Event{
 		Type:    stream.EventResponseCreated,
 		Payload: `{"type":"response.created","response":{"id":"resp-1"}}`,
 	}, time.Now())
@@ -359,7 +388,7 @@ func TestPresentationReasoningDoneEmitsOneItemPerTitleParagraph(t *testing.T) {
 		t.Fatalf("filter response.created: %v", err)
 	}
 
-	frames, err := registry.Filter(state, stream.Event{
+	frames, err := chain.Dispatch(state, stream.Event{
 		Type: "response.reasoning_summary_text.done",
 		Payload: `{"type":"response.reasoning_summary_text.done","item_id":"rs-1","output_index":0,"summary_index":0,"sequence_number":5,` +
 			`"text":"**First title**\n\nFirst body.\n\n**Second title**\n\nSecond body."}`,

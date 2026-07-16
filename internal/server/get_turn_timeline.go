@@ -706,7 +706,7 @@ func fallbackToolCallMetadata(call domain.ToolCallRecord) map[string]any {
 	return compactMetadata(map[string]any{
 		"tool_call_record_id": call.ID,
 		"call_id":             call.CallID,
-		"tool_name":           call.ToolName,
+		"tool_name":           stableTimelineToolTitle(call.Namespace, call.ToolName),
 		"error":               strings.TrimSpace(call.ErrorMessage),
 	})
 }

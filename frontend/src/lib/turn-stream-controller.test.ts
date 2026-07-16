@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TurnStreamFrame } from "./api-schemas";
 import { runTurnStreamController } from "./turn-stream-controller";
-import type { SseFrame, Turn } from "./types";
+import type { Turn } from "./types";
 
-async function* frames(values: SseFrame[]) {
+async function* frames(values: TurnStreamFrame[]) {
   for (const value of values) yield value;
 }
 
@@ -36,7 +37,7 @@ describe("turn stream reconnect", () => {
   });
 
   it("reconciles terminal turn state after reconnect exhaustion", async () => {
-    const events: SseFrame[] = [];
+    const events: TurnStreamFrame[] = [];
     const result = await runTurnStreamController({
       turnId: "turn-1",
       signal: new AbortController().signal,

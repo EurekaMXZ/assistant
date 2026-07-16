@@ -71,10 +71,10 @@ func TestTimelineReducerDurableAndLiveContract(t *testing.T) {
 			items := newPresentationItemRegistry()
 			want := items.FilterAll(durable)
 			state := newPresentationStreamState(&domain.Turn{ID: "turn-contract", ConversationID: "conversation-contract"}, items, nil)
-			registry := newPresentationEventRegistry()
+			chain := newPresentationEventChain()
 			live := newContractLiveTimeline()
 			for index, event := range tt.events {
-				frames, err := registry.Filter(state, event, now.Add(time.Duration(index)*time.Millisecond))
+				frames, err := chain.Dispatch(state, event, now.Add(time.Duration(index)*time.Millisecond))
 				if err != nil {
 					t.Fatalf("live event %d (%s): %v", index, event.Type, err)
 				}

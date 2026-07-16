@@ -19,22 +19,71 @@ type presentationFrame struct {
 	Terminal bool
 }
 
-type presentationEventRegistry struct{}
-
-func newPresentationEventRegistry() *presentationEventRegistry {
-	return &presentationEventRegistry{}
+type presentationEventHandler interface {
+	EventTypes() []string
+	Handle(*presentationStreamState, stream.Event, time.Time) ([]presentationFrame, error)
 }
 
-func (r *presentationEventRegistry) Filter(state *presentationStreamState, event stream.Event, createdAt time.Time) ([]presentationFrame, error) {
-	if r == nil || state == nil {
+type presentationEventChain struct {
+	handlers []presentationEventHandler
+}
+
+func newPresentationEventChain() *presentationEventChain {
+	handlers := []presentationEventHandler{
+		conversationUpdatedPresentationHandler{},
+		timelinePresentationHandler{eventTypes: newDefaultTimelineEventChain().EventTypes()},
+	}
+	registered := map[string]struct{}{}
+	for _, handler := range handlers {
+		for _, eventType := range handler.EventTypes() {
+			eventType = strings.TrimSpace(eventType)
+			if eventType == "" {
+				panic("presentation event handler registered an empty event type")
+			}
+			if _, exists := registered[eventType]; exists {
+				panic("presentation event handler registered duplicate event type: " + eventType)
+			}
+			registered[eventType] = struct{}{}
+		}
+	}
+	return &presentationEventChain{handlers: handlers}
+}
+
+func (c *presentationEventChain) Dispatch(state *presentationStreamState, event stream.Event, createdAt time.Time) ([]presentationFrame, error) {
+	if c == nil || state == nil {
 		return nil, nil
 	}
-	if event.Type == stream.EventConversationUpdated {
-		return handlePresentationConversationUpdated(state, event, createdAt)
+	eventType := strings.TrimSpace(event.Type)
+	for _, handler := range c.handlers {
+		for _, registered := range handler.EventTypes() {
+			if strings.TrimSpace(registered) != eventType {
+				continue
+			}
+			return handler.Handle(state, event, createdAt)
+		}
 	}
-	if !isTimelineReducerEvent(event.Type) {
-		return nil, nil
-	}
+	return nil, nil
+}
+
+type conversationUpdatedPresentationHandler struct{}
+
+func (conversationUpdatedPresentationHandler) EventTypes() []string {
+	return []string{stream.EventConversationUpdated}
+}
+
+func (conversationUpdatedPresentationHandler) Handle(state *presentationStreamState, event stream.Event, createdAt time.Time) ([]presentationFrame, error) {
+	return handlePresentationConversationUpdated(state, event, createdAt)
+}
+
+type timelinePresentationHandler struct {
+	eventTypes []string
+}
+
+func (h timelinePresentationHandler) EventTypes() []string {
+	return h.eventTypes
+}
+
+func (timelinePresentationHandler) Handle(state *presentationStreamState, event stream.Event, createdAt time.Time) ([]presentationFrame, error) {
 	if event.EventIndex > 0 && event.EventIndex <= state.snapshotEventIndex {
 		return nil, nil
 	}

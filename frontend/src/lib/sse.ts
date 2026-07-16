@@ -1,6 +1,5 @@
 import { ApiError, handleSessionUnauthorized } from "./api";
-import type { SseFrame } from "./types";
-import { parseTurnStreamFrame, turnStreamEventSchemas } from "./api-schemas";
+import { parseTurnStreamFrame, turnStreamEventSchemas, type TurnStreamFrame } from "./api-schemas";
 
 export class SseValidationError extends Error {
   constructor(event: string) {
@@ -9,7 +8,7 @@ export class SseValidationError extends Error {
   }
 }
 
-export function parseSseFrame(frame: string): SseFrame | null {
+export function parseSseFrame(frame: string): TurnStreamFrame | null {
   const lines = frame.replace(/\r\n/g, "\n").split("\n");
   let event = "message";
   const dataLines: string[] = [];
@@ -37,7 +36,7 @@ export async function* streamEvents(
   url: string,
   token: string | null,
   signal?: AbortSignal,
-): AsyncGenerator<SseFrame, void, unknown> {
+): AsyncGenerator<TurnStreamFrame, void, unknown> {
   const headers: Record<string, string> = {
     Accept: "text/event-stream",
   };

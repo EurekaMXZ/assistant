@@ -1,4 +1,5 @@
-import type { SseFrame, Turn, TurnStreamDone } from "./types";
+import type { TurnStreamFrame } from "./api-schemas";
+import type { Turn, TurnStreamDone } from "./types";
 
 export type TurnStreamConnectionState =
   "connecting" | "streaming" | "reconnecting" | "settling" | "completed" | "failed";
@@ -6,9 +7,9 @@ export type TurnStreamConnectionState =
 export interface TurnStreamControllerOptions {
   turnId: string;
   signal: AbortSignal;
-  openStream: (signal: AbortSignal) => AsyncIterable<SseFrame>;
+  openStream: (signal: AbortSignal) => AsyncIterable<TurnStreamFrame>;
   getTurn: (turnId: string) => Promise<Turn>;
-  onEvent: (frame: SseFrame) => void;
+  onEvent: (frame: TurnStreamFrame) => void;
   onStateChange?: (state: TurnStreamConnectionState) => void;
   wait?: (delayMs: number, signal: AbortSignal) => Promise<void>;
   maxReconnects?: number;
@@ -57,7 +58,7 @@ export async function runTurnStreamController({
       for await (const frame of openStream(signal)) {
         onStateChange?.("streaming");
         onEvent(frame);
-        if (frame.event === "turn.done") terminal = frame.data as TurnStreamDone;
+        if (frame.event === "turn.done") terminal = frame.data;
       }
       if (terminal) {
         onStateChange?.(terminal.status === "completed" ? "completed" : "failed");

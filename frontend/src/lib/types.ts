@@ -375,8 +375,3 @@ export interface TurnStreamDone {
   error_code?: string;
   error?: string;
 }
-
-export interface SseFrame<T = unknown> {
-  event: string;
-  data: T;
-}

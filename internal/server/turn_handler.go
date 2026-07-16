@@ -124,7 +124,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 	}
 
 	itemRegistry := newPresentationItemRegistry()
-	eventRegistry := newPresentationEventRegistry()
+	eventChain := newPresentationEventChain()
 	snapshot, lastResponseID, outputSlots, lastEventIndex, err := a.loadTurnStreamSnapshot(c.Request.Context(), userID, turn, itemRegistry)
 	if err != nil {
 		writeAPIError(c, err)
@@ -201,7 +201,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 				return
 			}
 
-			done, err := a.writeStreamUIEvents(c.Writer, presentationState, eventRegistry, message, time.Now().UTC())
+			done, err := a.writeStreamUIEvents(c.Writer, presentationState, eventChain, message, time.Now().UTC())
 			if err != nil {
 				return
 			}
@@ -317,8 +317,8 @@ func lastTimelineResponseID(items []TurnTimelineItem, fallback string) string {
 	return responseID
 }
 
-func (a *API) writeStreamUIEvents(w http.ResponseWriter, state *presentationStreamState, registry *presentationEventRegistry, event stream.Event, createdAt time.Time) (bool, error) {
-	frames, err := registry.Filter(state, event, createdAt)
+func (a *API) writeStreamUIEvents(w http.ResponseWriter, state *presentationStreamState, chain *presentationEventChain, event stream.Event, createdAt time.Time) (bool, error) {
+	frames, err := chain.Dispatch(state, event, createdAt)
 	if err != nil {
 		return false, err
 	}

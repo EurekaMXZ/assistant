@@ -186,7 +186,7 @@ func internetSearchDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        internetSearchName,
-		Description: "First-stage source discovery only. Returns candidate URLs and short snippets, not sufficient page evidence. Do not answer from this output alone: after the final search, always call internet.extract on the smallest relevant set of returned URLs.",
+		Description: "First-stage source discovery only. Returns candidate URLs and short snippets, not sufficient page evidence. Do not answer from this output alone: after the final search, always call internet.extract on the smallest relevant set of returned URLs. For a single-day date filter, set start_date to that day and end_date to the following day.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -213,12 +213,14 @@ func internetSearchDefinition() llm.ModelTool {
 				},
 				"start_date":{
 					"type":"string",
-					"description":"Explicit lower date bound in YYYY-MM-DD. If start_date or end_date is set, omit time_range. May be used alone or with end_date.",
+					"pattern":"^$|^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$",
+					"description":"Inclusive lower date bound in YYYY-MM-DD. If start_date or end_date is set, omit time_range. When both dates are set, start_date must be earlier than end_date. For a single day, use that date here and the following date as end_date.",
 					"default":""
 				},
 				"end_date":{
 					"type":"string",
-					"description":"Explicit upper date bound in YYYY-MM-DD. If start_date or end_date is set, omit time_range. May be used alone or with start_date.",
+					"pattern":"^$|^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$",
+					"description":"Exclusive upper date bound in YYYY-MM-DD. If start_date or end_date is set, omit time_range. When both dates are set, end_date must be later than start_date and must not equal it.",
 					"default":""
 				},
 				"max_results":{

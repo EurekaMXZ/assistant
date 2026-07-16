@@ -82,6 +82,7 @@ func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 	for _, name := range []string{"time_range", "start_date", "end_date"} {
 		var property struct {
 			Description string `json:"description"`
+			Pattern     string `json:"pattern"`
 		}
 		if err := json.Unmarshal(searchSchema.Properties[name], &property); err != nil {
 			t.Fatalf("decode %s schema: %v", name, err)
@@ -91,6 +92,15 @@ func TestInternetToolsDescribeSearchThenExtractWorkflow(t *testing.T) {
 		}
 		if name != "time_range" && !strings.Contains(property.Description, "omit time_range") {
 			t.Fatalf("%s does not explain date-filter exclusivity: %q", name, property.Description)
+		}
+		if name != "time_range" && property.Pattern == "" {
+			t.Fatalf("%s does not constrain its date format", name)
+		}
+		if name == "start_date" && !strings.Contains(property.Description, "following date") {
+			t.Fatalf("start_date does not explain single-day ranges: %q", property.Description)
+		}
+		if name == "end_date" && (!strings.Contains(property.Description, "later than start_date") || !strings.Contains(property.Description, "must not equal")) {
+			t.Fatalf("end_date does not explain ordered ranges: %q", property.Description)
 		}
 	}
 

@@ -97,6 +97,7 @@ func (r *responseOutputSlotResolver) resolve(responseID string, itemType string,
 
 type timelineReducer struct {
 	turn              *domain.Turn
+	eventChain        *timelineEventChain
 	items             []TurnTimelineItem
 	itemIndexes       map[string]int
 	lastSequences     map[string]int
@@ -110,34 +111,10 @@ type timelineReducer struct {
 	hasAssistantText  bool
 }
 
-func isTimelineReducerEvent(eventType string) bool {
-	switch strings.TrimSpace(eventType) {
-	case stream.EventResponseStarted,
-		stream.EventResponseCreated,
-		"response.output_item.added",
-		"response.output_item.done",
-		responseEventOutputTextDelta,
-		responseEventOutputTextDone,
-		responseEventReasoningPartAdded,
-		responseEventReasoningTextDelta,
-		responseEventReasoningTextDone,
-		"response.reasoning_summary_part.done",
-		stream.EventReasoningSummary,
-		stream.EventToolStarted,
-		stream.EventToolCompleted,
-		stream.EventToolFailed,
-		stream.EventResponseCompleted,
-		stream.EventResponseFailed,
-		stream.EventTurnDone:
-		return true
-	default:
-		return false
-	}
-}
-
 func newTimelineReducer(turn *domain.Turn, snapshot []TurnTimelineItem, reasoning []reasoningTimelineItem) *timelineReducer {
 	r := &timelineReducer{
 		turn:              turn,
+		eventChain:        newDefaultTimelineEventChain(),
 		items:             append([]TurnTimelineItem(nil), snapshot...),
 		itemIndexes:       make(map[string]int, len(snapshot)),
 		lastSequences:     make(map[string]int, len(snapshot)),
@@ -182,49 +159,8 @@ func (r *timelineReducer) responseID(candidate string) string {
 
 func (r *timelineReducer) Apply(input normalizedTimelineEvent) ([]timelineMutation, error) {
 	r.eventIndex++
-	event := input.Event
-	switch event.Type {
-	case stream.EventResponseStarted:
-		return nil, nil
-	case stream.EventResponseCreated:
-		payload, _ := decodeResponseStreamPayload(event)
-		responseID := payload.ResponseID
-		if payload.Response != nil && strings.TrimSpace(payload.Response.ID) != "" {
-			responseID = payload.Response.ID
-		}
-		responseID = r.responseID(responseID)
-		return r.appendReasoningForResponse(responseID, true), nil
-	case "response.output_item.added", "response.output_item.done":
-		payload, ok := decodeResponseStreamPayload(event)
-		if ok && payload.Item != nil {
-			r.outputSlots.track(r.responseID(payload.ResponseID), payload.OutputIndex, *payload.Item)
-		}
-		return nil, nil
-	case responseEventOutputTextDelta:
-		return r.reduceOutputText(event, input.CreatedAt, true)
-	case responseEventOutputTextDone:
-		return r.reduceOutputText(event, input.CreatedAt, false)
-	case responseEventReasoningPartAdded:
-		return r.reduceReasoning(event, input.CreatedAt, "added")
-	case responseEventReasoningTextDelta:
-		return r.reduceReasoning(event, input.CreatedAt, "delta")
-	case responseEventReasoningTextDone:
-		return r.reduceReasoning(event, input.CreatedAt, "done")
-	case "response.reasoning_summary_part.done":
-		return r.reduceReasoning(event, input.CreatedAt, "part_done")
-	case stream.EventReasoningSummary:
-		return r.reduceReasoningSummary(event, input.CreatedAt)
-	case stream.EventToolStarted, stream.EventToolCompleted, stream.EventToolFailed:
-		return r.reduceTool(event, input.CreatedAt)
-	case stream.EventResponseCompleted:
-		return r.reduceResponseCompleted(event, input.CreatedAt)
-	case stream.EventResponseFailed:
-		return r.reduceResponseFailed(event, input.CreatedAt), nil
-	case stream.EventTurnDone:
-		return []timelineMutation{{Kind: timelineMutationTerminal, Terminal: r.turnDone(domain.TurnStatusCompleted, "", "")}}, nil
-	default:
-		return nil, nil
-	}
+	mutations, _, err := r.eventChain.Handle(r, input)
+	return mutations, err
 }
 
 func (r *timelineReducer) FinalItems() []TurnTimelineItem {

@@ -1,11 +1,10 @@
 import type {
-  SseFrame,
   TimelineItem,
   TurnStreamDone,
   TurnStreamItemDelta,
   TurnStreamSnapshot,
 } from "./types";
-import { parseTurnStreamFrame } from "./api-schemas";
+import type { KnownTurnStreamEvent, TurnStreamFrame } from "./api-schemas";
 
 export interface ConversationPresentationUpdate {
   conversation_id: string;
@@ -21,75 +20,70 @@ export interface TurnStreamDispatchContext {
   onTurnDone(done: TurnStreamDone): void;
 }
 
-type TurnStreamEventHandler = (context: TurnStreamDispatchContext, data: unknown) => void;
+type TurnStreamEventData<Event extends KnownTurnStreamEvent> = Extract<
+  TurnStreamFrame,
+  { event: Event }
+>["data"];
 
-class TurnStreamEventRegistry {
-  private readonly handlers = new Map<string, TurnStreamEventHandler>();
+export interface TurnStreamEventHandler {
+  readonly eventTypes: readonly KnownTurnStreamEvent[];
+  handle(context: TurnStreamDispatchContext, data: unknown): void;
+}
 
-  register(event: string, handler: TurnStreamEventHandler) {
-    this.handlers.set(event, handler);
-    return this;
+export function createTurnStreamEventHandler<Event extends KnownTurnStreamEvent>(
+  eventType: Event,
+  handle: (context: TurnStreamDispatchContext, data: TurnStreamEventData<Event>) => void,
+): TurnStreamEventHandler {
+  return {
+    eventTypes: [eventType],
+    handle(context, data) {
+      handle(context, data as TurnStreamEventData<Event>);
+    },
+  };
+}
+
+export class TurnStreamEventChain {
+  private readonly handlers: readonly TurnStreamEventHandler[];
+
+  constructor(handlers: readonly TurnStreamEventHandler[]) {
+    const registered = new Set<KnownTurnStreamEvent>();
+    for (const handler of handlers) {
+      for (const eventType of handler.eventTypes) {
+        if (registered.has(eventType)) {
+          throw new Error(`Duplicate turn stream event handler: ${eventType}`);
+        }
+        registered.add(eventType);
+      }
+    }
+    this.handlers = [...handlers];
   }
 
-  dispatch(context: TurnStreamDispatchContext, frame: SseFrame) {
-    const parsed = parseTurnStreamFrame(frame.event, frame.data);
-    if (parsed) this.handlers.get(parsed.event)?.(context, parsed.data);
+  dispatch(context: TurnStreamDispatchContext, frame: TurnStreamFrame) {
+    for (const handler of this.handlers) {
+      if (!handler.eventTypes.includes(frame.event)) continue;
+      handler.handle(context, frame.data);
+      return true;
+    }
+    return false;
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const turnStreamEvents = new TurnStreamEventChain([
+  createTurnStreamEventHandler("turn.snapshot", (context, data) => context.onSnapshot(data)),
+  createTurnStreamEventHandler("item.upsert", (context, data) => context.onItemUpsert(data)),
+  createTurnStreamEventHandler("item.delta", (context, data) => context.onItemDelta(data)),
+  createTurnStreamEventHandler("item.done", (context, data) => context.onItemDone(data)),
+  createTurnStreamEventHandler("turn.done", (context, data) => context.onTurnDone(data)),
+  createTurnStreamEventHandler("conversation.updated", (context, data) =>
+    context.onConversationUpdated(data),
+  ),
+]);
 
-function timelineItem(value: unknown): TimelineItem | null {
-  if (!isRecord(value) || typeof value.id !== "string" || typeof value.type !== "string") {
-    return null;
-  }
-  return value as unknown as TimelineItem;
-}
-
-const turnStreamEvents = new TurnStreamEventRegistry()
-  .register("turn.snapshot", (context, data) => {
-    if (!isRecord(data) || typeof data.turn_id !== "string" || !Array.isArray(data.items)) {
-      return;
-    }
-    context.onSnapshot(data as unknown as TurnStreamSnapshot);
-  })
-  .register("item.upsert", (context, data) => {
-    const item = timelineItem(data);
-    if (item) context.onItemUpsert(item);
-  })
-  .register("item.delta", (context, data) => {
-    if (
-      !isRecord(data) ||
-      typeof data.item_id !== "string" ||
-      typeof data.item_type !== "string" ||
-      typeof data.delta !== "string" ||
-      (typeof data.sequence_number !== "undefined" && typeof data.sequence_number !== "number")
-    ) {
-      return;
-    }
-    context.onItemDelta(data as unknown as TurnStreamItemDelta);
-  })
-  .register("item.done", (context, data) => {
-    const item = timelineItem(data);
-    if (item) context.onItemDone(item);
-  })
-  .register("turn.done", (context, data) => {
-    if (!isRecord(data) || typeof data.turn_id !== "string" || typeof data.status !== "string") {
-      return;
-    }
-    context.onTurnDone(data as unknown as TurnStreamDone);
-  })
-  .register("conversation.updated", (context, data) => {
-    if (!isRecord(data) || typeof data.conversation_id !== "string") {
-      return;
-    }
-    context.onConversationUpdated(data as unknown as ConversationPresentationUpdate);
-  });
-
-export function dispatchTurnStreamEvent(context: TurnStreamDispatchContext, frame: SseFrame) {
-  turnStreamEvents.dispatch(context, frame);
+export function dispatchTurnStreamEvent(
+  context: TurnStreamDispatchContext,
+  frame: TurnStreamFrame,
+) {
+  return turnStreamEvents.dispatch(context, frame);
 }
 
 export function isAssistantOutputType(itemType: string) {

@@ -106,8 +106,21 @@ func TestGetTurnTimelineReconcilesPartialToolEventsFromDurableCalls(t *testing.T
 	if item.ID != "tool:tool-1" || item.Title != "internet.search" || item.Status != domain.ToolCallStatusCompleted {
 		t.Fatalf("reconciled tool identity = %#v", item)
 	}
+	if metadataString(item.Metadata, "tool_name") != "internet.search" {
+		t.Fatalf("reconciled tool metadata = %#v, want canonical tool name", item.Metadata)
+	}
 	if !strings.Contains(string(item.Arguments), "latest docs") || !strings.Contains(string(item.Output), "example.com") {
 		t.Fatalf("reconciled tool payload = %#v", item)
+	}
+	presented, ok := newPresentationItemRegistry().Filter(item)
+	if !ok {
+		t.Fatal("reconciled Tavily tool was dropped by presentation filter")
+	}
+	if presented.Title != "Searching the Web" || presented.InputText != "latest docs" {
+		t.Fatalf("reconciled Tavily presentation = %#v", presented)
+	}
+	if len(presented.Links) != 1 || presented.Links[0].URL != "https://example.com" {
+		t.Fatalf("reconciled Tavily links = %#v", presented.Links)
 	}
 }
 

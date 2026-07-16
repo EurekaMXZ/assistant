@@ -10,6 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import { getStreamUrl, getToken, getTurn, isSessionUnauthorizedError } from "@/lib/api";
+import type { TurnStreamFrame } from "@/lib/api-schemas";
 import {
   applyAssistantTimelineSnapshot,
   assistantOutputPhase,
@@ -33,7 +34,7 @@ import {
   type ConversationPresentationUpdate,
   type TurnStreamDispatchContext,
 } from "@/lib/turn-stream-events";
-import type { Message, SseFrame, TimelineItem, Turn } from "@/lib/types";
+import type { Message, TimelineItem, Turn, TurnStreamSnapshot } from "@/lib/types";
 import { getTimelineTitle } from "@/components/chat/turn-timeline";
 
 type TurnStreamMode = "active" | "panel" | "restore";
@@ -52,7 +53,7 @@ export interface TurnTimelineController {
   timelineErrors: ReturnType<typeof createTurnTimelineState>["errors"];
   timelineActivityLabels: Record<string, string | null>;
   closeTimeline: () => void;
-  dispatchActiveFrame: (frame: SseFrame, turnId: string) => void;
+  dispatchActiveFrame: (frame: TurnStreamFrame, turnId: string) => void;
   finishActiveTurn: (turnId: string) => void;
   hydrateTurn: (turnId: string, mode: "panel" | "restore", fallbackTurn?: Turn) => Promise<void>;
   initializeTurns: (turns: Turn[]) => void;
@@ -105,84 +106,61 @@ export function useTurnTimelineController({
     setTimelineTurnId(null);
   }, [conversationId]);
 
-  const settlePendingThinking = useCallback(
-    (frame: SseFrame, turnId: string) => {
+  const settlePendingThinkingForSnapshot = useCallback(
+    (snapshot: TurnStreamSnapshot, turnId: string) => {
       const pendingMessageId = pendingDoneTextMessageIdRef.current;
       if (!pendingMessageId) return;
 
-      if (frame.event === "turn.snapshot") {
-        if (
-          typeof frame.data !== "object" ||
-          frame.data === null ||
-          !("items" in frame.data) ||
-          !Array.isArray(frame.data.items)
-        ) {
-          return;
-        }
-        const pendingIndex = frame.data.items.findIndex(
-          (value) =>
-            typeof value === "object" &&
-            value !== null &&
-            "id" in value &&
-            pendingMessageId === assistantTextMessageId(turnId, String(value.id)),
-        );
-        if (pendingIndex === -1) return;
-        const pendingItem = frame.data.items[pendingIndex];
-        if (
-          typeof pendingItem === "object" &&
-          pendingItem !== null &&
-          "id" in pendingItem &&
-          "type" in pendingItem
-        ) {
-          const phase = assistantOutputPhase(pendingItem as TimelineItem);
-          if (phase) {
-            pendingDoneTextMessageIdRef.current = null;
-            if (phase === "commentary") {
-              setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
-            }
-            return;
-          }
-        }
-        const hasContinuation = frame.data.items.slice(pendingIndex + 1).some((value) => {
-          if (
-            typeof value !== "object" ||
-            value === null ||
-            !("id" in value) ||
-            !("type" in value)
-          ) {
-            return false;
-          }
-          const item = value as TimelineItem;
-          return isAssistantOutputItem(item) || isTimelineItem(item);
-        });
-        if (!hasContinuation) return;
+      const pendingIndex = snapshot.items.findIndex(
+        (item) => pendingMessageId === assistantTextMessageId(turnId, item.id),
+      );
+      if (pendingIndex === -1) return;
+      const pendingItem = snapshot.items[pendingIndex];
+      const phase = assistantOutputPhase(pendingItem);
+      if (phase) {
         pendingDoneTextMessageIdRef.current = null;
-        setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
+        if (phase === "commentary") {
+          setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
+        }
         return;
       }
-      if (frame.event === "conversation.updated") return;
-      if (
-        (frame.event === "item.upsert" || frame.event === "item.done") &&
-        typeof frame.data === "object" &&
-        frame.data !== null &&
-        "id" in frame.data &&
-        "type" in frame.data
-      ) {
-        const item = frame.data as TimelineItem;
-        if (!isTimelineItem(item) && !isAssistantOutputItem(item)) return;
-        if (pendingMessageId === assistantTextMessageId(turnId, item.id)) {
-          const phase = assistantOutputPhase(item);
-          if (!phase) return;
-          pendingDoneTextMessageIdRef.current = null;
-          if (phase === "commentary") {
-            setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
-          }
-          return;
+      const hasContinuation = snapshot.items.slice(pendingIndex + 1).some((item) => {
+        return isAssistantOutputItem(item) || isTimelineItem(item);
+      });
+      if (!hasContinuation) return;
+      pendingDoneTextMessageIdRef.current = null;
+      setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
+    },
+    [setMessages],
+  );
+
+  const settlePendingThinkingForItem = useCallback(
+    (item: TimelineItem, turnId: string) => {
+      const pendingMessageId = pendingDoneTextMessageIdRef.current;
+      if (!pendingMessageId || (!isTimelineItem(item) && !isAssistantOutputItem(item))) return;
+
+      if (pendingMessageId === assistantTextMessageId(turnId, item.id)) {
+        const phase = assistantOutputPhase(item);
+        if (!phase) return;
+        pendingDoneTextMessageIdRef.current = null;
+        if (phase === "commentary") {
+          setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
         }
+        return;
       }
 
       pendingDoneTextMessageIdRef.current = null;
-      if (frame.event !== "turn.done") {
+      setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
+    },
+    [setMessages],
+  );
+
+  const settlePendingThinkingForOtherEvent = useCallback(
+    (turnId: string, moveThinking: boolean) => {
+      const pendingMessageId = pendingDoneTextMessageIdRef.current;
+      if (!pendingMessageId) return;
+      pendingDoneTextMessageIdRef.current = null;
+      if (moveThinking) {
         setMessages((previous) => moveThinkingAfter(previous, turnId, pendingMessageId));
       }
     },
@@ -194,6 +172,7 @@ export function useTurnTimelineController({
       const mirrorMessages = mode !== "panel";
       return {
         onSnapshot(snapshot) {
+          if (mirrorMessages) settlePendingThinkingForSnapshot(snapshot, turnId);
           applyAction({ type: "snapshot", turnId, snapshot });
           if (mirrorMessages) {
             const thinkingState = assistantTimelineThinkingState(turnId, snapshot.items);
@@ -205,6 +184,7 @@ export function useTurnTimelineController({
           }
         },
         onItemUpsert(item) {
+          if (mirrorMessages) settlePendingThinkingForItem(item, turnId);
           const accepted = applyAction({
             type: "item-upsert",
             turnId,
@@ -227,6 +207,7 @@ export function useTurnTimelineController({
           }
         },
         onItemDelta(delta) {
+          if (mirrorMessages) settlePendingThinkingForOtherEvent(turnId, true);
           const accepted = applyAction({
             type: "item-delta",
             turnId,
@@ -248,6 +229,7 @@ export function useTurnTimelineController({
           }
         },
         onItemDone(item) {
+          if (mirrorMessages) settlePendingThinkingForItem(item, turnId);
           const accepted = applyAction({
             type: "item-done",
             turnId,
@@ -278,6 +260,7 @@ export function useTurnTimelineController({
           }
         },
         onTurnDone(done) {
+          if (mirrorMessages) settlePendingThinkingForOtherEvent(turnId, false);
           applyAction({ type: "turn-done", turnId, done });
           if (mode === "active") pendingDoneTextMessageIdRef.current = null;
           if (mirrorMessages && done.status === "failed") {
@@ -302,18 +285,25 @@ export function useTurnTimelineController({
         },
       };
     },
-    [applyAction, conversationId, onConversationUpdated, setMessages],
+    [
+      applyAction,
+      conversationId,
+      onConversationUpdated,
+      setMessages,
+      settlePendingThinkingForItem,
+      settlePendingThinkingForOtherEvent,
+      settlePendingThinkingForSnapshot,
+    ],
   );
 
   const dispatchActiveFrame = useCallback(
-    (frame: SseFrame, turnId: string) => {
+    (frame: TurnStreamFrame, turnId: string) => {
       if (!mountedRef.current || activeConversationIdRef.current !== conversationId) {
         return;
       }
-      settlePendingThinking(frame, turnId);
       dispatchTurnStreamEvent(createStreamContext(turnId, "active"), frame);
     },
-    [conversationId, createStreamContext, settlePendingThinking],
+    [conversationId, createStreamContext],
   );
 
   const hydrateTurn = useCallback(
@@ -335,7 +325,6 @@ export function useTurnTimelineController({
           getTurn,
           onEvent: (event) => {
             if (activeConversationIdRef.current === requestedConversationId) {
-              if (mode === "restore") settlePendingThinking(event, turnId);
               dispatchTurnStreamEvent(context, event);
             }
           },
@@ -360,7 +349,7 @@ export function useTurnTimelineController({
         }
       }
     },
-    [applyAction, conversationId, createStreamContext, setMessages, settlePendingThinking],
+    [applyAction, conversationId, createStreamContext, setMessages],
   );
 
   const openTimeline = useCallback(
