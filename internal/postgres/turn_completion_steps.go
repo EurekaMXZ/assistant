@@ -36,10 +36,11 @@ func prepareAssistantDrafts(drafts []domain.AssistantMessageDraft) []domain.Assi
 func buildTurnRunMetadata(existing json.RawMessage, summary domain.TurnRunSummary) (json.RawMessage, error) {
 	metadata := decodeMetadata(existing)
 	metadata["run"] = map[string]any{
-		"model":         summary.Model,
-		"input_tokens":  summary.InputTokens,
-		"output_tokens": summary.OutputTokens,
-		"total_tokens":  summary.TotalTokens,
+		"model":                 summary.Model,
+		"context_window_tokens": summary.ContextWindowTokens,
+		"input_tokens":          summary.InputTokens,
+		"output_tokens":         summary.OutputTokens,
+		"total_tokens":          summary.TotalTokens,
 	}
 
 	merged, err := json.Marshal(metadata)
@@ -197,7 +198,7 @@ func updateContextHeadAfterAssistant(ctx context.Context, tx pgx.Tx, conversatio
 }
 
 func shouldRequestCompaction(head *domain.ContextHead, compactTriggerTokens int) bool {
-	return head != nil && head.ActiveContextTokens > compactTriggerTokens && head.RawTailStartSeq <= head.LastSeq
+	return head != nil && compactTriggerTokens > 0 && head.ActiveContextTokens >= compactTriggerTokens && head.RawTailStartSeq <= head.LastSeq
 }
 
 func enqueueCompactionRequest(ctx context.Context, tx pgx.Tx, turn *domain.Turn, triggerCompact bool) error {

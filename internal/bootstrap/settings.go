@@ -123,6 +123,7 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			AgentSystemPrompt:        cfg.AgentSystemPrompt,
 			AgentCompactPrompt:       cfg.AgentCompactPrompt,
 			RemoteToolReplayMaxBytes: cfg.RemoteToolReplayMaxBytes,
+			ModelToolOutputMaxTokens: cfg.ModelToolOutputMaxTokens,
 			CompactMaxOutputTokens:   cfg.CompactMaxOutputTokens,
 			CompactTriggerTokens:     cfg.CompactTriggerTokens,
 			WorkerLeaseTimeout:       cfg.WorkerLeaseTimeout,

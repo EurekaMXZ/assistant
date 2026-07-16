@@ -61,6 +61,7 @@ func New(deps Dependencies) *Engine {
 	}
 	orchestrator := NewToolOrchestrator(deps.Model, deps.ToolCatalog, deps.ToolExecutor, deps.Streams, deps.ToolArtifacts, deps.ToolCalls)
 	orchestrator.remoteToolReplayMaxBytes = deps.Settings.RemoteToolReplayMaxBytes
+	orchestrator.modelToolOutputMaxTokens = deps.Settings.ModelToolOutputMaxTokens
 
 	return &Engine{
 		locker:        deps.Locker,
@@ -110,6 +111,11 @@ func (e *Engine) HandleWorkflowEvent(ctx context.Context, event WorkflowEvent) e
 			return nil
 		}
 		err := e.locker.WithConversationLock(ctx, event.ConversationID, func(ctx context.Context) error {
+			if e.compactor != nil {
+				if err := e.compactor.HandleRequested(ctx, event); err != nil {
+					return err
+				}
+			}
 			return e.turns.HandleAccepted(ctx, event)
 		})
 		return e.ignoreDeletedConversation(ctx, event.ConversationID, err)

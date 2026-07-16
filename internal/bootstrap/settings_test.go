@@ -119,6 +119,7 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 		AgentSystemPrompt:         "system",
 		AgentCompactPrompt:        "compact",
 		RemoteToolReplayMaxBytes:  4096,
+		ModelToolOutputMaxTokens:  10000,
 		CompactMaxOutputTokens:    800,
 		CompactTriggerTokens:      12000,
 		OutboxBatchSize:           88,
@@ -131,6 +132,9 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 	}
 	if settings.OpenAI.UserAgent != "assistant-test/1.0" {
 		t.Fatalf("unexpected openai settings: %+v", settings.OpenAI)
+	}
+	if settings.Workflow.ModelToolOutputMaxTokens != 10000 {
+		t.Fatalf("unexpected model tool output token limit: %+v", settings.Workflow)
 	}
 	if settings.Tavily.APIKey != "tavily-secret" || settings.Tavily.HTTPClientTimeout != 5*time.Second {
 		t.Fatalf("unexpected tavily settings: %+v", settings.Tavily)

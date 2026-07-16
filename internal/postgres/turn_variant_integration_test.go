@@ -165,7 +165,7 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	retryTokens := domain.EstimateTokens("retry answer")
 	completed, _, head, triggerCompact, err := workflowTurns.FinalizeTurnSuccess(
 		t.Context(), successfulRetry.Turn.ID, []domain.AssistantMessageDraft{{ContentText: "retry answer"}},
-		domain.TurnRunSummary{Model: "gpt-test"}, 0,
+		domain.TurnRunSummary{Model: "gpt-test"}, 1,
 	)
 	if err != nil {
 		t.Fatalf("finalize retry success: %v", err)
@@ -224,7 +224,7 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 		t.Fatalf("selected variant source = %q, want %q", selectedSourceTurnID, successfulRetry.Turn.ID)
 	}
 	contexts := NewWorkflowContextRepository(pool)
-	_, err = contexts.CompleteCompaction(t.Context(), conversationID, domain.AnchorObject{CoveredUntilSeq: 1}, head.LastSeq)
+	_, err = contexts.CompleteCompaction(t.Context(), conversationID, domain.AnchorObject{CoveredUntilSeq: 1}, head.LastSeq, 1)
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("compaction during retry error = %v, want conflict", err)
 	}

@@ -54,10 +54,7 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 		return nil, nil, nil, false, err
 	}
 
-	activeTokens := head.ActiveContextTokens + assistantTokens
-	if turn.RetryOfTurnID != "" {
-		activeTokens = max(0, head.ActiveContextTokens-replacedTokens) + selectedUserTokens + assistantTokens
-	}
+	activeTokens := activeContextTokensAfterTurn(head, turn, summary, assistantTokens, replacedTokens, selectedUserTokens)
 	head, err = updateContextHeadAfterAssistant(ctx, tx, turn.ConversationID, assistantSeq, activeTokens)
 	if err != nil {
 		return nil, nil, nil, false, err
@@ -73,4 +70,23 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 	}
 
 	return turn, assistantMessages, head, triggerCompact, nil
+}
+
+func activeContextTokensAfterTurn(head *domain.ContextHead, turn *domain.Turn, summary domain.TurnRunSummary, assistantTokens int, replacedTokens int, selectedUserTokens int) int {
+	providerTokens := summary.TotalTokens
+	if providerTokens <= 0 {
+		providerTokens = summary.InputTokens + summary.OutputTokens
+	}
+	if providerTokens > 0 {
+		return providerTokens
+	}
+
+	activeTokens := assistantTokens
+	if head != nil {
+		activeTokens += head.ActiveContextTokens
+	}
+	if turn != nil && turn.RetryOfTurnID != "" {
+		activeTokens = max(0, activeTokens-assistantTokens-replacedTokens) + selectedUserTokens + assistantTokens
+	}
+	return activeTokens
 }

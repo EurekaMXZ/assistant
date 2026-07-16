@@ -47,12 +47,13 @@ type EnqueuedRetryTurn struct {
 }
 
 type TurnRunSummary struct {
-	RequestBlobKey  string
-	ResponseBlobKey string
-	StreamBlobKey   string
-	ResponseID      string
-	InputTokens     int
-	OutputTokens    int
-	TotalTokens     int
-	Model           string
+	RequestBlobKey      string
+	ResponseBlobKey     string
+	StreamBlobKey       string
+	ResponseID          string
+	InputTokens         int
+	OutputTokens        int
+	TotalTokens         int
+	ContextWindowTokens int
+	Model               string
 }

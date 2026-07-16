@@ -50,7 +50,7 @@ func createUserTurn(ctx context.Context, tx pgx.Tx, params CreateUserTurnParams)
 	if trimmedContent == "" && !messageMetadataHasAttachmentIDs(params.Metadata) {
 		return nil, fmt.Errorf("message content is required")
 	}
-	tokenCount := domain.EstimateTokens(trimmedContent)
+	tokenCount := estimateUserMessageTokens(trimmedContent, params.Metadata)
 
 	head, err := queryContextHeadForUpdate(ctx, tx, params.ConversationID)
 	if err != nil {
@@ -181,7 +181,7 @@ func (r *TurnRepository) CreateRetryTurn(ctx context.Context, sourceTurnID strin
 	if trimmedContent == "" && !messageMetadataHasAttachmentIDs(params.Metadata) {
 		return nil, domain.NewValidationError("message content is required")
 	}
-	tokenCount := domain.EstimateTokens(trimmedContent)
+	tokenCount := estimateUserMessageTokens(trimmedContent, params.Metadata)
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin retry turn tx: %w", err)
@@ -358,6 +358,26 @@ func messageMetadataHasAttachmentIDs(metadata json.RawMessage) bool {
 	}
 	items, ok := raw.([]any)
 	return ok && len(items) > 0
+}
+
+func estimateUserMessageTokens(content string, metadata json.RawMessage) int {
+	tokens := domain.EstimateTokens(content)
+	var payload struct {
+		Attachments []struct {
+			Category string `json:"category"`
+		} `json:"attachments"`
+	}
+	if json.Unmarshal(metadata, &payload) != nil {
+		return tokens
+	}
+	for _, attachment := range payload.Attachments {
+		if attachment.Category == domain.AttachmentCategoryImage {
+			tokens += domain.EstimatedImageInputTokens
+			continue
+		}
+		tokens += 64
+	}
+	return tokens
 }
 
 func (r *TurnRepository) GetTurn(ctx context.Context, turnID string) (*domain.Turn, error) {

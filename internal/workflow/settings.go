@@ -6,6 +6,7 @@ type WorkflowSettings struct {
 	AgentSystemPrompt        string
 	AgentCompactPrompt       string
 	RemoteToolReplayMaxBytes int
+	ModelToolOutputMaxTokens int
 	CompactMaxOutputTokens   int
 	CompactTriggerTokens     int
 	WorkerLeaseTimeout       time.Duration

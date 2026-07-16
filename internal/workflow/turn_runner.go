@@ -98,23 +98,24 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	}
 	parallelToolCalls := execution.SupportsParallelTools
 	input := ToolRunInput{
-		Scope:             scope,
-		Model:             execution.UpstreamModel,
-		CatalogModelID:    execution.ModelID,
-		ModelRevision:     execution.ModelRevision,
-		ModelPriceID:      execution.ModelPriceID,
-		PricingSnapshot:   execution.PricingSnapshot,
-		CredentialID:      execution.CredentialID,
-		ProviderBaseURL:   execution.BaseURL,
-		ReasoningEffort:   reasoningEffort,
-		ReasoningSummary:  reasoningSummary,
-		TextVerbosity:     textVerbosity,
-		DisableTools:      !execution.SupportsTools,
-		Instructions:      r.settings.AgentSystemPrompt,
-		Input:             modelInput,
-		PromptCacheKey:    conversationPromptCacheKey(event.ConversationID),
-		MaxOutputTokens:   execution.MaxOutputTokens,
-		ParallelToolCalls: &parallelToolCalls,
+		Scope:               scope,
+		Model:               execution.UpstreamModel,
+		ContextWindowTokens: execution.ContextWindowTokens,
+		CatalogModelID:      execution.ModelID,
+		ModelRevision:       execution.ModelRevision,
+		ModelPriceID:        execution.ModelPriceID,
+		PricingSnapshot:     execution.PricingSnapshot,
+		CredentialID:        execution.CredentialID,
+		ProviderBaseURL:     execution.BaseURL,
+		ReasoningEffort:     reasoningEffort,
+		ReasoningSummary:    reasoningSummary,
+		TextVerbosity:       textVerbosity,
+		DisableTools:        !execution.SupportsTools,
+		Instructions:        r.settings.AgentSystemPrompt,
+		Input:               modelInput,
+		PromptCacheKey:      conversationPromptCacheKey(event.ConversationID),
+		MaxOutputTokens:     execution.MaxOutputTokens,
+		ParallelToolCalls:   &parallelToolCalls,
 		Metadata: map[string]string{
 			"conversation_id": event.ConversationID,
 			"turn_id":         event.TurnID,
@@ -123,6 +124,11 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	state, rawRequest, err := r.tools.PrepareScheduledRun(ctx, input, 1, len(input.Input))
 	if err != nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	requestTokens := estimateModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	if requestTokens > modelRequestInputLimit(execution.ContextWindowTokens, 0) {
+		return r.failTurn(ctx, turn, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing,
+			fmt.Errorf("model request input estimate %d exceeds context limit", requestTokens))
 	}
 	stateKey, runRequestKey, err := r.tools.PersistScheduledRunState(ctx, scope, state, rawRequest)
 	if err != nil {
@@ -199,11 +205,24 @@ func (r *TurnRunner) retryModelInput(ctx context.Context, conversationID string,
 		if err := json.Unmarshal(rawItem, &header); err != nil {
 			return nil, fmt.Errorf("decode retry source input item: %w", err)
 		}
-		items = append(items, llm.ModelItem{
+		item := llm.ModelItem{
 			Type: header.Type,
 			Role: header.Role,
 			Raw:  append(json.RawMessage(nil), rawItem...),
-		})
+		}
+		if header.Type == llm.ModelItemFunctionCallOutput {
+			var output struct {
+				CallID string `json:"call_id"`
+				Output string `json:"output"`
+			}
+			if err := json.Unmarshal(rawItem, &output); err != nil {
+				return nil, fmt.Errorf("decode retry source tool output: %w", err)
+			}
+			item.CallID = output.CallID
+			item.Output = output.Output
+			item = truncateModelContextItem(item, r.tools.modelToolOutputTokenLimit())
+		}
+		items = append(items, item)
 		if header.Role == domain.RoleUser {
 			lastUserIndex = len(items) - 1
 		}
@@ -327,6 +346,9 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		if err != nil {
 			return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
 		}
+		if err := r.hydrateScheduledRunState(runCtx, claimed.TurnID, state); err != nil {
+			return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+		}
 		recovered, recoveredResponseKey, recoveredResultKey, found, recoverErr := r.tools.RecoverScheduledRunOutcome(runCtx, state.Scope, claimed.StepIndex)
 		if recoverErr != nil {
 			return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, recoverErr)
@@ -363,6 +385,9 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			if err != nil {
 				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
 			}
+			if err := r.hydrateScheduledRunState(runCtx, claimed.TurnID, state); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
 		}
 		if err := r.tools.PostprocessScheduledRun(runCtx, claimed, state, outcome); err != nil {
 			return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
@@ -375,9 +400,10 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			return err
 		}
 	}
+	compactTriggerTokens := r.compactTriggerTokens(ctx, event.TurnID, outcome.ContextWindowTokens)
 	settled, err := r.runs.CompleteScheduledTurnRun(
 		ctx, lease, outcome.Model.ResponseID, responseKey, resultKey,
-		outcome.Model.Usage, billableImageGenerationCount(outcome.Model), r.settings.CompactTriggerTokens,
+		outcome.Model.Usage, billableImageGenerationCount(outcome.Model), compactTriggerTokens,
 	)
 	if err != nil {
 		if leaseErr := stopLease(); leaseErr != nil {
@@ -442,11 +468,12 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		RequestBlobKey: r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), ResponseBlobKey: responseKey,
 		StreamBlobKey: r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), ResponseID: outcome.Model.ResponseID,
 		InputTokens: outcome.Model.Usage.InputTokens, OutputTokens: outcome.Model.Usage.OutputTokens,
-		TotalTokens: outcome.Model.Usage.TotalTokens, Model: run.Model,
+		TotalTokens: outcome.Model.Usage.TotalTokens, ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,
 	}
 	assistantDrafts := assistantMessageDraftsFromRun(toolRun, outcome.Model)
 	assistantDrafts = append(assistantDrafts, generatedImageDrafts...)
-	completedTurn, assistantMessages, updatedHead, _, err := r.store.FinalizeTurnSuccess(ctx, turn.ID, assistantDrafts, summary, r.settings.CompactTriggerTokens)
+	compactTriggerTokens := r.compactTriggerTokens(ctx, turn.ID, outcome.ContextWindowTokens)
+	completedTurn, assistantMessages, updatedHead, _, err := r.store.FinalizeTurnSuccess(ctx, turn.ID, assistantDrafts, summary, compactTriggerTokens)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
 			return nil
@@ -467,8 +494,10 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 func (r *TurnRunner) failScheduledTurnRun(ctx context.Context, event WorkflowEvent, run *domain.TurnRun, lease TurnRunLease, outcome *ScheduledRunOutcome, cause error) error {
 	responseID, responseKey, resultKey := "", "", ""
 	var modelResult *llm.ModelResult
+	contextWindowTokens := 0
 	if outcome != nil {
 		modelResult = outcome.Model
+		contextWindowTokens = outcome.ContextWindowTokens
 	}
 	if modelResult != nil {
 		responseID = modelResult.ResponseID
@@ -481,8 +510,9 @@ func (r *TurnRunner) failScheduledTurnRun(ctx context.Context, event WorkflowEve
 	code, publicMessage := classifyInitialToolRunFailure(cause, modelResult)
 	requestKey := r.blobs.TurnRequestKey(event.ConversationID, event.TurnID)
 	streamKey := r.blobs.TurnStreamKey(event.ConversationID, event.TurnID)
+	compactTriggerTokens := r.compactTriggerTokens(ctx, event.TurnID, contextWindowTokens)
 	if _, err := r.runs.FailScheduledTurnRun(ctx, lease, responseID, responseKey, resultKey,
-		publicToolRunError(cause), requestKey, streamKey, code, publicMessage, r.settings.CompactTriggerTokens); err != nil {
+		publicToolRunError(cause), requestKey, streamKey, code, publicMessage, compactTriggerTokens); err != nil {
 		if errors.Is(err, domain.ErrConflict) {
 			return nil
 		}
@@ -536,13 +566,44 @@ func (r *TurnRunner) failTurn(ctx context.Context, turn *domain.Turn, requestKey
 	if turn == nil {
 		return nil
 	}
-	if err := r.store.FinalizeTurnFailure(ctx, turn.ID, requestKey, streamKey, code, publicMessage, r.settings.CompactTriggerTokens); err != nil {
+	compactTriggerTokens := r.compactTriggerTokens(ctx, turn.ID, 0)
+	if err := r.store.FinalizeTurnFailure(ctx, turn.ID, requestKey, streamKey, code, publicMessage, compactTriggerTokens); err != nil {
 		if r.logger != nil {
 			r.logger.Printf("mark turn %s failed: %v", turn.ID, err)
 		}
 		return err
 	}
 	return r.publishTurnFailure(ctx, turn, code, publicMessage, cause)
+}
+
+func (r *TurnRunner) compactTriggerTokens(ctx context.Context, turnID string, contextWindowTokens int) int {
+	if contextWindowTokens <= 0 && r != nil && r.models != nil && strings.TrimSpace(turnID) != "" {
+		if execution, err := r.models.GetTurnExecution(ctx, turnID); err == nil && execution != nil {
+			contextWindowTokens = execution.ContextWindowTokens
+		}
+	}
+	if r == nil {
+		return compactTriggerTokenLimit(0, contextWindowTokens)
+	}
+	return compactTriggerTokenLimit(r.settings.CompactTriggerTokens, contextWindowTokens)
+}
+
+func (r *TurnRunner) hydrateScheduledRunState(ctx context.Context, turnID string, state *ScheduledRunState) error {
+	if state == nil || state.Request.ContextWindowTokens > 0 {
+		return nil
+	}
+	if r == nil || r.models == nil {
+		return errors.New("model catalog is not configured")
+	}
+	execution, err := r.models.GetTurnExecution(ctx, turnID)
+	if err != nil {
+		return err
+	}
+	if execution == nil || execution.ContextWindowTokens <= 0 {
+		return errors.New("turn model context window is unavailable")
+	}
+	state.Request.ContextWindowTokens = execution.ContextWindowTokens
+	return nil
 }
 
 func (r *TurnRunner) publishTurnFailure(ctx context.Context, turn *domain.Turn, code string, publicMessage string, cause error) error {

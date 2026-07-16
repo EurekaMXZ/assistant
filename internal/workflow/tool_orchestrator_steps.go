@@ -33,9 +33,10 @@ func (o *ToolOrchestrator) ensureStepCapabilities(functionCalls []llm.ModelItem)
 	}
 }
 
-func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domain.TurnRun, input []llm.ModelItem, scope tool.ToolScope, calls []tool.ToolCall) ([]llm.ModelItem, tool.ToolScope, error) {
+func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domain.TurnRun, input []llm.ModelItem, scope tool.ToolScope, calls []tool.ToolCall, totalOutputBudgetTokens int) ([]llm.ModelItem, tool.ToolScope, error) {
 	currentInput := cloneModelItems(input)
 	currentScope := cloneToolScope(scope)
+	remainingTokens := totalOutputBudgetTokens
 
 	for _, call := range calls {
 		record, acquired, err := o.recordToolCallStart(ctx, currentScope, run, call)
@@ -49,7 +50,15 @@ func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domai
 			return nil, currentScope, err
 		}
 		if execution != nil {
-			currentInput = append(currentInput, execution.OutputItem)
+			outputLimit := o.modelToolOutputTokenLimit()
+			if remainingTokens >= 0 {
+				outputLimit = min(outputLimit, remainingTokens)
+			}
+			modelItem := truncateModelContextItem(execution.OutputItem, outputLimit)
+			currentInput = append(currentInput, modelItem)
+			if remainingTokens >= 0 {
+				remainingTokens = max(0, remainingTokens-domain.EstimateTokens(modelItem.Output))
+			}
 		}
 		if execution == nil || !execution.Failed {
 			currentScope = applyToolScopeDelta(currentScope, call)

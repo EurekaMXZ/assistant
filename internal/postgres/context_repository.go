@@ -102,7 +102,7 @@ func (r *WorkflowContextRepository) ListRawTailMessages(ctx context.Context, con
 	return messages, nil
 }
 
-func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conversationID string, anchor domain.AnchorObject, expectedLastSeq int64) (*domain.ContextHead, error) {
+func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conversationID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -140,14 +140,7 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 			anchor_key = $3,
 			covered_until_seq = $4,
 			raw_tail_start_seq = $5,
-			active_context_tokens = $6 + COALESCE((
-				SELECT SUM(COALESCE(token_count, 0))::integer
-				FROM messages
-				WHERE conversation_id = $1::uuid
-					AND seq > $4
-					AND seq <= $7
-					AND context_excluded = false
-			), 0)
+			active_context_tokens = $6
 		WHERE conversation_id = $1::uuid
 		RETURNING
 			conversation_id::text,
@@ -158,7 +151,7 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 			last_seq,
 			active_context_tokens,
 			updated_at
-	`, conversationID, anchor.Generation, anchor.ObjectKey, anchor.CoveredUntilSeq, anchor.CoveredUntilSeq+1, anchor.TokenCount, expectedLastSeq)
+	`, conversationID, anchor.Generation, anchor.ObjectKey, anchor.CoveredUntilSeq, anchor.CoveredUntilSeq+1, max(0, activeContextTokens))
 
 	head, err = scanContextHead(row)
 	if err != nil {

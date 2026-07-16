@@ -47,37 +47,27 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	if hot == nil || head == nil {
 		return nil
 	}
-	if head.ActiveContextTokens <= c.settings.CompactTriggerTokens || head.RawTailStartSeq > head.LastSeq {
-		return nil
+	compactTriggerTokens := c.settings.CompactTriggerTokens
+	var turnExecution *domain.ModelExecutionSnapshot
+	if event.TurnID != "" && c.models != nil {
+		var resolveErr error
+		turnExecution, resolveErr = c.models.GetTurnExecution(ctx, event.TurnID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if turnExecution != nil {
+			compactTriggerTokens = compactTriggerTokenLimit(compactTriggerTokens, turnExecution.ContextWindowTokens)
+		}
 	}
-
-	compactedMessages, retainedMessages := splitCompactionMessages(contextMessages(hot.Tail))
-	if len(compactedMessages) == 0 {
-		return nil
-	}
-	compactionContext := &cache.ContextSnapshot{
-		Anchor: hot.Anchor,
-		Tail:   compactedMessages,
-	}
-	if err := c.loader.loadConversationModelInput(ctx, event.ConversationID, compactionContext); err != nil {
-		return err
-	}
-	input := buildConversationHistoryInput(compactionContext)
-	compactPrompt := strings.TrimSpace(c.settings.AgentCompactPrompt)
-	if compactPrompt == "" {
-		return errors.New("compaction prompt is empty")
-	}
-	input = append(input, llm.ModelItem{
-		Type:    llm.ModelItemMessage,
-		Role:    domain.RoleUser,
-		Content: compactPrompt,
-	})
 	if c.models == nil {
 		return errors.New("model catalog is not configured")
 	}
 	execution, err := c.models.ResolveExecution(ctx, "", true)
 	if err != nil {
-		return err
+		if !errors.Is(err, domain.ErrInvalidInput) || turnExecution == nil {
+			return err
+		}
+		execution = turnExecution
 	}
 	if execution == nil {
 		return errors.New("compaction model execution snapshot is unavailable")
@@ -85,36 +75,97 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	if err := validateExecutionSnapshot(execution); err != nil {
 		return err
 	}
+	compactTriggerTokens = compactTriggerTokenLimit(compactTriggerTokens, execution.ContextWindowTokens)
+	if compactTriggerTokens <= 0 || head.ActiveContextTokens < compactTriggerTokens || head.RawTailStartSeq > head.LastSeq {
+		return nil
+	}
+
+	compactedMessages, retainedMessages := splitCompactionMessagesForEvent(contextMessages(hot.Tail), event.EventType)
+	if len(compactedMessages) == 0 {
+		return nil
+	}
+	compactPrompt := strings.TrimSpace(c.settings.AgentCompactPrompt)
+	if compactPrompt == "" {
+		return errors.New("compaction prompt is empty")
+	}
 	var tools []llm.ModelTool
-	if execution.SupportsTools {
-		tools, err = c.compactionTools(ctx, event.ConversationID)
-		if err != nil {
+	var reasoningEffort, reasoningSummary, textVerbosity string
+	var maxOutputTokens, inputLimit int
+	configureExecution := func() error {
+		tools = nil
+		if execution.SupportsTools {
+			var toolErr error
+			tools, toolErr = c.compactionTools(ctx, event.ConversationID)
+			if toolErr != nil {
+				return toolErr
+			}
+		}
+		reasoningEffort, reasoningSummary, textVerbosity = modelRequestParameters(execution.DefaultParameters)
+		maxOutputTokens = c.settings.CompactMaxOutputTokens
+		if execution.MaxOutputTokens > 0 && (maxOutputTokens <= 0 || execution.MaxOutputTokens < maxOutputTokens) {
+			maxOutputTokens = execution.MaxOutputTokens
+		}
+		inputLimit = modelRequestInputLimit(execution.ContextWindowTokens, maxOutputTokens)
+		return nil
+	}
+	if err := configureExecution(); err != nil {
+		return err
+	}
+	fallbackExecution := turnExecution
+	if fallbackExecution == execution {
+		fallbackExecution = nil
+	}
+	var input []llm.ModelItem
+	for {
+		compactionContext := &cache.ContextSnapshot{Anchor: hot.Anchor, Tail: compactedMessages}
+		if err := c.loader.loadConversationModelInput(ctx, event.ConversationID, compactionContext); err != nil {
 			return err
 		}
-	}
-	reasoningEffort, reasoningSummary, textVerbosity := modelRequestParameters(execution.DefaultParameters)
-	maxOutputTokens := c.settings.CompactMaxOutputTokens
-	if execution.MaxOutputTokens > 0 && (maxOutputTokens <= 0 || execution.MaxOutputTokens < maxOutputTokens) {
-		maxOutputTokens = execution.MaxOutputTokens
+		input = truncateModelContextItems(buildConversationHistoryInput(compactionContext), c.tools.modelToolOutputTokenLimit())
+		input = append(input, llm.ModelItem{
+			Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: compactPrompt,
+		})
+		if estimateModelContextTokens(c.settings.AgentSystemPrompt, input, tools) <= inputLimit {
+			break
+		}
+		boundary := previousCompactionTurnBoundary(compactedMessages)
+		if boundary <= 0 {
+			if fallbackExecution != nil && fallbackExecution.ContextWindowTokens > execution.ContextWindowTokens {
+				execution = fallbackExecution
+				fallbackExecution = nil
+				if err := configureExecution(); err != nil {
+					return err
+				}
+				continue
+			}
+			input = emergencyCompactionInput(hot.Anchor, compactedMessages, compactPrompt, inputLimit, c.settings.AgentSystemPrompt, tools)
+			if len(input) > 0 && estimateModelContextTokens(c.settings.AgentSystemPrompt, input, tools) <= inputLimit {
+				break
+			}
+			return errors.New("oldest conversation turn exceeds compaction model context window")
+		}
+		retainedMessages = append(append([]domain.Message(nil), compactedMessages[boundary:]...), retainedMessages...)
+		compactedMessages = compactedMessages[:boundary]
 	}
 
 	request := llm.ModelRequest{
-		Model:            execution.UpstreamModel,
-		CatalogModelID:   execution.ModelID,
-		ModelRevision:    execution.ModelRevision,
-		ModelPriceID:     execution.ModelPriceID,
-		PricingSnapshot:  execution.PricingSnapshot,
-		CredentialID:     execution.CredentialID,
-		ProviderBaseURL:  execution.BaseURL,
-		ReasoningEffort:  reasoningEffort,
-		ReasoningSummary: reasoningSummary,
-		TextVerbosity:    textVerbosity,
-		Instructions:     c.settings.AgentSystemPrompt,
-		Input:            input,
-		Tools:            tools,
-		PromptCacheKey:   conversationPromptCacheKey(event.ConversationID),
-		ToolChoice:       "none",
-		MaxOutputTokens:  maxOutputTokens,
+		Model:               execution.UpstreamModel,
+		ContextWindowTokens: execution.ContextWindowTokens,
+		CatalogModelID:      execution.ModelID,
+		ModelRevision:       execution.ModelRevision,
+		ModelPriceID:        execution.ModelPriceID,
+		PricingSnapshot:     execution.PricingSnapshot,
+		CredentialID:        execution.CredentialID,
+		ProviderBaseURL:     execution.BaseURL,
+		ReasoningEffort:     reasoningEffort,
+		ReasoningSummary:    reasoningSummary,
+		TextVerbosity:       textVerbosity,
+		Instructions:        c.settings.AgentSystemPrompt,
+		Input:               input,
+		Tools:               tools,
+		PromptCacheKey:      conversationPromptCacheKey(event.ConversationID),
+		ToolChoice:          "none",
+		MaxOutputTokens:     maxOutputTokens,
 		Metadata: map[string]string{
 			"conversation_id": event.ConversationID,
 			"workflow":        "compaction",
@@ -163,7 +214,29 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		return err
 	}
 
-	updatedHead, err := c.store.CompleteCompaction(ctx, event.ConversationID, anchor, head.LastSeq)
+	postCompactionContext := &cache.ContextSnapshot{
+		Anchor: &cache.ContextAnchor{
+			ConversationID: anchor.ConversationID, Generation: anchor.Generation,
+			CoveredFromSeq: anchor.CoveredFromSeq, CoveredUntilSeq: anchor.CoveredUntilSeq,
+			Role: anchor.Role, Content: anchor.Content, TokenCount: anchor.TokenCount,
+		},
+		Tail: retainedMessages,
+	}
+	if err := c.loader.loadConversationModelInput(ctx, event.ConversationID, postCompactionContext); err != nil {
+		return err
+	}
+	postCompactionInput := truncateModelContextItems(buildConversationHistoryInput(postCompactionContext), c.tools.modelToolOutputTokenLimit())
+	contextTools := tools
+	if turnExecution != nil && !turnExecution.SupportsTools {
+		contextTools = nil
+	} else if turnExecution != nil && turnExecution.SupportsTools && len(contextTools) == 0 {
+		contextTools, err = c.compactionTools(ctx, event.ConversationID)
+		if err != nil {
+			return err
+		}
+	}
+	activeContextTokens := estimateModelContextTokens(c.settings.AgentSystemPrompt, postCompactionInput, contextTools)
+	updatedHead, err := c.store.CompleteCompaction(ctx, event.ConversationID, anchor, head.LastSeq, activeContextTokens)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
 			return nil
@@ -195,6 +268,10 @@ func contextMessages(messages []domain.Message) []domain.Message {
 }
 
 func splitCompactionMessages(messages []domain.Message) ([]domain.Message, []domain.Message) {
+	return splitCompactionMessagesForEvent(messages, "")
+}
+
+func splitCompactionMessagesForEvent(messages []domain.Message, eventType string) ([]domain.Message, []domain.Message) {
 	if len(messages) == 0 {
 		return nil, nil
 	}
@@ -218,7 +295,12 @@ func splitCompactionMessages(messages []domain.Message) ([]domain.Message, []dom
 	if keepTurns > 0 {
 		split = turnStarts[len(turnStarts)-keepTurns]
 	}
-	for retainedMessageTokens(messages[split:]) > compactionRetainMaxTokens && split < len(messages) {
+	protectedStart := len(messages)
+	if eventType == EventTurnAccepted && len(turnStarts) > 0 {
+		protectedStart = turnStarts[len(turnStarts)-1]
+		split = min(split, protectedStart)
+	}
+	for retainedMessageTokens(messages[split:]) > compactionRetainMaxTokens && split < protectedStart {
 		nextTurn := len(messages)
 		for _, start := range turnStarts {
 			if start > split {
@@ -226,10 +308,49 @@ func splitCompactionMessages(messages []domain.Message) ([]domain.Message, []dom
 				break
 			}
 		}
-		split = nextTurn
+		split = min(nextTurn, protectedStart)
 	}
 
 	return append([]domain.Message(nil), messages[:split]...), append([]domain.Message(nil), messages[split:]...)
+}
+
+func previousCompactionTurnBoundary(messages []domain.Message) int {
+	for index := len(messages) - 1; index > 0; index-- {
+		if messages[index].Role == domain.RoleUser {
+			return index
+		}
+	}
+	return 0
+}
+
+func emergencyCompactionInput(anchor *cache.ContextAnchor, messages []domain.Message, compactPrompt string, inputLimit int, instructions string, tools []llm.ModelTool) []llm.ModelItem {
+	prompt := llm.ModelItem{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: compactPrompt}
+	reservedTokens := estimateModelContextTokens(instructions, []llm.ModelItem{prompt}, tools) + 128
+	if inputLimit <= reservedTokens {
+		return nil
+	}
+
+	var transcript strings.Builder
+	if anchor != nil && strings.TrimSpace(anchor.Content) != "" {
+		fmt.Fprintf(&transcript, "%s: %s\n", anchor.Role, strings.TrimSpace(anchor.Content))
+	}
+	for _, message := range messages {
+		if message.ContextExcluded || strings.TrimSpace(message.ContentText) == "" {
+			continue
+		}
+		fmt.Fprintf(&transcript, "%s: %s\n", message.Role, strings.TrimSpace(message.ContentText))
+	}
+	if transcript.Len() == 0 {
+		return nil
+	}
+	history := truncateMiddle(strings.TrimSpace(transcript.String()), (inputLimit-reservedTokens)*4)
+	return []llm.ModelItem{
+		{
+			Type: llm.ModelItemMessage, Role: domain.RoleUser,
+			Content: "<conversation-history>\n" + history + "\n</conversation-history>",
+		},
+		prompt,
+	}
 }
 
 func retainedMessageTokens(messages []domain.Message) int {

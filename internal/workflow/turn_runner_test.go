@@ -63,7 +63,7 @@ func (s *stubRunnerContextStore) ListRawTailMessages(context.Context, string, in
 	return append([]domain.Message(nil), s.messages...), nil
 }
 
-func (s *stubRunnerContextStore) CompleteCompaction(context.Context, string, domain.AnchorObject, int64) (*domain.ContextHead, error) {
+func (s *stubRunnerContextStore) CompleteCompaction(context.Context, string, domain.AnchorObject, int64, int) (*domain.ContextHead, error) {
 	return s.head, nil
 }
 
@@ -288,6 +288,51 @@ func TestTurnRunnerRetryInputReplacesOriginalUserPrompt(t *testing.T) {
 	}
 }
 
+func TestTurnRunnerRetryInputTruncatesRawToolOutput(t *testing.T) {
+	toolOutput := strings.Repeat("x", 1_000)
+	request, err := json.Marshal(map[string]any{"input": []any{
+		map[string]any{"type": "message", "role": "assistant", "content": "context"},
+		map[string]any{"type": llm.ModelItemFunctionCallOutput, "call_id": "call-1", "output": toolOutput},
+		map[string]any{"type": "message", "role": "user", "content": "original"},
+	}})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	artifacts := &stubTurnArtifactStore{data: map[string][]byte{"requests/conv-1/root-turn.json": request}}
+	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, nil, nil)
+	orchestrator.modelToolOutputMaxTokens = 50
+	runner := &TurnRunner{
+		blobs: artifacts,
+		store: &stubTurnWorkflowStore{userMessage: &domain.Message{
+			Role: domain.RoleUser, ContentText: "edited prompt", ContextExcluded: true,
+		}},
+		loader: &ContextLoader{},
+		tools:  orchestrator,
+	}
+
+	items, err := runner.retryModelInput(t.Context(), "conv-1", "root-turn", "variant-turn")
+	if err != nil {
+		t.Fatalf("retryModelInput() error = %v", err)
+	}
+	if len(items) != 3 || !strings.Contains(items[1].Output, "Warning: truncated output") || len(items[1].Raw) != 0 {
+		t.Fatalf("retry tool output was not bounded: %#v", items)
+	}
+}
+
+func TestTurnRunnerHydratesLegacyScheduledRunContextWindow(t *testing.T) {
+	execution := testExecutionSnapshot()
+	execution.ContextWindowTokens = 128_000
+	runner := &TurnRunner{models: &stubTurnExecutionReader{execution: execution}}
+	state := &ScheduledRunState{Request: llm.ModelRequest{Model: "gpt-test"}}
+
+	if err := runner.hydrateScheduledRunState(t.Context(), "turn-1", state); err != nil {
+		t.Fatalf("hydrate scheduled state: %v", err)
+	}
+	if state.Request.ContextWindowTokens != 128_000 {
+		t.Fatalf("context window = %d, want 128000", state.Request.ContextWindowTokens)
+	}
+}
+
 func TestTurnRunnerFailedTurnRetryFallsBackToHotContext(t *testing.T) {
 	contextStore := &stubRunnerContextStore{
 		head: &domain.ContextHead{ConversationID: "conv-1", RawTailStartSeq: 1, LastSeq: 3, ActiveContextTokens: 3},
@@ -334,7 +379,8 @@ func TestVariantSourceTurnIDUsesSelectedVariant(t *testing.T) {
 }
 
 type stubTurnExecutionReader struct {
-	execution *domain.ModelExecutionSnapshot
+	execution  *domain.ModelExecutionSnapshot
+	resolveErr error
 }
 
 func testExecutionSnapshot() *domain.ModelExecutionSnapshot {
@@ -347,6 +393,9 @@ func testExecutionSnapshot() *domain.ModelExecutionSnapshot {
 }
 
 func (s *stubTurnExecutionReader) ResolveExecution(context.Context, string, bool) (*domain.ModelExecutionSnapshot, error) {
+	if s.resolveErr != nil {
+		return nil, s.resolveErr
+	}
 	return s.execution, nil
 }
 
@@ -454,7 +503,8 @@ func TestTurnRunnerRequestedEventExecutesOneRequestThenReschedules(t *testing.T)
 		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
 		Request: llm.ModelRequest{
-			Model: "gpt-test", Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}},
+			Model: "gpt-test", ContextWindowTokens: 1_000,
+			Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}},
 			Tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}},
 		},
 	}

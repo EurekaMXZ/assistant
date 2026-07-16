@@ -46,6 +46,22 @@ func TestScheduledRunExecutesExactlyOneModelRequest(t *testing.T) {
 	}
 }
 
+func TestScheduledRunRejectsAggregateInputAboveContextLimit(t *testing.T) {
+	model := &stubModelClient{}
+	orchestrator := NewToolOrchestrator(model, nil, nil, nil, nil, nil)
+	state := &ScheduledRunState{Request: llm.ModelRequest{
+		Model: "gpt-test", ContextWindowTokens: 100,
+		Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: strings.Repeat("x", 1_000)}},
+	}}
+
+	if _, err := orchestrator.RequestScheduledRun(t.Context(), state, nil); err == nil {
+		t.Fatal("expected oversized aggregate input to be rejected")
+	}
+	if len(model.streamRequests) != 0 {
+		t.Fatalf("oversized request reached model: %#v", model.streamRequests)
+	}
+}
+
 func TestScheduledRunPersistsContinuationForNextRequest(t *testing.T) {
 	functionTool := llm.ModelTool{Type: llm.ModelToolTypeFunction, Name: "lookup"}
 	model := &stubModelClient{
@@ -100,6 +116,76 @@ func TestScheduledRunPersistsContinuationForNextRequest(t *testing.T) {
 	}
 	if loaded.StepIndex != 2 || len(loaded.Request.Input) != 3 || loaded.Request.PromptCacheKey != input.PromptCacheKey {
 		t.Fatalf("loaded continuation = %#v", loaded)
+	}
+}
+
+func TestScheduledRunTruncatesModelVisibleToolOutputButPersistsFullArtifact(t *testing.T) {
+	fullOutput := `{"value":"` + strings.Repeat("x", 1_000) + `"}`
+	functionTool := llm.ModelTool{Type: llm.ModelToolTypeFunction, Name: "lookup"}
+	model := &stubModelClient{results: []*llm.ModelResult{{
+		OutputItems: []llm.ModelItem{{
+			Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{}`),
+		}},
+	}}}
+	executor := &stubToolExecutor{result: &tool.ToolExecutionResult{OutputItem: llm.ModelItem{
+		Type: llm.ModelItemFunctionCallOutput, CallID: "call-1", Output: fullOutput,
+	}}}
+	artifacts := &stubToolArtifactStore{}
+	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{functionTool}}, executor, nil, artifacts, &stubToolCallStore{})
+	orchestrator.modelToolOutputMaxTokens = 50
+	state, _, err := orchestrator.PrepareScheduledRun(t.Context(), ToolRunInput{
+		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, Model: "gpt-test",
+		Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}},
+	}, 1, 1)
+	if err != nil {
+		t.Fatalf("prepare scheduled run: %v", err)
+	}
+	outcome, err := orchestrator.RequestScheduledRun(t.Context(), state, nil)
+	if err != nil {
+		t.Fatalf("request scheduled run: %v", err)
+	}
+	if err := orchestrator.PostprocessScheduledRun(t.Context(), &domain.TurnRun{ID: "run-1", TurnID: "turn-1", StepIndex: 1}, state, outcome); err != nil {
+		t.Fatalf("postprocess scheduled run: %v", err)
+	}
+
+	modelVisible := outcome.NextState.Request.Input[len(outcome.NextState.Request.Input)-1].Output
+	if !strings.Contains(modelVisible, "Warning: truncated output") || modelVisible == fullOutput {
+		t.Fatalf("model-visible output was not truncated: %q", modelVisible)
+	}
+	artifactKey := artifacts.ToolCallOutputKey("conv-1", "turn-1", "call-1")
+	if got := string(artifacts.data[artifactKey]); got != fullOutput {
+		t.Fatalf("persisted output was modified: got %q", got)
+	}
+}
+
+func TestLoadScheduledRunStateTruncatesLegacyToolOutput(t *testing.T) {
+	artifacts := &stubToolArtifactStore{}
+	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, artifacts, nil)
+	orchestrator.modelToolOutputMaxTokens = 50
+	legacyRaw, err := json.Marshal(map[string]any{
+		"type": llm.ModelItemFunctionCallOutput, "call_id": "call-1", "output": strings.Repeat("x", 1_000),
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy output: %v", err)
+	}
+	state := &ScheduledRunState{
+		Version: scheduledRunStateVersion, StepIndex: 2, InitialInputCount: 1,
+		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{Input: []llm.ModelItem{
+			{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "request"},
+			{Type: llm.ModelItemFunctionCallOutput, Raw: legacyRaw},
+		}},
+	}
+	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("persist legacy state: %v", err)
+	}
+	loaded, err := orchestrator.LoadScheduledRunState(t.Context(), stateKey)
+	if err != nil {
+		t.Fatalf("load legacy state: %v", err)
+	}
+	if !strings.Contains(loaded.Request.Input[1].Output, "Warning: truncated output") {
+		t.Fatalf("legacy output was not truncated: %#v", loaded.Request.Input[1])
 	}
 }
 

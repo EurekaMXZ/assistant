@@ -22,12 +22,13 @@ type ScheduledRunState struct {
 }
 
 type ScheduledRunOutcome struct {
-	Model         *llm.ModelResult   `json:"model"`
-	Tools         []llm.ModelTool    `json:"tools,omitempty"`
-	ContextItems  []llm.ModelItem    `json:"context_items,omitempty"`
-	NextState     *ScheduledRunState `json:"next_state,omitempty"`
-	NextRequest   json.RawMessage    `json:"next_request,omitempty"`
-	Postprocessed bool               `json:"postprocessed"`
+	Model               *llm.ModelResult   `json:"model"`
+	ContextWindowTokens int                `json:"context_window_tokens,omitempty"`
+	Tools               []llm.ModelTool    `json:"tools,omitempty"`
+	ContextItems        []llm.ModelItem    `json:"context_items,omitempty"`
+	NextState           *ScheduledRunState `json:"next_state,omitempty"`
+	NextRequest         json.RawMessage    `json:"next_request,omitempty"`
+	Postprocessed       bool               `json:"postprocessed"`
 }
 
 func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRunInput, stepIndex int, initialInputCount int) (*ScheduledRunState, json.RawMessage, error) {
@@ -43,23 +44,24 @@ func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRu
 		return nil, nil, err
 	}
 	request := llm.ModelRequest{
-		Model:             input.Model,
-		CatalogModelID:    input.CatalogModelID,
-		ModelRevision:     input.ModelRevision,
-		ModelPriceID:      input.ModelPriceID,
-		PricingSnapshot:   append(json.RawMessage(nil), input.PricingSnapshot...),
-		CredentialID:      input.CredentialID,
-		ProviderBaseURL:   input.ProviderBaseURL,
-		ReasoningEffort:   input.ReasoningEffort,
-		ReasoningSummary:  input.ReasoningSummary,
-		TextVerbosity:     input.TextVerbosity,
-		Instructions:      input.Instructions,
-		Input:             cloneModelItems(input.Input),
-		Tools:             tools,
-		PromptCacheKey:    input.PromptCacheKey,
-		MaxOutputTokens:   input.MaxOutputTokens,
-		Metadata:          cloneStringMap(input.Metadata),
-		ParallelToolCalls: input.ParallelToolCalls,
+		Model:               input.Model,
+		ContextWindowTokens: input.ContextWindowTokens,
+		CatalogModelID:      input.CatalogModelID,
+		ModelRevision:       input.ModelRevision,
+		ModelPriceID:        input.ModelPriceID,
+		PricingSnapshot:     append(json.RawMessage(nil), input.PricingSnapshot...),
+		CredentialID:        input.CredentialID,
+		ProviderBaseURL:     input.ProviderBaseURL,
+		ReasoningEffort:     input.ReasoningEffort,
+		ReasoningSummary:    input.ReasoningSummary,
+		TextVerbosity:       input.TextVerbosity,
+		Instructions:        input.Instructions,
+		Input:               truncateModelContextItems(input.Input, o.modelToolOutputTokenLimit()),
+		Tools:               tools,
+		PromptCacheKey:      input.PromptCacheKey,
+		MaxOutputTokens:     input.MaxOutputTokens,
+		Metadata:            cloneStringMap(input.Metadata),
+		ParallelToolCalls:   input.ParallelToolCalls,
 	}
 	rawRequest, err := o.model.MarshalRequest(request)
 	if err != nil {
@@ -78,8 +80,17 @@ func (o *ToolOrchestrator) RequestScheduledRun(ctx context.Context, state *Sched
 	if o == nil || o.model == nil || state == nil {
 		return nil, fmt.Errorf("scheduled request requires orchestrator and state")
 	}
+	outcome := &ScheduledRunOutcome{
+		ContextWindowTokens: state.Request.ContextWindowTokens,
+		Tools:               cloneModelTools(state.Request.Tools),
+	}
+	inputTokens := estimateModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	if inputLimit := modelRequestInputLimit(state.Request.ContextWindowTokens, 0); inputLimit > 0 && inputTokens > inputLimit {
+		return outcome, fmt.Errorf("scheduled model input estimate %d exceeds context limit", inputTokens)
+	}
 	result, err := o.model.StreamResponse(ctx, state.Request, handler)
-	return &ScheduledRunOutcome{Model: result, Tools: cloneModelTools(state.Request.Tools)}, err
+	outcome.Model = result
+	return outcome, err
 }
 
 func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *domain.TurnRun, state *ScheduledRunState, outcome *ScheduledRunOutcome) error {
@@ -110,7 +121,7 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 			return fmt.Errorf("tool action %s is not implemented yet", describeModelItem(*action))
 		}
 		initialInput := state.Request.Input[:state.InitialInputCount]
-		outcome.ContextItems = buildModelContextItems(initialInput, state.Request.Input, result)
+		outcome.ContextItems = buildModelContextItems(initialInput, state.Request.Input, result, o.modelToolOutputTokenLimit())
 		outcome.Postprocessed = true
 		return nil
 	}
@@ -120,12 +131,14 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 
 	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
 	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
-	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, modelItemsToToolCalls(functionCalls))
+	toolOutputBudget := remainingToolOutputTokens(state.Request, nextInput, result.Usage.TotalTokens)
+	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, modelItemsToToolCalls(functionCalls), toolOutputBudget)
 	if err != nil {
 		return err
 	}
 	nextState, nextRequest, err := o.PrepareScheduledRun(ctx, ToolRunInput{
-		Scope: nextScope, Model: state.Request.Model, Instructions: state.Request.Instructions,
+		Scope: nextScope, Model: state.Request.Model, ContextWindowTokens: state.Request.ContextWindowTokens,
+		Instructions:   state.Request.Instructions,
 		CatalogModelID: state.Request.CatalogModelID, ModelRevision: state.Request.ModelRevision,
 		ModelPriceID: state.Request.ModelPriceID, PricingSnapshot: state.Request.PricingSnapshot,
 		CredentialID: state.Request.CredentialID, ProviderBaseURL: state.Request.ProviderBaseURL,
@@ -182,6 +195,7 @@ func (o *ToolOrchestrator) LoadScheduledRunState(ctx context.Context, key string
 	if state.StepIndex <= 0 || state.InitialInputCount < 0 || state.InitialInputCount > len(state.Request.Input) {
 		return nil, fmt.Errorf("invalid scheduled run state")
 	}
+	state.Request.Input = truncateModelContextItems(state.Request.Input, o.modelToolOutputTokenLimit())
 	return &state, nil
 }
 

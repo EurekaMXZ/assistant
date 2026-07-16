@@ -258,11 +258,15 @@ func TestValidateWorkerRejectsUnsafeCubeSandboxDomainAllowList(t *testing.T) {
 
 func TestLoadReadsRemoteToolReplayMaxBytes(t *testing.T) {
 	t.Setenv("REMOTE_TOOL_REPLAY_MAX_BYTES", "4096")
+	t.Setenv("AGENT_MODEL_TOOL_OUTPUT_MAX_TOKENS", "9000")
 
 	cfg := Load()
 
 	if cfg.RemoteToolReplayMaxBytes != 4096 {
 		t.Fatalf("RemoteToolReplayMaxBytes = %d, want %d", cfg.RemoteToolReplayMaxBytes, 4096)
+	}
+	if cfg.ModelToolOutputMaxTokens != 9000 {
+		t.Fatalf("ModelToolOutputMaxTokens = %d, want %d", cfg.ModelToolOutputMaxTokens, 9000)
 	}
 }
 

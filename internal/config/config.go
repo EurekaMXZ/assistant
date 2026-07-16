@@ -37,8 +37,9 @@ const (
 	defaultMinIOSecretKey            = "assistantminio123"
 	defaultOpenAIUserAgent           = "assistant"
 	defaultRemoteToolReplayMaxBytes  = 16384
+	defaultModelToolOutputMaxTokens  = 10000
 	defaultCompactOutputTokens       = 1536
-	defaultCompactTriggerTokens      = 12000
+	defaultCompactTriggerTokens      = 0
 	defaultCacheMaxConversations     = 1024
 	defaultCacheTailCapacity         = 256
 	defaultOutboxBatchSize           = 100
@@ -128,6 +129,7 @@ type Config struct {
 	AgentSystemPrompt           string
 	AgentCompactPrompt          string
 	RemoteToolReplayMaxBytes    int
+	ModelToolOutputMaxTokens    int
 	CompactMaxOutputTokens      int
 	CompactTriggerTokens        int
 	CacheMaxConversations       int
@@ -203,6 +205,7 @@ func Load() Config {
 		AgentSystemPromptFile:       getenv("AGENT_SYSTEM_PROMPT_FILE", defaultAgentSystemPromptFile),
 		AgentCompactPromptFile:      getenv("AGENT_COMPACT_PROMPT_FILE", defaultAgentCompactPromptFile),
 		RemoteToolReplayMaxBytes:    getenvInt("REMOTE_TOOL_REPLAY_MAX_BYTES", defaultRemoteToolReplayMaxBytes),
+		ModelToolOutputMaxTokens:    getenvInt("AGENT_MODEL_TOOL_OUTPUT_MAX_TOKENS", defaultModelToolOutputMaxTokens),
 		CompactMaxOutputTokens:      getenvInt("AGENT_COMPACT_MAX_OUTPUT_TOKENS", defaultCompactOutputTokens),
 		CompactTriggerTokens:        getenvInt("AGENT_COMPACT_TRIGGER_TOKENS", defaultCompactTriggerTokens),
 		CacheMaxConversations:       getenvInt("CACHE_MAX_CONVERSATIONS", defaultCacheMaxConversations),

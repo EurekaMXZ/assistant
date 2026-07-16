@@ -15,26 +15,28 @@ import (
 
 const toolRunProviderOpenAIResponses = "openai.responses"
 const defaultRemoteToolReplayMaxBytes = 16 * 1024
+const defaultModelToolOutputMaxTokens = 10_000
 
 type ToolRunInput struct {
-	Scope             tool.ToolScope
-	Model             string
-	CatalogModelID    string
-	ModelRevision     int64
-	ModelPriceID      string
-	PricingSnapshot   json.RawMessage
-	CredentialID      string
-	ProviderBaseURL   string
-	ReasoningEffort   string
-	ReasoningSummary  string
-	TextVerbosity     string
-	DisableTools      bool
-	Instructions      string
-	Input             []llm.ModelItem
-	PromptCacheKey    string
-	MaxOutputTokens   int
-	Metadata          map[string]string
-	ParallelToolCalls *bool
+	Scope               tool.ToolScope
+	Model               string
+	ContextWindowTokens int
+	CatalogModelID      string
+	ModelRevision       int64
+	ModelPriceID        string
+	PricingSnapshot     json.RawMessage
+	CredentialID        string
+	ProviderBaseURL     string
+	ReasoningEffort     string
+	ReasoningSummary    string
+	TextVerbosity       string
+	DisableTools        bool
+	Instructions        string
+	Input               []llm.ModelItem
+	PromptCacheKey      string
+	MaxOutputTokens     int
+	Metadata            map[string]string
+	ParallelToolCalls   *bool
 }
 
 type ToolRunResult struct {
@@ -51,6 +53,7 @@ type ToolOrchestrator struct {
 	artifacts                ToolArtifactStore
 	calls                    ToolCallStore
 	remoteToolReplayMaxBytes int
+	modelToolOutputMaxTokens int
 }
 
 func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, executor tool.ToolExecutor, publisher stream.Publisher, artifacts ToolArtifactStore, calls ToolCallStore) *ToolOrchestrator {
@@ -306,6 +309,13 @@ func (o *ToolOrchestrator) remoteToolReplayLimit() int {
 		return defaultRemoteToolReplayMaxBytes
 	}
 	return o.remoteToolReplayMaxBytes
+}
+
+func (o *ToolOrchestrator) modelToolOutputTokenLimit() int {
+	if o == nil || o.modelToolOutputMaxTokens <= 0 {
+		return defaultModelToolOutputMaxTokens
+	}
+	return o.modelToolOutputMaxTokens
 }
 
 func functionCalls(result *llm.ModelResult) []llm.ModelItem {

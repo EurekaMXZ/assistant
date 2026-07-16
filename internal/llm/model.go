@@ -78,25 +78,26 @@ type ModelTool struct {
 }
 
 type ModelRequest struct {
-	Model             string            `json:"model"`
-	CatalogModelID    string            `json:"catalog_model_id,omitempty"`
-	ModelRevision     int64             `json:"model_revision,omitempty"`
-	ModelPriceID      string            `json:"model_price_id,omitempty"`
-	PricingSnapshot   json.RawMessage   `json:"pricing_snapshot,omitempty"`
-	CredentialID      string            `json:"credential_id,omitempty"`
-	ProviderBaseURL   string            `json:"provider_base_url,omitempty"`
-	Instructions      string            `json:"instructions,omitempty"`
-	Input             []ModelItem       `json:"input"`
-	Tools             []ModelTool       `json:"tools,omitempty"`
-	Include           []string          `json:"include,omitempty"`
-	PromptCacheKey    string            `json:"prompt_cache_key,omitempty"`
-	ToolChoice        string            `json:"tool_choice,omitempty"`
-	ReasoningEffort   string            `json:"reasoning_effort,omitempty"`
-	ReasoningSummary  string            `json:"reasoning_summary,omitempty"`
-	TextVerbosity     string            `json:"text_verbosity,omitempty"`
-	MaxOutputTokens   int               `json:"max_output_tokens,omitempty"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
-	ParallelToolCalls *bool             `json:"parallel_tool_calls,omitempty"`
+	Model               string            `json:"model"`
+	ContextWindowTokens int               `json:"context_window_tokens,omitempty"`
+	CatalogModelID      string            `json:"catalog_model_id,omitempty"`
+	ModelRevision       int64             `json:"model_revision,omitempty"`
+	ModelPriceID        string            `json:"model_price_id,omitempty"`
+	PricingSnapshot     json.RawMessage   `json:"pricing_snapshot,omitempty"`
+	CredentialID        string            `json:"credential_id,omitempty"`
+	ProviderBaseURL     string            `json:"provider_base_url,omitempty"`
+	Instructions        string            `json:"instructions,omitempty"`
+	Input               []ModelItem       `json:"input"`
+	Tools               []ModelTool       `json:"tools,omitempty"`
+	Include             []string          `json:"include,omitempty"`
+	PromptCacheKey      string            `json:"prompt_cache_key,omitempty"`
+	ToolChoice          string            `json:"tool_choice,omitempty"`
+	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
+	ReasoningSummary    string            `json:"reasoning_summary,omitempty"`
+	TextVerbosity       string            `json:"text_verbosity,omitempty"`
+	MaxOutputTokens     int               `json:"max_output_tokens,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+	ParallelToolCalls   *bool             `json:"parallel_tool_calls,omitempty"`
 }
 
 type ModelUsage struct {
