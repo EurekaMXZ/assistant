@@ -143,6 +143,10 @@
   overflow-wrap: anywhere;
 }
 
+.chat-markdown [data-streamdown="link"] {
+  cursor: pointer;
+}
+
 .chat-markdown :not(pre) > code {
   overflow-wrap: anywhere;
   white-space: normal;
