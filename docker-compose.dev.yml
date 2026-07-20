@@ -12,6 +12,5 @@ services:
       - "127.0.0.1:9092:9092"
 
   minio:
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:3000

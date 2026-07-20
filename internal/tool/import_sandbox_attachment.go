@@ -84,39 +84,60 @@ func (uc ImportSandboxAttachment) Execute(ctx context.Context, input ImportSandb
 		return nil, domain.NewValidationError(fmt.Sprintf("attachment must be between 1 and %d bytes", domain.SandboxFileMaxBytes))
 	}
 
-	reader, err := uc.Blobs.OpenReader(operationCtx, attachment.ObjectKey)
-	if err != nil {
-		return nil, fmt.Errorf("read attachment content: %w", err)
-	}
-	defer reader.Close()
-	hasher := sha256.New()
-	data, err := io.ReadAll(io.TeeReader(io.LimitReader(reader, attachment.SizeBytes+1), hasher))
-	if err != nil {
-		return nil, fmt.Errorf("read attachment content: %w", err)
-	}
-	if int64(len(data)) != attachment.SizeBytes {
-		return nil, fmt.Errorf("attachment size mismatch: stored=%d expected=%d", len(data), attachment.SizeBytes)
-	}
-	actualSHA256 := hex.EncodeToString(hasher.Sum(nil))
-	if !strings.EqualFold(strings.TrimSpace(attachment.SHA256), actualSHA256) {
-		return nil, errors.New("attachment checksum mismatch")
-	}
-
 	sandboxPath := sandboxAttachmentPath(attachment)
-	result := &SandboxAttachmentImportResult{
-		AttachmentID: attachment.ID,
-		Filename:     attachment.Filename,
-		ContentType:  attachment.ContentType,
-		SizeBytes:    attachment.SizeBytes,
-		SHA256:       actualSHA256,
-		SandboxPath:  sandboxPath,
-	}
 	return runConversationSandboxExecution(operationCtx, uc.Sandboxes, uc.Runtime, uc.Locker, conversationID, input.RequestKey, sandboxAttachmentImportTimeout+sandboxExecutionLeaseBuffer, func(writeCtx context.Context, handle domain.SandboxHandle) (*SandboxAttachmentImportResult, error) {
-		if err := uc.Runtime.WriteSandboxFile(writeCtx, handle, sandboxPath, data, input.RequestKey); err != nil {
+		reader, err := uc.Blobs.OpenReader(writeCtx, attachment.ObjectKey)
+		if err != nil {
+			return nil, fmt.Errorf("open attachment stream: %w", err)
+		}
+		defer reader.Close()
+
+		hasher := sha256.New()
+		stream := &countingReader{reader: io.TeeReader(io.LimitReader(reader, attachment.SizeBytes), hasher)}
+		temporaryPath := sandboxPath + ".partial"
+		if err := uc.Runtime.WriteSandboxFile(writeCtx, handle, temporaryPath, stream, attachment.SizeBytes, input.RequestKey+":stream"); err != nil {
 			return nil, err
 		}
-		return result, nil
+		if stream.read != attachment.SizeBytes {
+			return nil, fmt.Errorf("attachment size mismatch: streamed=%d expected=%d", stream.read, attachment.SizeBytes)
+		}
+		var extra [1]byte
+		if count, readErr := reader.Read(extra[:]); count != 0 || (readErr != nil && !errors.Is(readErr, io.EOF)) {
+			return nil, errors.New("attachment contains more bytes than expected")
+		}
+		actualSHA256 := hex.EncodeToString(hasher.Sum(nil))
+		if expected := strings.TrimSpace(attachment.SHA256); expected != "" && !strings.EqualFold(expected, actualSHA256) {
+			return nil, errors.New("attachment checksum mismatch")
+		}
+		move, err := uc.Runtime.ExecSandboxCommand(writeCtx, handle, domain.SandboxCommandRequest{
+			Command: "mv", Args: []string{"--", temporaryPath, sandboxPath}, WorkingDirectory: "/workspace", TimeoutSeconds: 30,
+		}, input.RequestKey+":commit")
+		if err != nil {
+			return nil, fmt.Errorf("commit sandbox attachment: %w", err)
+		}
+		if move == nil || move.ExitCode != 0 {
+			return nil, fmt.Errorf("commit sandbox attachment failed: %s", strings.TrimSpace(move.Output))
+		}
+		return &SandboxAttachmentImportResult{
+			AttachmentID: attachment.ID,
+			Filename:     attachment.Filename,
+			ContentType:  attachment.ContentType,
+			SizeBytes:    attachment.SizeBytes,
+			SHA256:       actualSHA256,
+			SandboxPath:  sandboxPath,
+		}, nil
 	})
+}
+
+type countingReader struct {
+	reader io.Reader
+	read   int64
+}
+
+func (r *countingReader) Read(buffer []byte) (int, error) {
+	count, err := r.reader.Read(buffer)
+	r.read += int64(count)
+	return count, err
 }
 
 func sandboxAttachmentPath(attachment domain.Attachment) string {

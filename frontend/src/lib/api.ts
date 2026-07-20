@@ -25,6 +25,7 @@ import type {
   User,
 } from "./types";
 import { z } from "zod";
+import { createMD5, createSHA256, sha256 as hashSHA256 } from "hash-wasm";
 import {
   attachmentSchema,
   auditEventSchema,
@@ -49,6 +50,7 @@ import {
   sessionSchema,
   turnSchema,
   userSchema,
+  presignedObjectUrlSchema,
 } from "./api-schemas";
 import { normalizeTurnRequest, requestMetadata, type TurnRequestDescriptor } from "./turn-request";
 import { openAuthDialog } from "./auth-dialog-events";
@@ -771,53 +773,83 @@ export async function getConversationShare(shareId: string, signal?: AbortSignal
 }
 
 // Attachments
+export async function hashFile(file: File) {
+  const [md5, sha256] = await Promise.all([createMD5(), createSHA256()]);
+  const chunkBytes = 4 << 20;
+  for (let offset = 0; offset < file.size; offset += chunkBytes) {
+    const chunk = new Uint8Array(await file.slice(offset, offset + chunkBytes).arrayBuffer());
+    md5.update(chunk);
+    sha256.update(chunk);
+  }
+  const md5Bytes = md5.digest("binary");
+  let md5Binary = "";
+  for (const byte of md5Bytes) md5Binary += String.fromCharCode(byte);
+  return { contentMD5: btoa(md5Binary), sha256: sha256.digest("hex") };
+}
+
+export async function sha256File(file: File) {
+  return (await hashFile(file)).sha256;
+}
+
 export async function uploadConversationAttachment(
   conversationId: string,
   file: File,
   idempotencyKey?: string,
 ) {
-  const body = new FormData();
-  body.append("file", file);
-
-  return apiFetch<{ attachment: Attachment }>(
+  const hashes = await hashFile(file);
+  const operationKey = `attachment:${await hashSHA256(
+    [idempotencyKey || "", file.name, file.type, file.size, hashes.sha256].join("\0"),
+  )}`;
+  const intent = await apiFetch<{
+    attachment: Attachment;
+    upload?: { url: string; method: string; headers?: Record<string, string>; expires_at: string };
+  }>(
     `/conversations/${conversationId}/attachments`,
     {
       method: "POST",
-      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
-      body,
+      headers: { "Idempotency-Key": operationKey },
+      body: JSON.stringify({
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        sha256: hashes.sha256,
+        content_md5: hashes.contentMD5,
+      }),
     },
+    z.object({ attachment: attachmentSchema, upload: presignedObjectUrlSchema.optional() }),
+  );
+  if (intent.attachment.status === "ready") return intent.attachment;
+  if (!intent.upload) throw new Error("服务端未返回文件上传地址");
+
+  const uploaded = await fetch(intent.upload.url, {
+    method: intent.upload.method,
+    headers: intent.upload.headers,
+    body: file,
+  });
+  if (!uploaded.ok) {
+    throw new Error(`文件直传失败 (${uploaded.status})`);
+  }
+
+  return apiFetch<{ attachment: Attachment }>(
+    `/conversations/${conversationId}/attachments/${intent.attachment.id}/complete`,
+    { method: "POST", body: JSON.stringify({}) },
     z.object({ attachment: attachmentSchema }),
-  ).then((r) => r.attachment);
+  ).then((result) => result.attachment);
 }
 
-export async function getConversationAttachmentBlob(conversationId: string, attachmentId: string) {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    Accept: "*/*",
-  };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const res = await fetch(
-    buildUrl(`/conversations/${conversationId}/attachments/${attachmentId}`),
-    { headers },
-  );
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && typeof data.error === "string") {
-        message = data.error;
-      }
-    } catch {
-      // ignore
-    }
-    handleSessionUnauthorized(res.status, message);
-    throw new ApiError(message, res.status);
-  }
-
-  return res.blob();
+export async function getConversationAttachmentUrl(
+  conversationId: string,
+  attachmentId: string,
+  download = false,
+) {
+  return apiFetch<{
+    attachment: Attachment;
+    download: { url: string; method: string; headers?: Record<string, string>; expires_at: string };
+  }>(
+    `/conversations/${conversationId}/attachments/${attachmentId}${download ? "?disposition=attachment" : ""}`,
+    {},
+    z.object({ attachment: attachmentSchema, download: presignedObjectUrlSchema }),
+  ).then((result) => result.download.url);
 }
 
 // Messages

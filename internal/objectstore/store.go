@@ -1,4 +1,4 @@
-package minio
+package objectstore
 
 import (
 	"bytes"
@@ -7,8 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
+	assistantattachment "github.com/EurekaMXZ/assistant/internal/attachment"
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/workflow"
 	miniosdk "github.com/minio/minio-go/v7"
@@ -16,9 +22,12 @@ import (
 )
 
 type Store struct {
-	client *miniosdk.Client
-	bucket string
-	region string
+	client           *miniosdk.Client
+	signer           *miniosdk.Client
+	bucket           string
+	region           string
+	autoCreateBucket bool
+	presignTTL       time.Duration
 }
 
 var _ workflow.TurnArtifactStore = (*Store)(nil)
@@ -26,36 +35,120 @@ var _ workflow.ToolArtifactStore = (*Store)(nil)
 var _ workflow.ContextAnchorStore = (*Store)(nil)
 
 func New(settings Settings) (*Store, error) {
-	client, err := miniosdk.New(normalizeEndpoint(settings.Endpoint), &miniosdk.Options{
-		Creds:  credentials.NewStaticV4(settings.AccessKey, settings.SecretKey, ""),
-		Secure: settings.UseSSL,
-		Region: settings.Region,
-	})
+	if err := settings.Validate(); err != nil {
+		return nil, err
+	}
+	endpoint, secure, err := normalizeEndpoint(settings.Endpoint, settings.UseSSL)
 	if err != nil {
-		return nil, fmt.Errorf("create minio client: %w", err)
+		return nil, err
+	}
+	lookup := bucketLookup(settings.BucketLookup)
+	options := &miniosdk.Options{
+		Creds:        credentials.NewStaticV4(settings.AccessKey, settings.SecretKey, settings.SessionToken),
+		Secure:       secure,
+		Region:       strings.TrimSpace(settings.Region),
+		BucketLookup: lookup,
+	}
+	client, err := miniosdk.New(endpoint, options)
+	if err != nil {
+		return nil, fmt.Errorf("create s3 client: %w", err)
+	}
+
+	signer := client
+	if strings.TrimSpace(settings.PublicEndpoint) != "" {
+		publicEndpoint, publicSecure, normalizeErr := normalizeEndpoint(settings.PublicEndpoint, settings.UseSSL)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		signer, err = miniosdk.New(publicEndpoint, &miniosdk.Options{
+			Creds:        credentials.NewStaticV4(settings.AccessKey, settings.SecretKey, settings.SessionToken),
+			Secure:       publicSecure,
+			Region:       strings.TrimSpace(settings.Region),
+			BucketLookup: lookup,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create public s3 signer: %w", err)
+		}
+	}
+	presignTTL := settings.PresignTTL
+	if presignTTL <= 0 {
+		presignTTL = 15 * time.Minute
 	}
 
 	return &Store{
-		client: client,
-		bucket: settings.Bucket,
-		region: settings.Region,
+		client:           client,
+		signer:           signer,
+		bucket:           settings.Bucket,
+		region:           settings.Region,
+		autoCreateBucket: settings.AutoCreateBucket,
+		presignTTL:       presignTTL,
 	}, nil
 }
 
 func (s *Store) EnsureBucket(ctx context.Context) error {
+	if !s.autoCreateBucket {
+		return nil
+	}
 	exists, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {
 		return fmt.Errorf("check bucket %s: %w", s.bucket, err)
 	}
-	if exists {
-		return nil
+	if !exists {
+		if err := s.client.MakeBucket(ctx, s.bucket, miniosdk.MakeBucketOptions{Region: s.region}); err != nil {
+			return fmt.Errorf("create bucket %s: %w", s.bucket, err)
+		}
 	}
-
-	if err := s.client.MakeBucket(ctx, s.bucket, miniosdk.MakeBucketOptions{Region: s.region}); err != nil {
-		return fmt.Errorf("create bucket %s: %w", s.bucket, err)
-	}
-
 	return nil
+}
+
+func (s *Store) PresignUpload(ctx context.Context, key string, contentType string, sizeBytes int64, contentMD5 string) (*assistantattachment.PresignedURL, error) {
+	signedHeaders := http.Header{
+		"Content-Length": []string{strconv.FormatInt(sizeBytes, 10)},
+		"Content-MD5":    []string{contentMD5},
+	}
+	if contentType = strings.TrimSpace(contentType); contentType != "" {
+		signedHeaders.Set("Content-Type", contentType)
+	}
+	presigned, err := s.signer.PresignHeader(ctx, http.MethodPut, s.bucket, key, s.presignTTL, nil, signedHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("presign put object %s: %w", key, err)
+	}
+	headers := map[string]string{"Content-MD5": contentMD5}
+	if contentType != "" {
+		headers["Content-Type"] = contentType
+	}
+	return &assistantattachment.PresignedURL{
+		URL:       presigned.String(),
+		Method:    http.MethodPut,
+		Headers:   headers,
+		ExpiresAt: time.Now().UTC().Add(s.presignTTL),
+	}, nil
+}
+
+func (s *Store) PresignDownload(ctx context.Context, key string, filename string, attachment bool) (*assistantattachment.PresignedURL, error) {
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	params := url.Values{}
+	params.Set("response-content-disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
+	presigned, err := s.signer.PresignedGetObject(ctx, s.bucket, key, s.presignTTL, params)
+	if err != nil {
+		return nil, fmt.Errorf("presign get object %s: %w", key, err)
+	}
+	return &assistantattachment.PresignedURL{
+		URL:       presigned.String(),
+		Method:    "GET",
+		ExpiresAt: time.Now().UTC().Add(s.presignTTL),
+	}, nil
+}
+
+func (s *Store) StatObject(ctx context.Context, key string) (*assistantattachment.ObjectInfo, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, key, miniosdk.StatObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("stat object %s: %w", key, normalizeObjectStoreReadError(err))
+	}
+	return &assistantattachment.ObjectInfo{SizeBytes: info.Size, ContentType: info.ContentType}, nil
 }
 
 func (s *Store) PutJSON(ctx context.Context, key string, value any) error {
@@ -214,8 +307,37 @@ func (s *Store) ContextAnchorKey(conversationID string, generation int64) string
 	return contextAnchorKey(conversationID, generation)
 }
 
-func normalizeEndpoint(endpoint string) string {
-	return strings.TrimSpace(endpoint)
+func normalizeEndpoint(endpoint string, defaultSecure bool) (string, bool, error) {
+	value := strings.TrimSpace(endpoint)
+	if !strings.Contains(value, "://") {
+		return value, defaultSecure, nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" {
+		return "", false, fmt.Errorf("invalid s3 endpoint %q", endpoint)
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", false, fmt.Errorf("s3 endpoint must not include a path")
+	}
+	switch parsed.Scheme {
+	case "http":
+		return parsed.Host, false, nil
+	case "https":
+		return parsed.Host, true, nil
+	default:
+		return "", false, fmt.Errorf("s3 endpoint scheme must be http or https")
+	}
+}
+
+func bucketLookup(value string) miniosdk.BucketLookupType {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case BucketLookupDNS:
+		return miniosdk.BucketLookupDNS
+	case BucketLookupPath:
+		return miniosdk.BucketLookupPath
+	default:
+		return miniosdk.BucketLookupAuto
+	}
 }
 
 func normalizeObjectStoreReadError(err error) error {

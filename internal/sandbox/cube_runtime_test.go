@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -70,8 +71,12 @@ func (s *stubCubeRuntimeClient) RunCommand(_ context.Context, _ *cubeSandbox, co
 	return s.commandResult, nil
 }
 
-func (s *stubCubeRuntimeClient) WriteFile(_ context.Context, _ *cubeSandbox, path string, data []byte) error {
+func (s *stubCubeRuntimeClient) WriteFile(_ context.Context, _ *cubeSandbox, path string, reader io.Reader, _ int64) error {
 	s.writtenPath = path
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
 	s.writtenData = append([]byte(nil), data...)
 	return s.writeErr
 }
@@ -228,7 +233,7 @@ func TestCubeRuntimeWritesFileThroughConnectedEnvdSession(t *testing.T) {
 	client := &stubCubeRuntimeClient{connected: &cubeSandbox{ID: "cube-1", TemplateID: "tpl-1"}}
 	runtime := mustCubeRuntime(t, client)
 	handle := domain.SandboxHandle{Provider: ProviderCubeSandbox, RuntimeID: "cube-1"}
-	if err := runtime.WriteSandboxFile(t.Context(), handle, "/workspace/input.csv", []byte("a,b\n"), "write-key"); err != nil {
+	if err := runtime.WriteSandboxFile(t.Context(), handle, "/workspace/input.csv", strings.NewReader("a,b\n"), 4, "write-key"); err != nil {
 		t.Fatalf("write sandbox file: %v", err)
 	}
 	if client.connectCalls != 1 || client.writtenPath != "/workspace/input.csv" || string(client.writtenData) != "a,b\n" {
@@ -299,6 +304,36 @@ func TestCubeSDKClientRunCommandUsesGeneratedEnvdClient(t *testing.T) {
 	}
 	if result.ExitCode != 3 || len(result.Output) > 32 || !strings.HasPrefix(result.Output, "one\ntwo\n") || !strings.Contains(result.Output, "truncated") {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestCubeSDKClientStreamsFileToEnvd(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/files" || request.URL.Query().Get("path") != "/workspace/input.csv" {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Basic cm9vdDo=" || request.Header.Get("X-Access-Token") != "envd-token" {
+			t.Errorf("unexpected auth headers: %#v", request.Header)
+		}
+		if request.ContentLength != 4 {
+			t.Errorf("ContentLength = %d, want 4", request.ContentLength)
+		}
+		data, err := io.ReadAll(request.Body)
+		if err != nil || string(data) != "a,b\n" {
+			t.Errorf("body = %q err=%v", data, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{Timeout: time.Second}
+	transport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	client := &cubeSDKClient{data: &http.Client{Transport: transport}, proxyScheme: "http", sandboxDomain: "cube.test"}
+	if err := client.WriteFile(t.Context(), &cubeSandbox{ID: "cube-1", EnvdAccessToken: "envd-token"}, "/workspace/input.csv", strings.NewReader("a,b\n"), 4); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
 }
 

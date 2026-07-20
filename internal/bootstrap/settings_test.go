@@ -22,12 +22,13 @@ func TestNewBaseSettingsMapsConfig(t *testing.T) {
 		RedisPassword:             "secret",
 		RedisDB:                   3,
 		StreamChannelPrefix:       "assistant:stream",
-		MinIOEndpoint:             "127.0.0.1:9000",
-		MinIORegion:               "us-east-1",
-		MinIOBucket:               "assistant",
-		MinIOAccessKey:            "minio",
-		MinIOSecretKey:            "minio123",
-		MinIOUseSSL:               true,
+		S3Provider:                "minio",
+		S3Endpoint:                "127.0.0.1:9000",
+		S3Region:                  "us-east-1",
+		S3Bucket:                  "assistant",
+		S3AccessKey:               "minio",
+		S3SecretKey:               "minio123",
+		S3UseSSL:                  true,
 		WebOrigin:                 "https://example.com",
 		ReadTimeout:               2 * time.Second,
 		WriteTimeout:              3 * time.Second,
@@ -74,8 +75,8 @@ func TestNewBaseSettingsMapsConfig(t *testing.T) {
 	if settings.SystemUser.Email != "system@example.com" || settings.SystemUser.Username != "system" {
 		t.Fatalf("unexpected system user settings: %+v", settings.SystemUser)
 	}
-	if settings.MinIO.Bucket != "assistant" || !settings.MinIO.UseSSL {
-		t.Fatalf("unexpected minio settings: %+v", settings.MinIO)
+	if settings.ObjectStore.Bucket != "assistant" || !settings.ObjectStore.UseSSL {
+		t.Fatalf("unexpected object store settings: %+v", settings.ObjectStore)
 	}
 	if settings.Sandbox.Provider != "firecracker" || settings.Sandbox.HTTP.BaseURL != "http://127.0.0.1:8787" || settings.Sandbox.HTTP.Token != "bridge-token" || settings.Sandbox.HTTP.HTTPClientTimeout != 9*time.Second {
 		t.Fatalf("unexpected sandbox settings: %+v", settings.Sandbox)
@@ -104,12 +105,13 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 		SandboxCubeRequestTimeout: 20 * time.Second,
 		SandboxCubePauseTimeout:   30 * time.Second,
 		SandboxCubeMaxOutputBytes: 4096,
-		MinIOEndpoint:             "127.0.0.1:9000",
-		MinIORegion:               "us-east-1",
-		MinIOBucket:               "assistant",
-		MinIOAccessKey:            "minio",
-		MinIOSecretKey:            "minio123",
-		MinIOUseSSL:               true,
+		S3Provider:                "minio",
+		S3Endpoint:                "127.0.0.1:9000",
+		S3Region:                  "us-east-1",
+		S3Bucket:                  "assistant",
+		S3AccessKey:               "minio",
+		S3SecretKey:               "minio123",
+		S3UseSSL:                  true,
 		KafkaBrokers:              []string{"127.0.0.1:9092"},
 		KafkaWorkflowTopic:        "assistant.workflow",
 		KafkaConsumerGroup:        "assistant-workers",
@@ -148,8 +150,8 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 	if settings.Sandbox.Cube.APIURL != "https://cube-api.internal" || settings.Sandbox.Cube.APIKey != "cube-key" || settings.Sandbox.Cube.MaxOutputBytes != 4096 {
 		t.Fatalf("unexpected cube sandbox settings: %+v", settings.Sandbox.Cube)
 	}
-	if settings.MinIO.Bucket != "assistant" || !settings.MinIO.UseSSL {
-		t.Fatalf("unexpected minio settings: %+v", settings.MinIO)
+	if settings.ObjectStore.Bucket != "assistant" || !settings.ObjectStore.UseSSL {
+		t.Fatalf("unexpected object store settings: %+v", settings.ObjectStore)
 	}
 	if len(settings.Kafka.Brokers) != 1 || settings.Kafka.WorkflowTopic != "assistant.workflow" {
 		t.Fatalf("unexpected kafka settings: %+v", settings.Kafka)

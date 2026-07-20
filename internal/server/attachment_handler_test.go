@@ -3,103 +3,87 @@ package server
 import (
 	"bytes"
 	"context"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 )
 
-func TestHandleUploadConversationAttachmentReturnsCreatedAttachment(t *testing.T) {
+const testAttachmentSHA256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+func attachmentTestAuth() AuthUseCases {
+	return AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
+		return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
+	}}
+}
+
+func TestHandleCreateConversationAttachmentUploadReturnsIntent(t *testing.T) {
 	srv := newTestServer(UseCases{
-		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
-			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
-		}},
-		Attachments: AttachmentUseCases{UploadConversationAttachment: func(_ context.Context, ownerUserID string, conversationID string, input UploadConversationAttachmentInput) (*domain.Attachment, error) {
-			if ownerUserID != "user-1" || conversationID != "conv-1" {
-				t.Fatalf("unexpected owner/conversation: %q %q", ownerUserID, conversationID)
-			}
-			if input.Filename != "notes.txt" {
-				t.Fatalf("filename = %q, want %q", input.Filename, "notes.txt")
+		Auth: attachmentTestAuth(),
+		Attachments: AttachmentUseCases{CreateConversationAttachmentUpload: func(_ context.Context, ownerUserID string, conversationID string, input CreateConversationAttachmentUploadInput) (*ConversationAttachmentUpload, error) {
+			if ownerUserID != "user-1" || conversationID != "conv-1" || input.Filename != "notes.txt" || input.SizeBytes != 5 || input.SHA256 != testAttachmentSHA256 || input.ContentMD5 != "XUFAKrxLKna5cZ2REBfFkg==" {
+				t.Fatalf("unexpected upload input: owner=%q conversation=%q input=%#v", ownerUserID, conversationID, input)
 			}
 			if input.IdempotencyKey != "attachment-1" {
-				t.Fatalf("idempotency key = %q, want %q", input.IdempotencyKey, "attachment-1")
+				t.Fatalf("idempotency key = %q", input.IdempotencyKey)
 			}
-			data, err := io.ReadAll(input.File)
-			if err != nil {
-				t.Fatalf("read upload: %v", err)
-			}
-			if string(data) != "hello" {
-				t.Fatalf("data = %q, want %q", data, "hello")
-			}
-			return &domain.Attachment{
-				ID:               "att-1",
-				ConversationID:   conversationID,
-				UploadedByUserID: ownerUserID,
-				Filename:         input.Filename,
-				ContentType:      input.ContentType,
-				Category:         domain.AttachmentCategoryText,
-				SizeBytes:        input.SizeBytes,
+			return &ConversationAttachmentUpload{
+				Attachment: domain.Attachment{ID: "att-1", Status: domain.AttachmentStatusPending},
+				Upload:     &PresignedObjectURL{URL: "https://objects.example/upload", Method: http.MethodPut, ExpiresAt: time.Now().Add(time.Minute)},
 			}, nil
 		}},
 	})
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", "notes.txt")
-	if err != nil {
-		t.Fatalf("create form file: %v", err)
-	}
-	if _, err := part.Write([]byte("hello")); err != nil {
-		t.Fatalf("write part: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conv-1/attachments", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conv-1/attachments", bytes.NewBufferString(`{"filename":"notes.txt","content_type":"text/plain","size_bytes":5,"sha256":"`+testAttachmentSHA256+`","content_md5":"XUFAKrxLKna5cZ2REBfFkg=="}`))
 	req.Header.Set("Authorization", "Bearer token")
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "attachment-1")
 	rec := httptest.NewRecorder()
-
 	srv.Handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
-	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`"id":"att-1"`)) {
-		t.Fatalf("unexpected body: %q", rec.Body.String())
+	if rec.Code != http.StatusCreated || !bytes.Contains(rec.Body.Bytes(), []byte(`"method":"PUT"`)) {
+		t.Fatalf("unexpected response: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestHandleUploadConversationAttachmentRejectsMissingFile(t *testing.T) {
+func TestHandleCompleteConversationAttachmentUpload(t *testing.T) {
+	checksum := "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 	srv := newTestServer(UseCases{
-		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
-			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
-		}},
-		Attachments: AttachmentUseCases{UploadConversationAttachment: func(context.Context, string, string, UploadConversationAttachmentInput) (*domain.Attachment, error) {
-			t.Fatal("unexpected UploadConversationAttachment call")
-			return nil, nil
+		Auth: attachmentTestAuth(),
+		Attachments: AttachmentUseCases{CompleteConversationAttachmentUpload: func(_ context.Context, ownerUserID, conversationID, attachmentID string, _ CompleteConversationAttachmentUploadInput) (*domain.Attachment, error) {
+			if ownerUserID != "user-1" || conversationID != "conv-1" || attachmentID != "att-1" {
+				t.Fatalf("unexpected complete input")
+			}
+			return &domain.Attachment{ID: attachmentID, Status: domain.AttachmentStatusReady, SHA256: checksum}, nil
 		}},
 	})
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conv-1/attachments", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/conv-1/attachments/att-1/complete", bytes.NewBufferString(`{}`))
 	req.Header.Set("Authorization", "Bearer token")
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-
 	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"ready"`)) {
+		t.Fatalf("unexpected response: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+func TestHandleGetConversationAttachmentReturnsPresignedURL(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: attachmentTestAuth(),
+		Attachments: AttachmentUseCases{GetConversationAttachmentDownload: func(context.Context, string, string, string, bool) (*ConversationAttachmentDownload, error) {
+			return &ConversationAttachmentDownload{
+				Attachment: domain.Attachment{ID: "att-1", Status: domain.AttachmentStatusReady},
+				Download:   PresignedObjectURL{URL: "https://objects.example/download", Method: http.MethodGet, ExpiresAt: time.Now().Add(time.Minute)},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/conv-1/attachments/att-1", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`https://objects.example/download`)) {
+		t.Fatalf("unexpected response: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

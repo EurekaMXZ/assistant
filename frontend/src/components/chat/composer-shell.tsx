@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   ArrowUp,
+  CircleAlert,
   FileIcon,
   FileSpreadsheet,
   FileText,
@@ -15,7 +16,7 @@ import {
 import { useAutosizeTextarea } from "@/hooks/use-autosize-textarea";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { getConversationAttachmentBlob } from "@/lib/api";
+import { getConversationAttachmentUrl } from "@/lib/api";
 import { ImagePreview } from "./image-preview";
 import { ComposerOptions } from "./composer-options";
 import type { Model, ReasoningEffort } from "@/lib/types";
@@ -25,10 +26,12 @@ export interface ComposerShellAttachment {
   attachmentId?: string;
   contentType?: string;
   conversationId?: string;
+  error?: string;
   file?: File;
   key: string;
   name: string;
   size: number;
+  status: "uploading" | "ready" | "failed";
 }
 
 interface ComposerShellProps {
@@ -51,7 +54,6 @@ interface ComposerShellProps {
   onSubmit: () => void;
   placeholder: string;
   reasoningEfforts: Record<string, ReasoningEffort>;
-  uploadBusy?: boolean;
   value: string;
 }
 
@@ -129,6 +131,8 @@ function ComposerAttachmentItem({
   onRemove: () => void;
 }) {
   const image = isImageAttachment(attachment);
+  const uploading = attachment.status === "uploading";
+  const failed = attachment.status === "failed";
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
 
@@ -142,20 +146,17 @@ function ComposerAttachmentItem({
 
     const loadPreview = async () => {
       try {
-        const blob = attachment.file
-          ? attachment.file
+        const source = attachment.file
+          ? URL.createObjectURL(attachment.file)
           : attachment.conversationId && attachment.attachmentId
-            ? await getConversationAttachmentBlob(
-                attachment.conversationId,
-                attachment.attachmentId,
-              )
+            ? await getConversationAttachmentUrl(attachment.conversationId, attachment.attachmentId)
             : null;
-        if (!blob) {
+        if (!source) {
           if (!cancelled) setPreviewFailed(true);
           return;
         }
-        objectUrl = URL.createObjectURL(blob);
-        if (!cancelled) setPreviewUrl(objectUrl);
+        if (attachment.file) objectUrl = source;
+        if (!cancelled) setPreviewUrl(source);
       } catch {
         if (!cancelled) setPreviewFailed(true);
       }
@@ -183,26 +184,54 @@ function ComposerAttachmentItem({
 
   if (image) {
     return (
-      <div className="relative size-16 shrink-0">
-        {previewUrl && !previewFailed ? (
-          <ImagePreview
-            src={previewUrl}
-            alt={attachment.name}
-            wrapperClassName="size-16"
-            previewButtonClassName="size-16 border bg-muted transition-colors hover:border-foreground/30"
-            imageClassName="size-full object-cover"
-            showActions={false}
-            onError={() => setPreviewFailed(true)}
-          />
-        ) : (
-          <div className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted">
-            {previewFailed ? (
-              <ImageIcon className="size-5 text-muted-foreground" />
-            ) : (
-              <Loader2 className="size-4 animate-spin text-muted-foreground" />
-            )}
-          </div>
-        )}
+      <div
+        className="relative size-16 shrink-0"
+        data-upload-state={attachment.status}
+        title={failed ? attachment.error || "上传失败" : undefined}
+      >
+        <div
+          className={cn(
+            "size-16 transition-opacity",
+            uploading && "opacity-45",
+            failed && "opacity-35",
+          )}
+        >
+          {previewUrl && !previewFailed ? (
+            <ImagePreview
+              src={previewUrl}
+              alt={attachment.name}
+              wrapperClassName="size-16"
+              previewButtonClassName="size-16 border bg-muted transition-colors hover:border-foreground/30"
+              imageClassName="size-full object-cover"
+              showActions={false}
+              onError={() => setPreviewFailed(true)}
+            />
+          ) : (
+            <div className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+              {previewFailed ? (
+                <ImageIcon className="size-5 text-muted-foreground" />
+              ) : (
+                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              )}
+            </div>
+          )}
+        </div>
+        {uploading ? (
+          <span
+            className="pointer-events-none absolute inset-0 flex items-center justify-center text-foreground"
+            aria-label={`正在上传 ${attachment.name}`}
+          >
+            <Loader2 className="size-5 animate-spin" />
+          </span>
+        ) : null}
+        {failed ? (
+          <span
+            className="pointer-events-none absolute inset-0 flex items-center justify-center text-destructive"
+            aria-label={`${attachment.name} 上传失败`}
+          >
+            <CircleAlert className="size-5" />
+          </span>
+        ) : null}
         {removeButton}
       </div>
     );
@@ -210,19 +239,52 @@ function ComposerAttachmentItem({
 
   const presentation = attachmentPresentation(attachment);
   return (
-    <div className="relative flex h-16 w-60 shrink-0 items-center gap-3 rounded-lg border bg-background p-2 pr-8">
+    <div
+      className={cn(
+        "relative flex h-16 w-60 shrink-0 items-center gap-3 rounded-lg border p-2 pr-8 transition-colors",
+        uploading ? "bg-background/45" : "bg-background",
+      )}
+      data-upload-state={attachment.status}
+      title={failed ? attachment.error || "上传失败" : undefined}
+    >
       <span
         className={cn(
           "flex size-11 shrink-0 items-center justify-center rounded-md",
-          presentation.iconClassName,
+          uploading
+            ? "bg-muted text-muted-foreground"
+            : failed
+              ? "bg-destructive/10 text-destructive"
+              : presentation.iconClassName,
         )}
+        aria-label={
+          uploading
+            ? `正在上传 ${attachment.name}`
+            : failed
+              ? `${attachment.name} 上传失败`
+              : undefined
+        }
       >
-        {presentation.icon}
+        {uploading ? (
+          <Loader2 className="size-5 animate-spin" />
+        ) : failed ? (
+          <CircleAlert className="size-5" />
+        ) : (
+          presentation.icon
+        )}
       </span>
-      <span className="min-w-0 text-left">
+      <span className={cn("min-w-0 text-left", uploading && "opacity-55")}>
         <span className="block truncate text-sm font-medium">{attachment.name}</span>
-        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-          {presentation.label} · {formatComposerFileSize(attachment.size)}
+        <span
+          className={cn(
+            "mt-0.5 block truncate text-xs text-muted-foreground",
+            failed && "text-destructive",
+          )}
+        >
+          {uploading
+            ? `正在上传 · ${formatComposerFileSize(attachment.size)}`
+            : failed
+              ? `上传失败 · ${formatComposerFileSize(attachment.size)}`
+              : `${presentation.label} · ${formatComposerFileSize(attachment.size)}`}
         </span>
       </span>
       {removeButton}
@@ -250,13 +312,15 @@ export function ComposerShell({
   onSubmit,
   placeholder,
   reasoningEfforts,
-  uploadBusy,
   value,
 }: ComposerShellProps) {
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = inputRef ?? fallbackRef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inactive = Boolean(disabled || busy);
+  const hasReadyAttachment = attachments.some(
+    (attachment) => attachment.status === "ready" && attachment.attachmentId,
+  );
   const { currentHeight, isMultiline } = useAutosizeTextarea(textareaRef, value, 5, {
     singleLineLeft: 52,
     singleLineRight: 224,
@@ -305,7 +369,7 @@ export function ComposerShell({
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
           event.target.value = "";
-          if (files.length && !inactive && !uploadBusy) onFilesSelected?.(files);
+          if (files.length && !inactive) onFilesSelected?.(files);
         }}
       />
 
@@ -362,17 +426,17 @@ export function ComposerShell({
         size="icon"
         variant="ghost"
         className="absolute rounded-full text-muted-foreground hover:text-foreground"
-        disabled={inactive || uploadBusy || editing}
+        disabled={inactive || editing}
         onClick={() => fileInputRef.current?.click()}
         style={{ left: 12, bottom: 10 }}
       >
-        {uploadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+        <Upload className="h-4 w-4" />
         <span className="sr-only">上传文件</span>
       </Button>
 
       <ComposerOptions
         className="absolute right-14"
-        disabled={inactive || uploadBusy || editing}
+        disabled={inactive || editing}
         models={models}
         modelsLoading={modelsLoading}
         modelId={modelId}
@@ -387,17 +451,11 @@ export function ComposerShell({
       <Button
         size="icon"
         onClick={onSubmit}
-        disabled={
-          (!allowEmpty && !value.trim() && attachments.length === 0) || inactive || uploadBusy
-        }
+        disabled={(!allowEmpty && !value.trim() && !hasReadyAttachment) || inactive}
         className="absolute rounded-full"
         style={{ right: 12, bottom: 10 }}
       >
-        {busy || uploadBusy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <ArrowUp className="h-4 w-4" />
-        )}
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
         <span className="sr-only">发送</span>
       </Button>
     </div>

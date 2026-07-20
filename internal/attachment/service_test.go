@@ -1,160 +1,157 @@
 package attachment
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"testing"
 	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 )
 
+const (
+	testSHA256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	testMD5    = "XUFAKrxLKna5cZ2REBfFkg=="
+)
+
 type stubRepository struct {
 	params   CreateAttachmentParams
 	existing *domain.Attachment
-	err      error
-}
-
-func (s *stubRepository) GetAttachmentByIdempotencyKey(context.Context, string, string, string) (*domain.Attachment, error) {
-	if s.existing != nil {
-		return s.existing, nil
-	}
-	return nil, domain.ErrNotFound
 }
 
 func (s *stubRepository) CreateAttachment(_ context.Context, params CreateAttachmentParams) (*domain.Attachment, error) {
 	s.params = params
-	if s.err != nil {
-		return nil, s.err
+	s.existing = &domain.Attachment{
+		ID: params.ID, ConversationID: params.ConversationID, UploadedByUserID: params.UploadedByUserID,
+		Filename: params.Filename, ContentType: params.ContentType, Category: params.Category,
+		SizeBytes: params.SizeBytes, SHA256: params.SHA256, ContentMD5: params.ContentMD5, Status: params.Status,
+		ObjectKey: params.ObjectKey, Metadata: params.Metadata,
+		CreatedAt: time.Unix(1710000000, 0).UTC(), UpdatedAt: time.Unix(1710000000, 0).UTC(),
 	}
-	return &domain.Attachment{
-		ID:               params.ID,
-		ConversationID:   params.ConversationID,
-		UploadedByUserID: params.UploadedByUserID,
-		Filename:         params.Filename,
-		ContentType:      params.ContentType,
-		Category:         params.Category,
-		SizeBytes:        params.SizeBytes,
-		SHA256:           params.SHA256,
-		ObjectKey:        params.ObjectKey,
-		Metadata:         params.Metadata,
-		CreatedAt:        time.Unix(1710000000, 0).UTC(),
-		UpdatedAt:        time.Unix(1710000000, 0).UTC(),
-	}, nil
+	return s.existing, nil
+}
+
+func (s *stubRepository) RefreshPendingAttachment(context.Context, string) (*domain.Attachment, error) {
+	return s.existing, nil
+}
+
+func (s *stubRepository) GetAttachment(context.Context, string, string, string) (*domain.Attachment, error) {
+	if s.existing == nil {
+		return nil, domain.ErrNotFound
+	}
+	return s.existing, nil
+}
+
+func (s *stubRepository) GetAttachmentByIdempotencyKey(context.Context, string, string, string) (*domain.Attachment, error) {
+	if s.existing == nil {
+		return nil, domain.ErrNotFound
+	}
+	return s.existing, nil
+}
+
+func (s *stubRepository) CompleteAttachment(_ context.Context, _, _, _, checksum string) (*domain.Attachment, error) {
+	s.existing.Status = domain.AttachmentStatusReady
+	s.existing.SHA256 = checksum
+	now := time.Now().UTC()
+	s.existing.UploadCompletedAt = &now
+	return s.existing, nil
 }
 
 func (s *stubRepository) ListAttachmentsByIDs(context.Context, string, []string) ([]domain.Attachment, error) {
 	return nil, nil
 }
 
-type stubBlobStore struct {
+type stubURLSigner struct {
 	key         string
 	contentType string
-	size        int64
-	data        []byte
-	deleteKey   string
-	err         error
+	info        ObjectInfo
 }
 
-func (s *stubBlobStore) PutReader(_ context.Context, key string, reader io.Reader, size int64, contentType string) error {
+func (s *stubURLSigner) PresignUpload(_ context.Context, key string, contentType string, _ int64, _ string) (*PresignedURL, error) {
 	s.key = key
-	s.size = size
 	s.contentType = contentType
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return err
-	}
-	s.data = data
-	return s.err
+	return &PresignedURL{URL: "https://objects.example/upload", Method: "PUT", ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
-func (s *stubBlobStore) DeleteObject(_ context.Context, key string) error {
-	s.deleteKey = key
-	return nil
+func (s *stubURLSigner) PresignDownload(context.Context, string, string, bool) (*PresignedURL, error) {
+	return &PresignedURL{URL: "https://objects.example/download", Method: "GET", ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
-func TestUploadStoresObjectAndMetadata(t *testing.T) {
+func (s *stubURLSigner) StatObject(context.Context, string) (*ObjectInfo, error) {
+	return &s.info, nil
+}
+
+func TestCreateUploadStoresPendingMetadataAndReturnsPresignedURL(t *testing.T) {
 	repo := &stubRepository{}
-	blobs := &stubBlobStore{}
-	service := &Service{Repo: repo, Blobs: blobs}
+	signer := &stubURLSigner{}
+	service := &Service{Repo: repo, Signer: signer}
 
-	attachment, err := service.Upload(context.Background(), UploadInput{
-		ConversationID:   "conv-1",
-		UploadedByUserID: "user-1",
-		Filename:         " report.pdf ",
-		ContentType:      "application/octet-stream",
-		SizeBytes:        int64(len("hello")),
-		File:             bytes.NewBufferString("hello"),
-		Metadata:         json.RawMessage(`{"source":"test"}`),
+	intent, err := service.CreateUpload(t.Context(), CreateUploadInput{
+		ConversationID: "conv-1", UploadedByUserID: "user-1", Filename: " report.pdf ",
+		ContentType: "application/octet-stream", SizeBytes: 5, SHA256: testSHA256, ContentMD5: testMD5,
+		Metadata: json.RawMessage(`{"source":"test"}`),
 	})
 	if err != nil {
-		t.Fatalf("upload: %v", err)
+		t.Fatalf("create upload: %v", err)
 	}
-
-	if attachment.Category != domain.AttachmentCategoryDocument {
-		t.Fatalf("category = %q, want %q", attachment.Category, domain.AttachmentCategoryDocument)
+	if intent.Attachment.Status != domain.AttachmentStatusPending || intent.Upload == nil {
+		t.Fatalf("unexpected intent: %#v", intent)
 	}
-	if blobs.contentType != "application/pdf" {
-		t.Fatalf("contentType = %q, want %q", blobs.contentType, "application/pdf")
+	if repo.params.Filename != "report.pdf" || repo.params.ContentType != "application/pdf" {
+		t.Fatalf("unexpected normalized metadata: %#v", repo.params)
 	}
-	if string(blobs.data) != "hello" {
-		t.Fatalf("stored data = %q, want %q", blobs.data, "hello")
-	}
-	if repo.params.Filename != "report.pdf" {
-		t.Fatalf("filename = %q, want %q", repo.params.Filename, "report.pdf")
-	}
-	if repo.params.SHA256 != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
-		t.Fatalf("unexpected sha256: %q", repo.params.SHA256)
-	}
-	if repo.params.ObjectKey == "" || blobs.key != repo.params.ObjectKey {
-		t.Fatalf("expected matching object key, repo=%q blob=%q", repo.params.ObjectKey, blobs.key)
-	}
-	if string(repo.params.Metadata) != `{"source":"test"}` {
-		t.Fatalf("metadata = %s", repo.params.Metadata)
+	if repo.params.SHA256 != testSHA256 || repo.params.ContentMD5 != testMD5 || repo.params.ObjectKey == "" || signer.key != repo.params.ObjectKey {
+		t.Fatalf("unexpected object metadata: %#v", repo.params)
 	}
 }
 
-func TestUploadDeletesObjectWhenRepositoryFails(t *testing.T) {
-	repo := &stubRepository{err: domain.ErrConflict}
-	blobs := &stubBlobStore{}
-	service := &Service{Repo: repo, Blobs: blobs}
-
-	_, err := service.Upload(context.Background(), UploadInput{
-		ConversationID:   "conv-1",
-		UploadedByUserID: "user-1",
-		Filename:         "archive.zip",
-		ContentType:      "application/zip",
-		SizeBytes:        int64(len("hello")),
-		File:             bytes.NewBufferString("hello"),
+func TestCompleteUploadStatsObjectBeforeMarkingReady(t *testing.T) {
+	const attachmentID = "11111111-1111-4111-8111-111111111111"
+	repo := &stubRepository{existing: &domain.Attachment{
+		ID: attachmentID, ConversationID: "conv-1", UploadedByUserID: "user-1", Status: domain.AttachmentStatusPending,
+		ContentType: "text/plain", SizeBytes: 5, SHA256: testSHA256, ContentMD5: testMD5,
+		ObjectKey: "attachments/conv-1/" + attachmentID + "/file.txt",
+	}}
+	signer := &stubURLSigner{info: ObjectInfo{SizeBytes: 5, ContentType: "text/plain"}}
+	attachment, err := (&Service{Repo: repo, Signer: signer}).CompleteUpload(t.Context(), CompleteUploadInput{
+		ConversationID: "conv-1", UploadedByUserID: "user-1", AttachmentID: attachmentID,
 	})
-	if err == nil {
-		t.Fatal("expected an error")
+	if err != nil {
+		t.Fatalf("complete upload: %v", err)
 	}
-	if blobs.deleteKey == "" {
-		t.Fatal("expected uploaded object to be deleted on failure")
+	if attachment.Status != domain.AttachmentStatusReady || attachment.SHA256 != testSHA256 {
+		t.Fatalf("unexpected completed attachment: %#v", attachment)
 	}
 }
 
-func TestUploadReplaysIdempotentAttachmentWithoutStoringAnotherObject(t *testing.T) {
-	existing := &domain.Attachment{ID: "att-existing", ConversationID: "conv-1", UploadedByUserID: "user-1", ObjectKey: "attachments/existing"}
-	repo := &stubRepository{existing: existing}
-	blobs := &stubBlobStore{}
-	service := &Service{Repo: repo, Blobs: blobs}
-
-	attachment, err := service.Upload(context.Background(), UploadInput{
+func TestCreateUploadReplaysReadyAttachmentWithoutAnotherUploadURL(t *testing.T) {
+	repo := &stubRepository{existing: &domain.Attachment{
+		ID: "att-existing", ConversationID: "conv-1", UploadedByUserID: "user-1", Status: domain.AttachmentStatusReady,
+		Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 5, SHA256: testSHA256, ContentMD5: testMD5, ObjectKey: "attachments/existing",
+	}}
+	intent, err := (&Service{Repo: repo, Signer: &stubURLSigner{}}).CreateUpload(t.Context(), CreateUploadInput{
 		ConversationID: "conv-1", UploadedByUserID: "user-1", IdempotencyKey: "upload-1",
-		Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 5, File: bytes.NewBufferString("hello"),
+		Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 5, SHA256: testSHA256, ContentMD5: testMD5,
 	})
 	if err != nil {
 		t.Fatalf("replay upload: %v", err)
 	}
-	if attachment.ID != existing.ID {
-		t.Fatalf("attachment id = %q, want %q", attachment.ID, existing.ID)
+	if intent.Attachment.ID != "att-existing" || intent.Upload != nil {
+		t.Fatalf("unexpected replay intent: %#v", intent)
 	}
-	if blobs.key != "" {
-		t.Fatalf("unexpected object upload for replay: %q", blobs.key)
+}
+
+func TestCreateUploadRejectsIdempotencyReplayWithDifferentMetadata(t *testing.T) {
+	repo := &stubRepository{existing: &domain.Attachment{
+		ID: "att-existing", ConversationID: "conv-1", UploadedByUserID: "user-1", Status: domain.AttachmentStatusPending,
+		Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 5, SHA256: testSHA256, ContentMD5: testMD5, ObjectKey: "attachments/existing",
+	}}
+	_, err := (&Service{Repo: repo, Signer: &stubURLSigner{}}).CreateUpload(t.Context(), CreateUploadInput{
+		ConversationID: "conv-1", UploadedByUserID: "user-1", IdempotencyKey: "upload-1",
+		Filename: "different.txt", ContentType: "text/plain", SizeBytes: 7, SHA256: testSHA256, ContentMD5: testMD5,
+	})
+	if err != domain.ErrConflict {
+		t.Fatalf("error = %v, want conflict", err)
 	}
 }
 

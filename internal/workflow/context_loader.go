@@ -3,7 +3,9 @@ package workflow
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -303,6 +305,15 @@ func (l *ContextLoader) attachmentContentPart(ctx context.Context, attachment do
 	data, err := l.attachmentBlobs.GetBytes(ctx, attachment.ObjectKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("load image attachment %s: %w", attachment.ID, err)
+	}
+	if attachment.SizeBytes > 0 && int64(len(data)) != attachment.SizeBytes {
+		return nil, "", fmt.Errorf("load image attachment %s: size mismatch", attachment.ID)
+	}
+	if expected := strings.TrimSpace(attachment.SHA256); expected != "" {
+		digest := sha256.Sum256(data)
+		if !strings.EqualFold(expected, hex.EncodeToString(digest[:])) {
+			return nil, "", fmt.Errorf("load image attachment %s: checksum mismatch", attachment.ID)
+		}
 	}
 	return map[string]string{
 		"type":      "input_image",

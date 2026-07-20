@@ -125,6 +125,7 @@ describe("image preview", () => {
               key: "upload.png",
               name: "upload.png",
               size: 5,
+              status: "ready",
             },
           ]}
           modelId=""

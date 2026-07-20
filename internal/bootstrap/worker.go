@@ -6,10 +6,11 @@ import (
 	"log"
 	"strings"
 
+	assistantattachment "github.com/EurekaMXZ/assistant/internal/attachment"
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/credential"
 	assistantkafka "github.com/EurekaMXZ/assistant/internal/kafka"
-	"github.com/EurekaMXZ/assistant/internal/minio"
+	"github.com/EurekaMXZ/assistant/internal/objectstore"
 	"github.com/EurekaMXZ/assistant/internal/openai"
 	assistantsandbox "github.com/EurekaMXZ/assistant/internal/sandbox"
 	"github.com/EurekaMXZ/assistant/internal/stream"
@@ -20,7 +21,7 @@ import (
 )
 
 func buildWorker(ctx context.Context, logger *log.Logger, settings workerSettings, workflows workflowAdapters, publisher stream.Publisher) (*worker.Service, error) {
-	artifactStore, err := minio.New(settings.MinIO)
+	artifactStore, err := objectstore.New(settings.ObjectStore)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +135,8 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	})
 
 	reaper := assistantsandbox.NewReaper(settings.SandboxLifecycle, workflows.Sandboxes, sandboxRuntime, workflows.Locker, logger)
-	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper), nil
+	attachmentReaper := assistantattachment.NewReaper(settings.AttachmentCleanup, workflows.AttachmentCleanup, artifactStore, logger)
+	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper, attachmentReaper), nil
 }
 
 func buildSandboxRuntime(settings assistantsandbox.RuntimeSettings) (tool.SandboxManager, error) {

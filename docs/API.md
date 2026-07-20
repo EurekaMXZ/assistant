@@ -448,7 +448,7 @@ Response: `201 Created`
 
 The server creates the conversation and its context head in one database transaction and records the idempotency key. Until commit succeeds, this conversation is a resumable draft: it is addressable through conversation and attachment endpoints but omitted from `GET /conversations`. Repeating prepare with the same key and payload returns the same conversation with `replayed: true`. Reusing the key with different prepare data returns `409 Conflict`.
 
-After prepare, upload each object using `POST /conversations/:conversationID/attachments`. Send a stable `Idempotency-Key` for each file and keep the returned attachment IDs. Retrying the same file with the same key replays the original attachment instead of creating a duplicate.
+After prepare, create an upload intent with `POST /conversations/:conversationID/attachments`, upload the bytes directly to its presigned S3 URL, then call the attachment completion endpoint. Send a stable, per-file `Idempotency-Key` when creating the intent. Retrying with the same key replays the same attachment and issues a fresh URL while its status is `pending`.
 
 #### Commit
 
@@ -614,19 +614,94 @@ Frontend usage:
 
 ### POST `/conversations/:conversationID/attachments`
 
-Upload one attachment owned by the current user to an owned conversation. Use `multipart/form-data` with a `file` part. Files must be non-empty and at most 128 MiB.
+Create an upload intent for an attachment owned by the current user in an owned conversation. The API authenticates the caller, reserves the object key, and signs a direct S3 upload; it does not accept file bytes. Files must be non-empty and at most 128 MiB. A caller-generated `Idempotency-Key` of at most 128 characters is recommended for every file.
+
+Request:
+
+```json
+{
+  "filename": "report.pdf",
+  "content_type": "application/pdf",
+  "size_bytes": 48231,
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "content_md5": "1B2M2Y8AsgTpgAmY7PhCfg=="
+}
+```
 
 Response: `201 Created`
 
 ```json
 {
-  "attachment": {}
+  "attachment": {
+    "id": "attachment_123",
+    "conversation_id": "conversation_123",
+    "filename": "report.pdf",
+    "content_type": "application/pdf",
+    "size_bytes": 48231,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "status": "pending"
+  },
+  "upload": {
+    "url": "https://objects.example.com/bucket/attachments/...?X-Amz-Signature=...",
+    "method": "PUT",
+    "headers": {
+      "Content-Type": "application/pdf",
+      "Content-MD5": "1B2M2Y8AsgTpgAmY7PhCfg=="
+    },
+    "expires_at": "2026-07-20T12:15:00Z"
+  }
 }
 ```
 
+Send the file directly to `upload.url` using the returned method and headers. Do not send the application bearer token to the object store. The expected content length, content type, and `Content-MD5` are part of the URL signature. S3 rejects bytes whose MD5 does not match, and any replay of the URL can only write the same content. A replay of an already completed intent returns the `ready` attachment without an `upload` field.
+
+### POST `/conversations/:conversationID/attachments/:attachmentID/complete`
+
+Confirm that the direct PUT completed. The API performs an S3 metadata HEAD, verifies the stored size and content type, then changes the attachment from `pending` to `ready`. S3 has already verified the signed `Content-MD5`; workers additionally verify the stored SHA-256 before sending an image to Responses or importing an object into a sandbox.
+
+Request:
+
+```json
+{}
+```
+
+Response: `200 OK`
+
+```json
+{
+  "attachment": {
+    "id": "attachment_123",
+    "status": "ready",
+    "upload_completed_at": "2026-07-20T12:01:00Z"
+  }
+}
+```
+
+Only `ready` attachment IDs are accepted by message and initial-turn commit endpoints. Clients must keep send disabled while any selected attachment is still uploading or waiting for completion.
+
 ### GET `/conversations/:conversationID/attachments/:attachmentID`
 
-Download an attachment from an owned conversation. The response body is the file data with its stored content type and an inline `Content-Disposition` header.
+Create a presigned S3 download for a `ready` attachment in an owned conversation. The API returns JSON and never proxies the object bytes. Use `?disposition=attachment` to request an attachment content disposition; the default is inline.
+
+Response: `200 OK`
+
+```json
+{
+  "attachment": {
+    "id": "attachment_123",
+    "status": "ready"
+  },
+  "download": {
+    "url": "https://objects.example.com/bucket/attachments/...?X-Amz-Signature=...",
+    "method": "GET",
+    "expires_at": "2026-07-20T12:15:00Z"
+  }
+}
+```
+
+The S3 bucket CORS policy must allow the frontend origin to use `PUT`, `GET`, and `HEAD`, including the `Content-Type` and `Content-MD5` request headers.
+
+Incomplete uploads expire after `S3_PENDING_UPLOAD_TTL`. A worker claims their database rows, removes their S3 objects, and then deletes the rows; failed object deletions remain claimed and are retried by the next reaper pass.
 
 ## Sandbox APIs
 
@@ -1112,12 +1187,13 @@ Important notes:
 
 ### Start a conversation with its first turn
 
-1. generate and persist one idempotency key for the composer submission
-2. call `POST /conversations/initial-turns` with `action: "prepare"`
-3. upload files against the returned `conversation.id` and retain their attachment IDs
-4. call the same endpoint and key with `action: "commit"`, the conversation ID, message, model options, and attachment IDs
-5. on any non-conflict failure, retry commit with the same key, conversation ID, and attachment IDs
-6. after `202 Accepted`, append `message` locally and open SSE on `stream_path`
+1. generate and persist one idempotency key for the composer draft
+2. when the user selects the first file, immediately call `POST /conversations/initial-turns` with `action: "prepare"`; do not wait for Send
+3. create one upload intent per file, PUT each file directly to S3, call its completion endpoint, and retain only `ready` attachment IDs
+4. keep Send disabled until every selected attachment is `ready`
+5. when the user sends, call the initial-turn endpoint with the same key, `action: "commit"`, the prepared conversation ID, current message/model options, and ready attachment IDs
+6. on any non-conflict failure, retry commit with the same key, conversation ID, and attachment IDs
+7. after `202 Accepted`, append `message` locally and open SSE on `stream_path`
 
 Do not implement a first message as `POST /conversations` followed by `POST /conversations/:conversationID/messages`; that older sequence can expose an intentionally empty active conversation when the second request fails. Keep the idempotency key and prepared conversation ID in recoverable client state until commit returns `202`.
 

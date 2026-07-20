@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -178,5 +179,5 @@ type SandboxManager interface {
 	ResumeSandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error)
 	DestroySandbox(ctx context.Context, handle domain.SandboxHandle, requestKey string) (*domain.SandboxHandle, error)
 	ExecSandboxCommand(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxCommandRequest, requestKey string) (*domain.SandboxCommandResult, error)
-	WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error
+	WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, reader io.Reader, size int64, requestKey string) error
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -257,7 +258,7 @@ func (r *reaperTestRuntime) DestroySandbox(_ context.Context, handle domain.Sand
 func (r *reaperTestRuntime) ExecSandboxCommand(context.Context, domain.SandboxHandle, domain.SandboxCommandRequest, string) (*domain.SandboxCommandResult, error) {
 	return nil, nil
 }
-func (r *reaperTestRuntime) WriteSandboxFile(context.Context, domain.SandboxHandle, string, []byte, string) error {
+func (r *reaperTestRuntime) WriteSandboxFile(context.Context, domain.SandboxHandle, string, io.Reader, int64, string) error {
 	return nil
 }
 

@@ -1,10 +1,11 @@
 package bootstrap
 
 import (
+	assistantattachment "github.com/EurekaMXZ/assistant/internal/attachment"
 	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
 	"github.com/EurekaMXZ/assistant/internal/config"
 	assistantkafka "github.com/EurekaMXZ/assistant/internal/kafka"
-	"github.com/EurekaMXZ/assistant/internal/minio"
+	"github.com/EurekaMXZ/assistant/internal/objectstore"
 	"github.com/EurekaMXZ/assistant/internal/openai"
 	streamredis "github.com/EurekaMXZ/assistant/internal/redis"
 	assistantsandbox "github.com/EurekaMXZ/assistant/internal/sandbox"
@@ -25,7 +26,7 @@ type baseSettings struct {
 	Server                      server.Settings
 	Auth                        assistantauth.TokenSettings
 	SystemUser                  assistantauth.SystemUserConfig
-	MinIO                       minio.Settings
+	ObjectStore                 objectstore.Settings
 	ProviderCredentialMasterKey string
 }
 
@@ -37,7 +38,8 @@ type workerSettings struct {
 	SandboxExecEnabled    bool
 	Sandbox               assistantsandbox.RuntimeSettings
 	SandboxLifecycle      assistantsandbox.LifecycleSettings
-	MinIO                 minio.Settings
+	ObjectStore           objectstore.Settings
+	AttachmentCleanup     assistantattachment.CleanupSettings
 	Kafka                 assistantkafka.Settings
 	KafkaReader           assistantkafka.ReaderSettings
 	Workflow              workflow.WorkflowSettings
@@ -75,14 +77,7 @@ func newBaseSettings(cfg config.Config, enableAuth bool) baseSettings {
 			Username:     cfg.SystemUserUsername,
 			PasswordHash: cfg.SystemUserPasswordHash,
 		},
-		MinIO: minio.Settings{
-			Endpoint:  cfg.MinIOEndpoint,
-			Region:    cfg.MinIORegion,
-			Bucket:    cfg.MinIOBucket,
-			AccessKey: cfg.MinIOAccessKey,
-			SecretKey: cfg.MinIOSecretKey,
-			UseSSL:    cfg.MinIOUseSSL,
-		},
+		ObjectStore:                 objectStoreSettings(cfg),
 		ProviderCredentialMasterKey: cfg.ProviderCredentialMasterKey,
 	}
 }
@@ -102,13 +97,11 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 		SandboxExecEnabled: cfg.SandboxExecEnabled,
 		Sandbox:            sandboxRuntimeSettings(cfg),
 		SandboxLifecycle:   sandboxLifecycleSettings(cfg),
-		MinIO: minio.Settings{
-			Endpoint:  cfg.MinIOEndpoint,
-			Region:    cfg.MinIORegion,
-			Bucket:    cfg.MinIOBucket,
-			AccessKey: cfg.MinIOAccessKey,
-			SecretKey: cfg.MinIOSecretKey,
-			UseSSL:    cfg.MinIOUseSSL,
+		ObjectStore:        objectStoreSettings(cfg),
+		AttachmentCleanup: assistantattachment.CleanupSettings{
+			PendingTTL: cfg.S3PendingUploadTTL,
+			Interval:   cfg.S3UploadReaperInterval,
+			BatchSize:  cfg.S3UploadReaperBatchSize,
 		},
 		Kafka: assistantkafka.Settings{
 			Brokers:       cfg.KafkaBrokers,
@@ -134,6 +127,23 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			WorkerPollInterval: cfg.WorkerPollInterval,
 			WorkerLeaseTimeout: cfg.WorkerLeaseTimeout,
 		},
+	}
+}
+
+func objectStoreSettings(cfg config.Config) objectstore.Settings {
+	return objectstore.Settings{
+		Provider:         cfg.S3Provider,
+		Endpoint:         cfg.S3Endpoint,
+		PublicEndpoint:   cfg.S3PublicEndpoint,
+		Region:           cfg.S3Region,
+		Bucket:           cfg.S3Bucket,
+		AccessKey:        cfg.S3AccessKey,
+		SecretKey:        cfg.S3SecretKey,
+		SessionToken:     cfg.S3SessionToken,
+		UseSSL:           cfg.S3UseSSL,
+		BucketLookup:     cfg.S3BucketLookup,
+		AutoCreateBucket: cfg.S3AutoCreateBucket,
+		PresignTTL:       cfg.S3PresignTTL,
 	}
 }
 

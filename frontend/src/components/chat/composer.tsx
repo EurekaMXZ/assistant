@@ -1,13 +1,13 @@
 "use client";
 
-import type { Attachment, Model, ReasoningEffort } from "@/lib/types";
+import type { Model, ReasoningEffort } from "@/lib/types";
 import { Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { ComposerShell } from "./composer-shell";
+import { ComposerShell, type ComposerShellAttachment } from "./composer-shell";
 
 interface ComposerProps {
-  attachments?: Attachment[];
+  attachments?: ComposerShellAttachment[];
   allowEmpty?: boolean;
   editing?: boolean;
   editingBusy?: boolean;
@@ -25,7 +25,6 @@ interface ComposerProps {
   disabled?: boolean;
   placeholder?: string;
   reasoningEfforts?: Record<string, ReasoningEffort>;
-  uploadingAttachments?: boolean;
   value: string;
 }
 
@@ -48,7 +47,6 @@ export function Composer({
   disabled,
   placeholder = "输入消息…",
   reasoningEfforts = {},
-  uploadingAttachments,
   value,
 }: ComposerProps) {
   return (
@@ -72,14 +70,7 @@ export function Composer({
       ) : null}
       <ComposerShell
         allowEmpty={allowEmpty}
-        attachments={attachments.map((attachment) => ({
-          attachmentId: attachment.id,
-          contentType: attachment.content_type,
-          conversationId: attachment.conversation_id,
-          key: attachment.id,
-          name: attachment.filename,
-          size: attachment.size_bytes,
-        }))}
+        attachments={attachments}
         className={cn(
           "pointer-events-auto transition-[box-shadow,border-color] duration-200",
           editing && "border-foreground/35 shadow-lg ring-2 ring-foreground/10",
@@ -99,12 +90,15 @@ export function Composer({
         onSubmit={() =>
           onSend(
             value.trim(),
-            attachments.map((attachment) => attachment.id),
+            attachments.flatMap((attachment) =>
+              attachment.status === "ready" && attachment.attachmentId
+                ? [attachment.attachmentId]
+                : [],
+            ),
           )
         }
         placeholder={placeholder}
         reasoningEfforts={reasoningEfforts}
-        uploadBusy={uploadingAttachments}
         value={value}
       />
     </div>

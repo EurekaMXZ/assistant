@@ -2,15 +2,15 @@ package attachment
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"path"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/google/uuid"
@@ -18,13 +18,29 @@ import (
 
 type Repository interface {
 	CreateAttachment(ctx context.Context, params CreateAttachmentParams) (*domain.Attachment, error)
+	GetAttachment(ctx context.Context, conversationID string, uploadedByUserID string, attachmentID string) (*domain.Attachment, error)
 	GetAttachmentByIdempotencyKey(ctx context.Context, conversationID string, uploadedByUserID string, idempotencyKey string) (*domain.Attachment, error)
+	RefreshPendingAttachment(ctx context.Context, attachmentID string) (*domain.Attachment, error)
+	CompleteAttachment(ctx context.Context, conversationID string, uploadedByUserID string, attachmentID string, sha256 string) (*domain.Attachment, error)
 	ListAttachmentsByIDs(ctx context.Context, conversationID string, ids []string) ([]domain.Attachment, error)
 }
 
-type BlobStore interface {
-	PutReader(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error
-	DeleteObject(ctx context.Context, key string) error
+type PresignedURL struct {
+	URL       string
+	Method    string
+	Headers   map[string]string
+	ExpiresAt time.Time
+}
+
+type ObjectInfo struct {
+	SizeBytes   int64
+	ContentType string
+}
+
+type URLSigner interface {
+	PresignUpload(ctx context.Context, key string, contentType string, sizeBytes int64, contentMD5 string) (*PresignedURL, error)
+	PresignDownload(ctx context.Context, key string, filename string, attachment bool) (*PresignedURL, error)
+	StatObject(ctx context.Context, key string) (*ObjectInfo, error)
 }
 
 type CreateAttachmentParams struct {
@@ -37,32 +53,50 @@ type CreateAttachmentParams struct {
 	Category         string
 	SizeBytes        int64
 	SHA256           string
+	ContentMD5       string
+	Status           string
 	ObjectKey        string
 	Metadata         json.RawMessage
 }
 
-type UploadInput struct {
+type CreateUploadInput struct {
 	ConversationID   string
 	UploadedByUserID string
 	IdempotencyKey   string
 	Filename         string
 	ContentType      string
 	SizeBytes        int64
-	File             io.Reader
+	SHA256           string
+	ContentMD5       string
 	Metadata         json.RawMessage
 }
 
-type Service struct {
-	Repo  Repository
-	Blobs BlobStore
+type CompleteUploadInput struct {
+	ConversationID   string
+	UploadedByUserID string
+	AttachmentID     string
 }
 
-func (s *Service) Upload(ctx context.Context, input UploadInput) (*domain.Attachment, error) {
+type UploadIntent struct {
+	Attachment *domain.Attachment
+	Upload     *PresignedURL
+}
+
+type Service struct {
+	Repo   Repository
+	Signer URLSigner
+}
+
+const MaxUploadBytes int64 = 128 << 20
+
+var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+func (s *Service) CreateUpload(ctx context.Context, input CreateUploadInput) (*UploadIntent, error) {
 	if s == nil || s.Repo == nil {
 		return nil, fmt.Errorf("attachment repository is required")
 	}
-	if s.Blobs == nil {
-		return nil, fmt.Errorf("attachment blob store is required")
+	if s.Signer == nil {
+		return nil, fmt.Errorf("attachment url signer is required")
 	}
 	if strings.TrimSpace(input.ConversationID) == "" {
 		return nil, domain.NewValidationError("conversation id is required")
@@ -74,16 +108,28 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*domain.Attach
 	if len(idempotencyKey) > 128 {
 		return nil, domain.NewValidationError("Idempotency-Key must be at most 128 characters")
 	}
-	if input.File == nil {
-		return nil, domain.NewValidationError("file is required")
-	}
 	if input.SizeBytes <= 0 {
 		return nil, domain.NewValidationError("file is empty")
+	}
+	if input.SizeBytes > MaxUploadBytes {
+		return nil, domain.NewValidationError(fmt.Sprintf("file exceeds %d bytes", MaxUploadBytes))
+	}
+	checksum := strings.ToLower(strings.TrimSpace(input.SHA256))
+	if !sha256Pattern.MatchString(checksum) {
+		return nil, domain.NewValidationError("sha256 must be a 64-character lowercase hex digest")
+	}
+	contentMD5 := strings.TrimSpace(input.ContentMD5)
+	decodedMD5, err := base64.StdEncoding.DecodeString(contentMD5)
+	if err != nil || len(decodedMD5) != 16 {
+		return nil, domain.NewValidationError("content_md5 must be a base64-encoded 16-byte MD5 digest")
 	}
 	if idempotencyKey != "" {
 		existing, err := s.Repo.GetAttachmentByIdempotencyKey(ctx, input.ConversationID, input.UploadedByUserID, idempotencyKey)
 		if err == nil {
-			return existing, nil
+			if !matchesUpload(existing, input, checksum, contentMD5) {
+				return nil, domain.ErrConflict
+			}
+			return s.uploadIntent(ctx, existing)
 		}
 		if !errors.Is(err, domain.ErrNotFound) {
 			return nil, err
@@ -96,12 +142,6 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*domain.Attach
 	attachmentID := uuid.NewString()
 	objectKey := attachmentObjectKey(input.ConversationID, attachmentID, filename)
 
-	hasher := sha256.New()
-	reader := io.TeeReader(input.File, hasher)
-	if err := s.Blobs.PutReader(ctx, objectKey, reader, input.SizeBytes, contentType); err != nil {
-		return nil, fmt.Errorf("store attachment object: %w", err)
-	}
-
 	attachment, err := s.Repo.CreateAttachment(ctx, CreateAttachmentParams{
 		ID:               attachmentID,
 		ConversationID:   input.ConversationID,
@@ -111,19 +151,94 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*domain.Attach
 		ContentType:      contentType,
 		Category:         category,
 		SizeBytes:        input.SizeBytes,
-		SHA256:           hex.EncodeToString(hasher.Sum(nil)),
+		SHA256:           checksum,
+		ContentMD5:       contentMD5,
+		Status:           domain.AttachmentStatusPending,
 		ObjectKey:        objectKey,
 		Metadata:         cloneJSON(input.Metadata),
 	})
 	if err != nil {
-		_ = s.Blobs.DeleteObject(ctx, objectKey)
 		return nil, err
 	}
-	if attachment.ObjectKey != objectKey {
-		_ = s.Blobs.DeleteObject(ctx, objectKey)
+	if !matchesUpload(attachment, input, checksum, contentMD5) {
+		return nil, domain.ErrConflict
 	}
+	return s.uploadIntent(ctx, attachment)
+}
 
-	return attachment, nil
+func matchesUpload(attachment *domain.Attachment, input CreateUploadInput, sha256 string, contentMD5 string) bool {
+	filename := sanitizeFilename(input.Filename)
+	contentType := normalizeContentType(filename, input.ContentType)
+	md5Matches := attachment != nil && (attachment.ContentMD5 == contentMD5 ||
+		(attachment.Status == domain.AttachmentStatusReady && attachment.ContentMD5 == ""))
+	return attachment != nil && attachment.Filename == filename && attachment.ContentType == contentType &&
+		attachment.SizeBytes == input.SizeBytes && attachment.SHA256 == sha256 && md5Matches
+}
+
+func (s *Service) uploadIntent(ctx context.Context, attachment *domain.Attachment) (*UploadIntent, error) {
+	if attachment.Status == domain.AttachmentStatusReady {
+		return &UploadIntent{Attachment: attachment}, nil
+	}
+	if attachment.Status != domain.AttachmentStatusPending {
+		return nil, domain.ErrConflict
+	}
+	refreshed, err := s.Repo.RefreshPendingAttachment(ctx, attachment.ID)
+	if err != nil {
+		return nil, err
+	}
+	upload, err := s.Signer.PresignUpload(ctx, refreshed.ObjectKey, refreshed.ContentType, refreshed.SizeBytes, refreshed.ContentMD5)
+	if err != nil {
+		return nil, fmt.Errorf("presign attachment upload: %w", err)
+	}
+	return &UploadIntent{Attachment: refreshed, Upload: upload}, nil
+}
+
+func (s *Service) CompleteUpload(ctx context.Context, input CompleteUploadInput) (*domain.Attachment, error) {
+	if s == nil || s.Repo == nil || s.Signer == nil {
+		return nil, fmt.Errorf("attachment service is not configured")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(input.AttachmentID)); err != nil {
+		return nil, domain.NewValidationError("attachment id must be a UUID")
+	}
+	attachment, err := s.Repo.GetAttachment(ctx, input.ConversationID, input.UploadedByUserID, input.AttachmentID)
+	if err != nil {
+		return nil, err
+	}
+	if attachment.Status == domain.AttachmentStatusReady {
+		return attachment, nil
+	}
+	info, err := s.Signer.StatObject(ctx, attachment.ObjectKey)
+	if err != nil {
+		return nil, fmt.Errorf("stat uploaded attachment: %w", err)
+	}
+	if info.SizeBytes != attachment.SizeBytes {
+		return nil, domain.NewValidationError(fmt.Sprintf("uploaded object size is %d bytes, expected %d", info.SizeBytes, attachment.SizeBytes))
+	}
+	if actual := parseMediaType(info.ContentType); actual != "" && actual != attachment.ContentType {
+		return nil, domain.NewValidationError(fmt.Sprintf("uploaded object content type is %q, expected %q", actual, attachment.ContentType))
+	}
+	return s.Repo.CompleteAttachment(ctx, input.ConversationID, input.UploadedByUserID, input.AttachmentID, attachment.SHA256)
+}
+
+func (s *Service) DownloadURL(ctx context.Context, conversationID string, uploadedByUserID string, attachmentID string, download bool) (*domain.Attachment, *PresignedURL, error) {
+	if s == nil || s.Repo == nil || s.Signer == nil {
+		return nil, nil, fmt.Errorf("attachment service is not configured")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(attachmentID)); err != nil {
+		return nil, nil, domain.NewValidationError("attachment id must be a UUID")
+	}
+	attachment, err := s.Repo.GetAttachment(ctx, conversationID, uploadedByUserID, attachmentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if attachment.Status != domain.AttachmentStatusReady {
+		return nil, nil, domain.NewValidationError("attachment upload is not complete")
+	}
+	presigned, err := s.Signer.PresignDownload(ctx, attachment.ObjectKey, attachment.Filename, download)
+	if err != nil {
+		return nil, nil, fmt.Errorf("presign attachment download: %w", err)
+	}
+	return attachment, presigned, nil
 }
 
 func attachmentObjectKey(conversationID string, attachmentID string, filename string) string {

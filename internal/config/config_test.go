@@ -8,63 +8,59 @@ import (
 	"time"
 )
 
-func TestLoadPrefersMinIOEnvironmentVariables(t *testing.T) {
-	t.Setenv("MINIO_ENDPOINT", "minio-primary:9000")
-	t.Setenv("MINIO_REGION", "ap-southeast-1")
-	t.Setenv("MINIO_BUCKET", "assistant-primary")
-	t.Setenv("MINIO_ACCESS_KEY", "primary-key")
-	t.Setenv("MINIO_SECRET_KEY", "primary-secret")
-	t.Setenv("MINIO_USE_SSL", "true")
+func TestLoadReadsS3EnvironmentVariables(t *testing.T) {
+	t.Setenv("S3_PROVIDER", "r2")
+	t.Setenv("S3_ENDPOINT", "account.r2.cloudflarestorage.com")
+	t.Setenv("S3_PUBLIC_ENDPOINT", "https://objects.example.com")
+	t.Setenv("S3_REGION", "auto")
+	t.Setenv("S3_BUCKET", "assistant-primary")
+	t.Setenv("S3_ACCESS_KEY", "primary-key")
+	t.Setenv("S3_SECRET_KEY", "primary-secret")
+	t.Setenv("S3_USE_SSL", "true")
+	t.Setenv("S3_BUCKET_LOOKUP", "path")
+	t.Setenv("S3_AUTO_CREATE_BUCKET", "false")
+	t.Setenv("S3_PRESIGN_TTL", "20m")
 
 	cfg := Load()
 
-	if cfg.MinIOEndpoint != "minio-primary:9000" {
-		t.Fatalf("MinIOEndpoint = %q, want %q", cfg.MinIOEndpoint, "minio-primary:9000")
+	if cfg.S3Provider != "r2" || cfg.S3Endpoint != "account.r2.cloudflarestorage.com" {
+		t.Fatalf("unexpected S3 provider settings: %+v", cfg)
 	}
-	if cfg.MinIORegion != "ap-southeast-1" {
-		t.Fatalf("MinIORegion = %q, want %q", cfg.MinIORegion, "ap-southeast-1")
+	if cfg.S3PublicEndpoint != "https://objects.example.com" || cfg.S3Region != "auto" {
+		t.Fatalf("unexpected S3 endpoint settings: %+v", cfg)
 	}
-	if cfg.MinIOBucket != "assistant-primary" {
-		t.Fatalf("MinIOBucket = %q, want %q", cfg.MinIOBucket, "assistant-primary")
+	if cfg.S3Bucket != "assistant-primary" {
+		t.Fatalf("S3Bucket = %q, want %q", cfg.S3Bucket, "assistant-primary")
 	}
-	if cfg.MinIOAccessKey != "primary-key" {
-		t.Fatalf("MinIOAccessKey = %q, want %q", cfg.MinIOAccessKey, "primary-key")
+	if cfg.S3AccessKey != "primary-key" || cfg.S3SecretKey != "primary-secret" {
+		t.Fatalf("unexpected S3 credentials")
 	}
-	if cfg.MinIOSecretKey != "primary-secret" {
-		t.Fatalf("MinIOSecretKey = %q, want %q", cfg.MinIOSecretKey, "primary-secret")
-	}
-	if !cfg.MinIOUseSSL {
-		t.Fatal("expected MinIOUseSSL to prefer MINIO_USE_SSL=true")
+	if !cfg.S3UseSSL || cfg.S3AutoCreateBucket || cfg.S3BucketLookup != "path" || cfg.S3PresignTTL != 20*time.Minute {
+		t.Fatalf("unexpected S3 behavior settings: %+v", cfg)
 	}
 }
 
-func TestLoadUsesMinIODefaultsWhenEnvironmentIsUnset(t *testing.T) {
-	t.Setenv("MINIO_ENDPOINT", "")
-	t.Setenv("MINIO_REGION", "")
-	t.Setenv("MINIO_BUCKET", "")
-	t.Setenv("MINIO_ACCESS_KEY", "")
-	t.Setenv("MINIO_SECRET_KEY", "")
-	t.Setenv("MINIO_USE_SSL", "")
+func TestLoadUsesLocalS3DefaultsWhenEnvironmentIsUnset(t *testing.T) {
+	for _, key := range []string{"S3_PROVIDER", "S3_ENDPOINT", "S3_PUBLIC_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_USE_SSL", "S3_BUCKET_LOOKUP", "S3_AUTO_CREATE_BUCKET", "S3_PRESIGN_TTL"} {
+		t.Setenv(key, "")
+	}
 
 	cfg := Load()
 
-	if cfg.MinIOEndpoint != "127.0.0.1:9000" {
-		t.Fatalf("MinIOEndpoint = %q, want %q", cfg.MinIOEndpoint, "127.0.0.1:9000")
+	if cfg.S3Provider != "minio" || cfg.S3Endpoint != "127.0.0.1:9000" {
+		t.Fatalf("unexpected S3 defaults: %+v", cfg)
 	}
-	if cfg.MinIORegion != "us-east-1" {
-		t.Fatalf("MinIORegion = %q, want %q", cfg.MinIORegion, "us-east-1")
+	if cfg.S3Region != "us-east-1" {
+		t.Fatalf("S3Region = %q, want %q", cfg.S3Region, "us-east-1")
 	}
-	if cfg.MinIOBucket != "assistant" {
-		t.Fatalf("MinIOBucket = %q, want %q", cfg.MinIOBucket, "assistant")
+	if cfg.S3Bucket != "assistant" {
+		t.Fatalf("S3Bucket = %q, want %q", cfg.S3Bucket, "assistant")
 	}
-	if cfg.MinIOAccessKey != "assistantminio" {
-		t.Fatalf("MinIOAccessKey = %q, want %q", cfg.MinIOAccessKey, "assistantminio")
+	if cfg.S3AccessKey != "assistantminio" || cfg.S3SecretKey != "assistantminio123" {
+		t.Fatalf("unexpected S3 credential defaults")
 	}
-	if cfg.MinIOSecretKey != "assistantminio123" {
-		t.Fatalf("MinIOSecretKey = %q, want %q", cfg.MinIOSecretKey, "assistantminio123")
-	}
-	if cfg.MinIOUseSSL {
-		t.Fatal("expected MinIOUseSSL to use the default false value")
+	if cfg.S3UseSSL || !cfg.S3AutoCreateBucket {
+		t.Fatalf("unexpected local S3 defaults: %+v", cfg)
 	}
 }
 
@@ -369,8 +365,16 @@ func validWorkerConfig() Config {
 		DatabaseURL:                 "postgres://db",
 		RedisAddr:                   "127.0.0.1:6379",
 		KafkaBrokers:                []string{"127.0.0.1:9092"},
-		MinIOAccessKey:              "minio",
-		MinIOSecretKey:              "minio123",
+		S3Provider:                  "minio",
+		S3Endpoint:                  "127.0.0.1:9000",
+		S3Bucket:                    "assistant",
+		S3AccessKey:                 "minio",
+		S3SecretKey:                 "minio123",
+		S3BucketLookup:              "auto",
+		S3PresignTTL:                15 * time.Minute,
+		S3PendingUploadTTL:          24 * time.Hour,
+		S3UploadReaperInterval:      5 * time.Minute,
+		S3UploadReaperBatchSize:     100,
 		ProviderCredentialMasterKey: "credential-master-key",
 		AgentSystemPromptFile:       "prompts/system.md",
 		AgentCompactPromptFile:      "prompts/compact.md",

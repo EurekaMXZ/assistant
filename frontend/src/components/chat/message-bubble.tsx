@@ -7,7 +7,7 @@ import { MarkdownRenderer } from "./markdown-renderer";
 import { CopyButton } from "./copy-button";
 import { TurnTimeline } from "./turn-timeline";
 import { Button } from "@/components/ui/button";
-import { getConversationAttachmentBlob } from "@/lib/api";
+import { getConversationAttachmentUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Message, Turn } from "@/lib/types";
 import { ImagePreview } from "./image-preview";
@@ -105,18 +105,12 @@ function AttachmentImagePreview({
 
   useEffect(() => {
     let cancelled = false;
-    let objectUrl: string | null = null;
     setSrc(null);
     setHidden(false);
 
     const load = async () => {
       try {
-        const blob = await getConversationAttachmentBlob(conversationId, attachment.id);
-        if (!blob.type.startsWith("image/")) {
-          if (!cancelled) setHidden(true);
-          return;
-        }
-        objectUrl = URL.createObjectURL(blob);
+        const objectUrl = await getConversationAttachmentUrl(conversationId, attachment.id);
         if (!cancelled) {
           setSrc(objectUrl);
         }
@@ -129,9 +123,6 @@ function AttachmentImagePreview({
 
     return () => {
       cancelled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
     };
   }, [attachment.id, conversationId]);
 

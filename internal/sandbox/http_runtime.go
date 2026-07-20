@@ -93,7 +93,7 @@ func (r *HTTPRuntime) ExecSandboxCommand(ctx context.Context, handle domain.Sand
 	return &response, nil
 }
 
-func (r *HTTPRuntime) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error {
+func (r *HTTPRuntime) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, reader io.Reader, size int64, requestKey string) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("sandbox http runtime is not configured")
 	}
@@ -101,15 +101,19 @@ func (r *HTTPRuntime) WriteSandboxFile(ctx context.Context, handle domain.Sandbo
 	if path == "" {
 		return fmt.Errorf("sandbox file path is required")
 	}
-	if int64(len(data)) > domain.SandboxFileMaxBytes {
+	if reader == nil {
+		return fmt.Errorf("sandbox file reader is required")
+	}
+	if size < 0 || size > domain.SandboxFileMaxBytes {
 		return fmt.Errorf("sandbox file exceeds %d bytes", domain.SandboxFileMaxBytes)
 	}
 	target := r.baseURL + "/sandboxes/" + pathEscape(handle.RuntimeID) + "/files?path=" + url.QueryEscape(path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, io.LimitReader(reader, size))
 	if err != nil {
 		return fmt.Errorf("create sandbox bridge file request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = size
 	if r.token != "" {
 		req.Header.Set("Authorization", "Bearer "+r.token)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"reflect"
 	"time"
 
@@ -32,17 +31,32 @@ type ExecConversationSandboxInput struct {
 	TimeoutSeconds   int
 }
 
-type UploadConversationAttachmentInput struct {
+type CreateConversationAttachmentUploadInput struct {
 	IdempotencyKey string
 	Filename       string
 	ContentType    string
 	SizeBytes      int64
-	File           io.Reader
+	SHA256         string
+	ContentMD5     string
 }
 
-type ConversationAttachmentContent struct {
-	Attachment domain.Attachment
-	Data       []byte
+type CompleteConversationAttachmentUploadInput struct{}
+
+type PresignedObjectURL struct {
+	URL       string            `json:"url"`
+	Method    string            `json:"method"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	ExpiresAt time.Time         `json:"expires_at"`
+}
+
+type ConversationAttachmentUpload struct {
+	Attachment domain.Attachment   `json:"attachment"`
+	Upload     *PresignedObjectURL `json:"upload,omitempty"`
+}
+
+type ConversationAttachmentDownload struct {
+	Attachment domain.Attachment  `json:"attachment"`
+	Download   PresignedObjectURL `json:"download"`
 }
 
 type SendMessageInput struct {
@@ -255,8 +269,9 @@ type ConversationUseCases struct {
 }
 
 type AttachmentUseCases struct {
-	UploadConversationAttachment func(ctx context.Context, ownerUserID string, conversationID string, input UploadConversationAttachmentInput) (*domain.Attachment, error)
-	GetConversationAttachment    func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string) (*ConversationAttachmentContent, error)
+	CreateConversationAttachmentUpload   func(ctx context.Context, ownerUserID string, conversationID string, input CreateConversationAttachmentUploadInput) (*ConversationAttachmentUpload, error)
+	CompleteConversationAttachmentUpload func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, input CompleteConversationAttachmentUploadInput) (*domain.Attachment, error)
+	GetConversationAttachmentDownload    func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, download bool) (*ConversationAttachmentDownload, error)
 }
 
 type SandboxUseCases struct {

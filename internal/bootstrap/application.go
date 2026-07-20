@@ -3,8 +3,6 @@ package bootstrap
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	assistantattachment "github.com/EurekaMXZ/assistant/internal/attachment"
@@ -25,6 +23,7 @@ type workflowAdapters struct {
 	Turns                workflow.TurnWorkflowRepository
 	Contexts             workflow.WorkflowContextRepository
 	Attachments          workflow.AttachmentStore
+	AttachmentCleanup    assistantattachment.CleanupRepository
 	GeneratedAttachments workflow.GeneratedAttachmentStore
 	TurnRuns             workflow.TurnRunWorkflowStore
 	ToolCalls            workflow.ToolCallStore
@@ -40,11 +39,7 @@ type workflowAdapters struct {
 	BillingUsage         *postgres.BillingAccountRepository
 }
 
-type attachmentBlobReader interface {
-	GetBytes(ctx context.Context, key string) ([]byte, error)
-}
-
-func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentBlobs assistantattachment.BlobStore, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, sandboxLifecycle assistantsandbox.LifecycleSettings, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
+func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentSigner assistantattachment.URLSigner, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, sandboxLifecycle assistantsandbox.LifecycleSettings, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
 	conversationRepository := postgres.NewConversationRepository(pool)
 	conversationShareRepository := postgres.NewConversationShareRepository(pool)
 	conversationSandboxRepository := postgres.NewConversationSandboxRepository(pool)
@@ -108,11 +103,10 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		DefaultTimeout: sandboxLifecycle.CommandDefault,
 		MaximumTimeout: sandboxLifecycle.CommandMaximum,
 	}
-	uploadAttachment := assistantattachment.Service{
-		Repo:  attachmentRepository,
-		Blobs: attachmentBlobs,
+	attachmentService := assistantattachment.Service{
+		Repo:   attachmentRepository,
+		Signer: attachmentSigner,
 	}
-	attachmentReader, _ := attachmentBlobs.(attachmentBlobReader)
 
 	ensureOwnedConversation := func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error) {
 		return conversationRepository.GetConversationByOwner(ctx, conversationID, ownerUserID)
@@ -201,41 +195,46 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 			},
 		},
 		Attachments: server.AttachmentUseCases{
-			UploadConversationAttachment: func(ctx context.Context, ownerUserID string, conversationID string, input server.UploadConversationAttachmentInput) (*domain.Attachment, error) {
+			CreateConversationAttachmentUpload: func(ctx context.Context, ownerUserID string, conversationID string, input server.CreateConversationAttachmentUploadInput) (*server.ConversationAttachmentUpload, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
 					return nil, err
 				}
-				return uploadAttachment.Upload(ctx, assistantattachment.UploadInput{
+				intent, err := attachmentService.CreateUpload(ctx, assistantattachment.CreateUploadInput{
 					ConversationID:   conversationID,
 					UploadedByUserID: ownerUserID,
 					IdempotencyKey:   input.IdempotencyKey,
 					Filename:         input.Filename,
 					ContentType:      input.ContentType,
 					SizeBytes:        input.SizeBytes,
-					File:             input.File,
+					SHA256:           input.SHA256,
+					ContentMD5:       input.ContentMD5,
 				})
-			},
-			GetConversationAttachment: func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string) (*server.ConversationAttachmentContent, error) {
-				if attachmentReader == nil {
-					return nil, fmt.Errorf("attachment blob reader is not configured")
+				if err != nil {
+					return nil, err
 				}
+				result := &server.ConversationAttachmentUpload{Attachment: *intent.Attachment}
+				if intent.Upload != nil {
+					result.Upload = &server.PresignedObjectURL{URL: intent.Upload.URL, Method: intent.Upload.Method, Headers: intent.Upload.Headers, ExpiresAt: intent.Upload.ExpiresAt}
+				}
+				return result, nil
+			},
+			CompleteConversationAttachmentUpload: func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, input server.CompleteConversationAttachmentUploadInput) (*domain.Attachment, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
 					return nil, err
 				}
-
-				attachments, err := attachmentRepository.ListAttachmentsByIDs(ctx, conversationID, []string{attachmentID})
+				return attachmentService.CompleteUpload(ctx, assistantattachment.CompleteUploadInput{
+					ConversationID: conversationID, UploadedByUserID: ownerUserID, AttachmentID: attachmentID,
+				})
+			},
+			GetConversationAttachmentDownload: func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, download bool) (*server.ConversationAttachmentDownload, error) {
+				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
+					return nil, err
+				}
+				attachment, presigned, err := attachmentService.DownloadURL(ctx, conversationID, ownerUserID, attachmentID, download)
 				if err != nil {
 					return nil, err
 				}
-				if len(attachments) == 0 || strings.TrimSpace(attachments[0].ObjectKey) == "" {
-					return nil, domain.ErrNotFound
-				}
-
-				data, err := attachmentReader.GetBytes(ctx, attachments[0].ObjectKey)
-				if err != nil {
-					return nil, err
-				}
-				return &server.ConversationAttachmentContent{Attachment: attachments[0], Data: data}, nil
+				return &server.ConversationAttachmentDownload{Attachment: *attachment, Download: server.PresignedObjectURL{URL: presigned.URL, Method: presigned.Method, Headers: presigned.Headers, ExpiresAt: presigned.ExpiresAt}}, nil
 			},
 		},
 		Sandboxes: server.SandboxUseCases{
@@ -302,6 +301,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Turns:                workflowTurnRepository,
 		Contexts:             postgres.NewWorkflowContextRepository(pool),
 		Attachments:          attachmentRepository,
+		AttachmentCleanup:    attachmentRepository,
 		GeneratedAttachments: attachmentRepository,
 		TurnRuns:             turnRunRepository,
 		ToolCalls:            toolCallRepository,

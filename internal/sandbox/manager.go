@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -126,12 +127,12 @@ func (m *Manager) ExecSandboxCommand(ctx context.Context, handle domain.SandboxH
 	return runtime.ExecSandboxCommand(ctx, handle, request, requestKey)
 }
 
-func (m *Manager) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error {
+func (m *Manager) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, reader io.Reader, size int64, requestKey string) error {
 	runtime, err := m.runtime(handle.Provider)
 	if err != nil {
 		return err
 	}
-	return runtime.WriteSandboxFile(ctx, handle, path, data, requestKey)
+	return runtime.WriteSandboxFile(ctx, handle, path, reader, size, requestKey)
 }
 
 func (m *Manager) runtime(provider string) (tool.SandboxManager, error) {

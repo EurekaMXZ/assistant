@@ -404,8 +404,11 @@ func scanAttachment(row scanRow) (*domain.Attachment, error) {
 		&attachment.Category,
 		&attachment.SizeBytes,
 		&attachment.SHA256,
+		&attachment.ContentMD5,
+		&attachment.Status,
 		&attachment.ObjectKey,
 		&metadata,
+		&attachment.UploadCompletedAt,
 		&attachment.CreatedAt,
 		&attachment.UpdatedAt,
 	); err != nil {

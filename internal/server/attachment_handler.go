@@ -1,106 +1,72 @@
 package server
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/gin-gonic/gin"
 )
 
-const maxConversationAttachmentBytes int64 = 128 << 20
-
 func (a *API) handleUploadConversationAttachment(c *gin.Context) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxConversationAttachmentBytes+(1<<20))
-	fileHeader, err := c.FormFile("file")
-	if c.Request.MultipartForm != nil {
-		defer c.Request.MultipartForm.RemoveAll()
+	var body struct {
+		Filename    string `json:"filename"`
+		ContentType string `json:"content_type"`
+		SizeBytes   int64  `json:"size_bytes"`
+		SHA256      string `json:"sha256"`
+		ContentMD5  string `json:"content_md5"`
 	}
-	if err != nil {
-		if isMissingUploadFile(err) {
-			writeAPIError(c, domain.NewValidationError("file is required"))
-			return
-		}
-		if isRequestBodyTooLarge(err) {
-			writeAPIError(c, domain.NewValidationError(fmt.Sprintf("file must be %d bytes or smaller", maxConversationAttachmentBytes)))
-			return
-		}
-		writeAPIError(c, domain.NewValidationError("file is required"))
-		return
-	}
-	if fileHeader.Size <= 0 {
-		writeAPIError(c, domain.NewValidationError("file is empty"))
-		return
-	}
-	if fileHeader.Size > maxConversationAttachmentBytes {
-		writeAPIError(c, domain.NewValidationError(fmt.Sprintf("file must be %d bytes or smaller", maxConversationAttachmentBytes)))
+	if err := bindJSON(c, &body); err != nil {
+		writeAPIError(c, err)
 		return
 	}
 
-	file, err := fileHeader.Open()
-	if err != nil {
-		writeError(c, http.StatusInternalServerError, "open uploaded file")
-		return
-	}
-	defer file.Close()
-
-	attachment, err := a.useCases.Attachments.UploadConversationAttachment(
+	result, err := a.useCases.Attachments.CreateConversationAttachmentUpload(
 		c.Request.Context(),
 		currentUser(c).ID,
 		c.Param("conversationID"),
-		UploadConversationAttachmentInput{
+		CreateConversationAttachmentUploadInput{
 			IdempotencyKey: strings.TrimSpace(c.GetHeader("Idempotency-Key")),
-			Filename:       fileHeader.Filename,
-			ContentType:    fileHeader.Header.Get("Content-Type"),
-			SizeBytes:      fileHeader.Size,
-			File:           file,
+			Filename:       body.Filename,
+			ContentType:    body.ContentType,
+			SizeBytes:      body.SizeBytes,
+			SHA256:         body.SHA256,
+			ContentMD5:     body.ContentMD5,
 		},
 	)
 	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
-
-	c.JSON(http.StatusCreated, gin.H{"attachment": attachment})
+	c.JSON(http.StatusCreated, result)
 }
 
-func (a *API) handleGetConversationAttachment(c *gin.Context) {
-	content, err := a.useCases.Attachments.GetConversationAttachment(
+func (a *API) handleCompleteConversationAttachmentUpload(c *gin.Context) {
+	attachment, err := a.useCases.Attachments.CompleteConversationAttachmentUpload(
 		c.Request.Context(),
 		currentUser(c).ID,
 		c.Param("conversationID"),
 		c.Param("attachmentID"),
+		CompleteConversationAttachmentUploadInput{},
 	)
 	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
-	if content == nil {
-		writeAPIError(c, domain.ErrNotFound)
+	c.JSON(http.StatusOK, gin.H{"attachment": attachment})
+}
+
+func (a *API) handleGetConversationAttachment(c *gin.Context) {
+	result, err := a.useCases.Attachments.GetConversationAttachmentDownload(
+		c.Request.Context(),
+		currentUser(c).ID,
+		c.Param("conversationID"),
+		c.Param("attachmentID"),
+		strings.EqualFold(strings.TrimSpace(c.Query("disposition")), "attachment"),
+	)
+	if err != nil {
+		writeAPIError(c, err)
 		return
 	}
-
-	filename := strings.TrimSpace(content.Attachment.Filename)
-	if filename != "" {
-		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", filename))
-	}
-	contentType := strings.TrimSpace(content.Attachment.ContentType)
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	c.Header("Cache-Control", "private, max-age=300")
-	c.Data(http.StatusOK, contentType, content.Data)
-}
-
-func isRequestBodyTooLarge(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "request body too large")
-}
-
-func isMissingUploadFile(err error) bool {
-	return err != nil && errors.Is(err, http.ErrMissingFile)
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, result)
 }

@@ -7,7 +7,7 @@ import (
 
 	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
 	"github.com/EurekaMXZ/assistant/internal/credential"
-	"github.com/EurekaMXZ/assistant/internal/minio"
+	"github.com/EurekaMXZ/assistant/internal/objectstore"
 	"github.com/EurekaMXZ/assistant/internal/postgres"
 	"github.com/EurekaMXZ/assistant/internal/server"
 	"github.com/EurekaMXZ/assistant/internal/stream"
@@ -42,7 +42,7 @@ func newBaseAssembly(ctx context.Context, settings baseSettings) (*baseAssembly,
 	}
 	lifecycle.addClose(pool.Close)
 
-	artifactStore, err := minio.New(settings.MinIO)
+	artifactStore, err := objectstore.New(settings.ObjectStore)
 	if err != nil {
 		lifecycle.close()
 		return nil, err

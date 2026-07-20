@@ -206,3 +206,14 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 		t.Fatalf("expected original text in payload, got %s", raw)
 	}
 }
+
+func TestContextLoaderRejectsCorruptedImageAttachment(t *testing.T) {
+	loader := &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{data: map[string][]byte{"image": []byte("bad")}}}
+	_, _, err := loader.attachmentContentPart(t.Context(), domain.Attachment{
+		ID: "attachment-1", Category: domain.AttachmentCategoryImage, ContentType: "image/png",
+		SizeBytes: 3, SHA256: strings.Repeat("0", 64), ObjectKey: "image",
+	})
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("error = %v, want checksum mismatch", err)
+	}
+}

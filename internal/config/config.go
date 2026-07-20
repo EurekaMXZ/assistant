@@ -29,12 +29,17 @@ const (
 	defaultRedisAddr                 = "127.0.0.1:6379"
 	defaultRedisDB                   = 0
 	defaultStreamChannelPrefix       = "assistant:stream"
-	defaultMinIOEndpoint             = "127.0.0.1:9000"
-	defaultMinIORegion               = "us-east-1"
-	defaultMinIOBucket               = "assistant"
-	defaultMinIOUseSSL               = false
-	defaultMinIOAccessKey            = "assistantminio"
-	defaultMinIOSecretKey            = "assistantminio123"
+	defaultS3Provider                = "minio"
+	defaultS3Endpoint                = "127.0.0.1:9000"
+	defaultS3Region                  = "us-east-1"
+	defaultS3Bucket                  = "assistant"
+	defaultS3UseSSL                  = false
+	defaultS3AccessKey               = "assistantminio"
+	defaultS3SecretKey               = "assistantminio123"
+	defaultS3PresignTTL              = 15 * time.Minute
+	defaultS3PendingUploadTTL        = 24 * time.Hour
+	defaultS3UploadReaperInterval    = 5 * time.Minute
+	defaultS3UploadReaperBatchSize   = 100
 	defaultOpenAIUserAgent           = "assistant"
 	defaultRemoteToolReplayMaxBytes  = 16384
 	defaultModelToolOutputMaxTokens  = 10000
@@ -89,12 +94,21 @@ type Config struct {
 	KafkaBrokers                []string
 	KafkaWorkflowTopic          string
 	KafkaConsumerGroup          string
-	MinIOEndpoint               string
-	MinIORegion                 string
-	MinIOBucket                 string
-	MinIOAccessKey              string
-	MinIOSecretKey              string
-	MinIOUseSSL                 bool
+	S3Provider                  string
+	S3Endpoint                  string
+	S3PublicEndpoint            string
+	S3Region                    string
+	S3Bucket                    string
+	S3AccessKey                 string
+	S3SecretKey                 string
+	S3SessionToken              string
+	S3UseSSL                    bool
+	S3BucketLookup              string
+	S3AutoCreateBucket          bool
+	S3PresignTTL                time.Duration
+	S3PendingUploadTTL          time.Duration
+	S3UploadReaperInterval      time.Duration
+	S3UploadReaperBatchSize     int
 	OpenAIUserAgent             string
 	ProviderCredentialMasterKey string
 	BillingCurrency             string
@@ -139,6 +153,7 @@ type Config struct {
 
 func Load() Config {
 	_ = godotenv.Load()
+	s3Provider := getenv("S3_PROVIDER", defaultS3Provider)
 
 	return Config{
 		Host:                        getenv("APP_HOST", defaultHost),
@@ -167,12 +182,21 @@ func Load() Config {
 		KafkaBrokers:                getenvList("KAFKA_BROKERS", []string{"127.0.0.1:9092"}),
 		KafkaWorkflowTopic:          getenv("KAFKA_WORKFLOW_TOPIC", defaultKafkaTopic),
 		KafkaConsumerGroup:          getenv("KAFKA_CONSUMER_GROUP", defaultKafkaGroup),
-		MinIOEndpoint:               getenv("MINIO_ENDPOINT", defaultMinIOEndpoint),
-		MinIORegion:                 getenv("MINIO_REGION", defaultMinIORegion),
-		MinIOBucket:                 getenv("MINIO_BUCKET", defaultMinIOBucket),
-		MinIOAccessKey:              getenv("MINIO_ACCESS_KEY", defaultMinIOAccessKey),
-		MinIOSecretKey:              getenv("MINIO_SECRET_KEY", defaultMinIOSecretKey),
-		MinIOUseSSL:                 getenvBool("MINIO_USE_SSL", defaultMinIOUseSSL),
+		S3Provider:                  s3Provider,
+		S3Endpoint:                  getenv("S3_ENDPOINT", defaultS3Endpoint),
+		S3PublicEndpoint:            strings.TrimSpace(os.Getenv("S3_PUBLIC_ENDPOINT")),
+		S3Region:                    getenv("S3_REGION", defaultS3Region),
+		S3Bucket:                    getenv("S3_BUCKET", defaultS3Bucket),
+		S3AccessKey:                 getenv("S3_ACCESS_KEY", defaultS3AccessKey),
+		S3SecretKey:                 getenv("S3_SECRET_KEY", defaultS3SecretKey),
+		S3SessionToken:              strings.TrimSpace(os.Getenv("S3_SESSION_TOKEN")),
+		S3UseSSL:                    getenvBool("S3_USE_SSL", defaultS3UseSSL),
+		S3BucketLookup:              getenv("S3_BUCKET_LOOKUP", "auto"),
+		S3AutoCreateBucket:          getenvBool("S3_AUTO_CREATE_BUCKET", strings.EqualFold(s3Provider, defaultS3Provider)),
+		S3PresignTTL:                getenvDuration("S3_PRESIGN_TTL", defaultS3PresignTTL),
+		S3PendingUploadTTL:          getenvDuration("S3_PENDING_UPLOAD_TTL", defaultS3PendingUploadTTL),
+		S3UploadReaperInterval:      getenvDuration("S3_UPLOAD_REAPER_INTERVAL", defaultS3UploadReaperInterval),
+		S3UploadReaperBatchSize:     getenvInt("S3_UPLOAD_REAPER_BATCH_SIZE", defaultS3UploadReaperBatchSize),
 		OpenAIUserAgent:             getenv("OPENAI_USER_AGENT", defaultOpenAIUserAgent),
 		ProviderCredentialMasterKey: os.Getenv("PROVIDER_CREDENTIAL_MASTER_KEY"),
 		BillingCurrency:             getenv("BILLING_CURRENCY", "USD"),
@@ -264,6 +288,10 @@ func (c Config) ValidateAPI() error {
 		"SYSTEM_USER_USERNAME":           c.SystemUserUsername,
 		"SYSTEM_USER_PASSWORD_HASH":      c.SystemUserPasswordHash,
 		"PROVIDER_CREDENTIAL_MASTER_KEY": c.ProviderCredentialMasterKey,
+		"S3_ENDPOINT":                    c.S3Endpoint,
+		"S3_BUCKET":                      c.S3Bucket,
+		"S3_ACCESS_KEY":                  c.S3AccessKey,
+		"S3_SECRET_KEY":                  c.S3SecretKey,
 	}
 	sandboxRequired, err := c.sandboxProviderRequirements()
 	if err != nil {
@@ -283,6 +311,9 @@ func (c Config) ValidateAPI() error {
 		return fmt.Errorf("missing required api config: %s", strings.Join(missing, ", "))
 	}
 	if err := validateWebOrigin(c.WebOrigin); err != nil {
+		return fmt.Errorf("invalid api config: %w", err)
+	}
+	if err := c.validateS3(); err != nil {
 		return fmt.Errorf("invalid api config: %w", err)
 	}
 
@@ -310,8 +341,10 @@ func (c Config) ValidateWorker() error {
 		"DATABASE_URL":                   c.DatabaseURL,
 		"REDIS_ADDR":                     c.RedisAddr,
 		"KAFKA_BROKERS":                  strings.Join(c.KafkaBrokers, ","),
-		"MINIO_ACCESS_KEY":               c.MinIOAccessKey,
-		"MINIO_SECRET_KEY":               c.MinIOSecretKey,
+		"S3_ENDPOINT":                    c.S3Endpoint,
+		"S3_BUCKET":                      c.S3Bucket,
+		"S3_ACCESS_KEY":                  c.S3AccessKey,
+		"S3_SECRET_KEY":                  c.S3SecretKey,
 		"PROVIDER_CREDENTIAL_MASTER_KEY": c.ProviderCredentialMasterKey,
 		"AGENT_SYSTEM_PROMPT_FILE":       c.AgentSystemPromptFile,
 		"AGENT_COMPACT_PROMPT_FILE":      c.AgentCompactPromptFile,
@@ -337,7 +370,33 @@ func (c Config) ValidateWorker() error {
 	if len(c.KafkaBrokers) == 0 {
 		return errors.New("missing required worker config: KAFKA_BROKERS")
 	}
+	if err := c.validateS3(); err != nil {
+		return fmt.Errorf("invalid worker config: %w", err)
+	}
 
+	return nil
+}
+
+func (c Config) validateS3() error {
+	switch strings.ToLower(strings.TrimSpace(c.S3Provider)) {
+	case "aws", "aliyun", "r2", "minio":
+	default:
+		return errors.New("S3_PROVIDER must be one of aws, aliyun, r2, or minio")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.S3BucketLookup)) {
+	case "auto", "dns", "path":
+	default:
+		return errors.New("S3_BUCKET_LOOKUP must be auto, dns, or path")
+	}
+	if c.S3PresignTTL <= 0 || c.S3PresignTTL > 7*24*time.Hour {
+		return errors.New("S3_PRESIGN_TTL must be positive and at most 7 days")
+	}
+	if c.S3PendingUploadTTL <= c.S3PresignTTL {
+		return errors.New("S3_PENDING_UPLOAD_TTL must be greater than S3_PRESIGN_TTL")
+	}
+	if c.S3UploadReaperInterval <= 0 || c.S3UploadReaperBatchSize <= 0 {
+		return errors.New("S3 upload reaper interval and batch size must be positive")
+	}
 	return nil
 }
 

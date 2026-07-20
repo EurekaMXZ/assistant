@@ -62,7 +62,7 @@ cp .env.example .env
 # 启动后通过系统管理界面创建 provider credential、模型和已发布价格，并设置默认模型
 ```
 
-系统提示词和上下文压缩提示词分别位于 `prompts/system.md` 与 `prompts/compact.md`。Worker 和合并模式 Backend 在启动时读取这两个 Markdown 文件；文件缺失或内容为空会拒绝启动。路径可通过 `AGENT_SYSTEM_PROMPT_FILE` 与 `AGENT_COMPACT_PROMPT_FILE` 调整。Compose 将本地 `prompts/` 只读挂载到 Worker，修改提示词后重启 Worker 即可生效。
+系统提示词和上下文压缩提示词分别位于 `prompts/system.md` 与 `prompts/compact.md`。Worker 在启动时读取这两个 Markdown 文件；文件缺失或内容为空会拒绝启动。路径可通过 `AGENT_SYSTEM_PROMPT_FILE` 与 `AGENT_COMPACT_PROMPT_FILE` 调整。Compose 将本地 `prompts/` 只读挂载到 Worker，修改提示词后重启 Worker 即可生效。
 
 ### 本地开发
 
@@ -79,18 +79,30 @@ go run ./cmd/firecracker-bridge
 # 执行数据库迁移
 go run ./cmd/migrate up
 
-# 启动后端（API + Worker 合并模式）
-go run ./cmd/backend
-
-# 或分别启动
+# 分别启动 API 和 Worker
 go run ./cmd/api      # API 服务器 :8080
-go run ./cmd/worker   # Worker
+go run ./cmd/worker   # 另一个终端
 
 # 启动前端
 cd frontend && pnpm install && pnpm dev
 ```
 
 前端开发服务器不代理 API。复制的 `frontend/.env.local.example` 将 `NEXT_PUBLIC_API_BASE_URL` 设置为 `http://localhost:8080/api/v1`；本地开发后端时应将 `WEB_ORIGIN` 设置为 `http://localhost:3000` 以允许跨域访问。未设置 `NEXT_PUBLIC_API_BASE_URL` 时，前端源码默认使用同源 `/api/v1`。
+
+附件不会经过 Go API 传输。浏览器先分块计算 SHA-256/MD5，再向 API 申请 presigned PUT 并直接上传到 S3；长度、类型和 `Content-MD5` 都包含在签名中。上传成功并完成元数据确认后附件才进入 `ready`，发送按钮在此之前保持禁用；下载时 API 只返回 presigned GET。API/Worker 使用私网 `S3_ENDPOINT`，浏览器使用 `S3_PUBLIC_ENDPOINT`，两者可以不同。bucket 必须允许 `WEB_ORIGIN` 发起 `PUT`、`GET`、`HEAD`，并允许 `Content-Type` 与 `Content-MD5` 请求头。
+
+对象存储通过统一 `S3_*` 配置支持 AWS S3、阿里云 OSS 的 S3 兼容 endpoint、Cloudflare R2 和 MinIO：
+
+| Provider | `S3_PROVIDER` | Endpoint 示例 | Region 示例 |
+| --- | --- | --- | --- |
+| AWS S3 | `aws` | `https://s3.us-east-1.amazonaws.com` | `us-east-1` |
+| 阿里云 OSS S3 兼容 | `aliyun` | `https://oss-cn-hangzhou.aliyuncs.com` | `cn-hangzhou` |
+| Cloudflare R2 | `r2` | `https://<account>.r2.cloudflarestorage.com` | `auto` |
+| MinIO | `minio` | `http://127.0.0.1:9000` | `us-east-1` |
+
+`S3_AUTO_CREATE_BUCKET=true` 时 worker 会创建 bucket；CORS 必须由对象存储部署侧配置。Compose 的 MinIO 使用 `MINIO_API_CORS_ALLOW_ORIGIN=${WEB_ORIGIN}`，AWS、阿里云 OSS 和 R2 应在各自控制台或基础设施代码中设置对应规则。自定义 endpoint 如果需要 path-style URL，设置 `S3_BUCKET_LOOKUP=path`。Compose 内部地址与宿主机地址不同时用 `S3_DOCKER_ENDPOINT` 覆盖容器内 endpoint。未完成的上传由 worker 按 `S3_PENDING_UPLOAD_TTL`（默认 `24h`）清理。
+
+worker 从 S3 读取用户图片后仍在 Responses API 的 `input_image.image_url` 中使用 base64 data URL；`image_generation_call.result` 的 base64 结果仍由 worker 解码并写入 S3，不使用 OpenAI Files API。导入沙箱时对象从 S3 流式写入临时路径，边传输边校验大小和 SHA-256，校验成功后再原子重命名。
 
 ### 前后端分开部署
 
@@ -102,7 +114,7 @@ cd frontend && pnpm install && pnpm dev
 docker compose up -d --build
 ```
 
-默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。只有入口 Nginx 向宿主机发布端口，PostgreSQL、Redis、Kafka、MinIO、Go API 和 Next.js 仅在 Compose 网络内可达。浏览器默认访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。前端使用同源相对地址 `/api/v1`，Nginx 对 SSE 路径关闭压缩、缓存和代理缓冲。宿主机映射端口可通过 `NGINX_HOST_PORT` 调整。
+默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。Nginx 通过 `NGINX_HOST_PORT` 发布应用入口；本地 MinIO 通过回环地址的 `MINIO_HOST_PORT`（默认 `9000`）发布对象 API，供浏览器直传和直下。PostgreSQL、Redis、Kafka、Go API 和 Next.js 仅在 Compose 网络内可达。浏览器默认访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。
 
 单机部署到其他域名时，将域名或 TLS 入口指向 `NGINX_HOST_PORT`（默认 `8080`），并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。`WEB_ORIGIN` 同时用于 CORS 和邮箱验证、密码重置链接。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
 

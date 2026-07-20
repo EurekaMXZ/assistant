@@ -65,10 +65,18 @@ export const attachmentSchema = z.object({
   category: z.string(),
   size_bytes: z.number().int().nonnegative(),
   sha256: z.string(),
-  object_key: z.string().optional(),
+  status: z.enum(["pending", "ready"]),
   metadata: metadata.optional(),
+  upload_completed_at: dateTime.optional(),
   created_at: dateTime,
   updated_at: dateTime,
+});
+
+export const presignedObjectUrlSchema = z.object({
+  url: z.string().url(),
+  method: z.string(),
+  headers: z.record(z.string()).optional(),
+  expires_at: dateTime,
 });
 
 export const messageSchema = z.object({

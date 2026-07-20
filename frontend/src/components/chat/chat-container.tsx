@@ -28,7 +28,7 @@ import {
   writeConversationShareOperation,
   type ConversationShareOperation,
 } from "@/lib/conversation-share-operation";
-import type { Conversation, ConversationShare, Attachment, Message, Turn } from "@/lib/types";
+import type { Conversation, ConversationShare, Message, Turn } from "@/lib/types";
 import {
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
@@ -36,6 +36,7 @@ import {
 } from "@/lib/chat-state";
 import { MessageList } from "./message-list";
 import { Composer } from "./composer";
+import type { ComposerShellAttachment } from "./composer-shell";
 import { ConversationShareDialog } from "./conversation-share-dialog";
 import { ChatSkeleton } from "./chat-skeleton";
 import { TurnTimelinePanel } from "./turn-timeline";
@@ -130,10 +131,9 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerShellAttachment[]>([]);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
-  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
   const [resumeTurnId, setResumeTurnId] = useState<string | null>(null);
   const [restoreTurns, setRestoreTurns] = useState<Turn[]>([]);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -147,7 +147,13 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const activeConversationIdRef = useRef(conversationId);
   const mountedRef = useRef(true);
   const retryInFlightRef = useRef(false);
-  const editBackupRef = useRef<{ draft: string; attachments: Attachment[] } | null>(null);
+  const editBackupRef = useRef<{
+    draft: string;
+    attachments: ComposerShellAttachment[];
+  } | null>(null);
+  const isUploadingAttachments = attachments.some(
+    (attachment) => attachment.status === "uploading",
+  );
 
   useEffect(() => {
     activeConversationIdRef.current = conversationId;
@@ -313,7 +319,6 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     setAttachments([]);
     setEditingMessage(null);
     setIsSubmittingEdit(false);
-    setIsUploadingAttachments(false);
     setResumeTurnId(null);
     setRestoreTurns([]);
     setConversationShare(shareCacheRef.current.get(conversationId) || null);
@@ -324,8 +329,20 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     restoreConversationIdRef.current = null;
   }, [conversationId]);
 
+  const updateComposerAttachment = useCallback(
+    (key: string, update: Partial<ComposerShellAttachment>) => {
+      if (!mountedRef.current || activeConversationIdRef.current !== conversationId) return;
+      setAttachments((previous) =>
+        previous.map((attachment) =>
+          attachment.key === key ? { ...attachment, ...update } : attachment,
+        ),
+      );
+    },
+    [conversationId],
+  );
+
   const handleUploadFiles = async (files: File[]) => {
-    if (authLoading || isStreaming || isUploadingAttachments || isSubmittingEdit) return;
+    if (authLoading || isStreaming || isSubmittingEdit) return;
 
     if (!user) {
       openAuthDialog("login");
@@ -337,26 +354,52 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     }
 
     const requestedConversationId = conversationId;
-    setIsUploadingAttachments(true);
-    try {
-      const uploaded = await Promise.all(
-        files.map((file) => uploadConversationAttachment(conversationId, file)),
-      );
-      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
-        return;
-      setAttachments((prev) => [...prev, ...uploaded]);
-      toast.success(uploaded.length === 1 ? "文件已上传" : `${uploaded.length} 个文件已上传`);
-    } catch (err) {
-      if (activeConversationIdRef.current !== requestedConversationId) return;
-      if (isSessionUnauthorizedError(err)) {
-        return;
-      }
-      toast.error(err instanceof Error ? err.message : "文件上传失败");
-    } finally {
-      if (activeConversationIdRef.current === requestedConversationId) {
-        setIsUploadingAttachments(false);
-      }
-    }
+    const pendingAttachments = files.map<ComposerShellAttachment>((file) => ({
+      contentType: file.type,
+      file,
+      key: createIdempotencyKey(),
+      name: file.name,
+      size: file.size,
+      status: "uploading",
+    }));
+    setAttachments((previous) => [...previous, ...pendingAttachments]);
+
+    await Promise.all(
+      pendingAttachments.map(async (pending) => {
+        try {
+          let attachment;
+          try {
+            attachment = await uploadConversationAttachment(
+              requestedConversationId,
+              pending.file as File,
+              pending.key,
+            );
+          } catch (error) {
+            if (isSessionUnauthorizedError(error)) throw error;
+            attachment = await uploadConversationAttachment(
+              requestedConversationId,
+              pending.file as File,
+              pending.key,
+            );
+          }
+          updateComposerAttachment(pending.key, {
+            attachmentId: attachment.id,
+            contentType: attachment.content_type,
+            conversationId: attachment.conversation_id,
+            status: "ready",
+          });
+        } catch (error) {
+          updateComposerAttachment(pending.key, {
+            error: isSessionUnauthorizedError(error)
+              ? "登录状态已失效"
+              : error instanceof Error
+                ? error.message
+                : "文件上传失败",
+            status: "failed",
+          });
+        }
+      }),
+    );
   };
 
   useEffect(() => {
@@ -399,7 +442,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   }, [conversationId, hydrateTurn, restoreTurns]);
 
   const handleSend = async (content: string, attachmentIds: string[] = []) => {
-    if (authLoading || isStreaming || isUploadingAttachments) return;
+    if (authLoading || isStreaming) return;
 
     if (!user) {
       openAuthDialog("login");
@@ -432,7 +475,13 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
       streamPath = res.stream_path;
       thinkingMsg = buildThinkingMessage(turnId, res.conversation_id);
       setDraft("");
-      setAttachments([]);
+      const sentAttachmentIds = new Set(attachmentIds);
+      setAttachments((previous) =>
+        previous.filter(
+          (attachment) =>
+            !attachment.attachmentId || !sentAttachmentIds.has(attachment.attachmentId),
+        ),
+      );
       setResumeTurnId(null);
       resumeConversationIdRef.current = null;
       setMessages((prev) => [...prev, res.message, thinkingMsg]);
@@ -755,9 +804,9 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               modelId={composerPreferences.modelId}
               onChange={setDraft}
               onCancelEdit={restoreComposerAfterEdit}
-              onRemoveAttachment={(attachmentId) => {
+              onRemoveAttachment={(attachmentKey) => {
                 setAttachments((prev) =>
-                  prev.filter((attachment) => attachment.id !== attachmentId),
+                  prev.filter((attachment) => attachment.key !== attachmentKey),
                 );
               }}
               onModelChange={composerPreferences.setModelId}
@@ -767,7 +816,6 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               disabled={authLoading || isStreaming || isSubmittingEdit}
               placeholder={editingMessage ? "编辑消息" : "输入消息"}
               reasoningEfforts={composerPreferences.reasoningEfforts}
-              uploadingAttachments={isUploadingAttachments}
               value={draft}
             />
           </div>

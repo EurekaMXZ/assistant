@@ -90,7 +90,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 	if result.Output != "hello\n" {
 		t.Fatalf("Output = %q, want hello", result.Output)
 	}
-	if err := runtime.WriteSandboxFile(context.Background(), *handle, "/workspace/input file.txt", []byte("file-data"), "write-key"); err != nil {
+	if err := runtime.WriteSandboxFile(context.Background(), *handle, "/workspace/input file.txt", strings.NewReader("file-data"), int64(len("file-data")), "write-key"); err != nil {
 		t.Fatalf("write sandbox file: %v", err)
 	}
 

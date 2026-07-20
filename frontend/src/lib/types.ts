@@ -275,8 +275,9 @@ export interface Attachment {
   category: "image" | "text" | "document" | "binary" | string;
   size_bytes: number;
   sha256: string;
-  object_key?: string;
+  status: "pending" | "ready";
   metadata?: Record<string, unknown>;
+  upload_completed_at?: string;
   created_at: string;
   updated_at: string;
 }

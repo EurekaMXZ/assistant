@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -40,8 +41,9 @@ func (r *trackingSandboxRuntime) ExecSandboxCommand(_ context.Context, handle do
 	return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID}, nil
 }
 
-func (r *trackingSandboxRuntime) WriteSandboxFile(context.Context, domain.SandboxHandle, string, []byte, string) error {
+func (r *trackingSandboxRuntime) WriteSandboxFile(_ context.Context, _ domain.SandboxHandle, _ string, reader io.Reader, _ int64, _ string) error {
 	r.writeCalls++
+	_, _ = io.Copy(io.Discard, reader)
 	return nil
 }
 
@@ -66,7 +68,7 @@ func TestManagerCreatesAndRoutesFirecrackerHandles(t *testing.T) {
 	if _, err := manager.ExecSandboxCommand(context.Background(), firecrackerHandle, domain.SandboxCommandRequest{Command: "pwd"}, "exec-key"); err != nil {
 		t.Fatalf("exec firecracker sandbox: %v", err)
 	}
-	if err := manager.WriteSandboxFile(context.Background(), firecrackerHandle, "/workspace/input", []byte("data"), "write-key"); err != nil {
+	if err := manager.WriteSandboxFile(context.Background(), firecrackerHandle, "/workspace/input", strings.NewReader("data"), 4, "write-key"); err != nil {
 		t.Fatalf("write firecracker sandbox file: %v", err)
 	}
 	if _, err := manager.DestroySandbox(context.Background(), firecrackerHandle, "destroy-key"); err != nil {

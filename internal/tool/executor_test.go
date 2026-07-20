@@ -311,10 +311,14 @@ func (s *stubSandboxManager) ResumeSandbox(_ context.Context, handle domain.Sand
 	return &handle, nil
 }
 
-func (s *stubSandboxManager) WriteSandboxFile(_ context.Context, handle domain.SandboxHandle, path string, data []byte, requestKey string) error {
+func (s *stubSandboxManager) WriteSandboxFile(_ context.Context, handle domain.SandboxHandle, path string, reader io.Reader, _ int64, requestKey string) error {
 	s.requestKeys = append(s.requestKeys, requestKey)
 	s.writtenHandle = handle
 	s.writtenPath = path
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
 	s.writtenData = append([]byte(nil), data...)
 	return s.err
 }
@@ -392,7 +396,7 @@ func TestImportSandboxAttachmentAuthorizesVerifiesAndWritesFile(t *testing.T) {
 		t.Fatalf("import attachment: %v", err)
 	}
 	wantPath := "/workspace/attachment-" + attachmentID + ".csv"
-	if result.SandboxPath != wantPath || runtime.writtenPath != wantPath || string(runtime.writtenData) != string(data) {
+	if result.SandboxPath != wantPath || runtime.writtenPath != wantPath+".partial" || runtime.execRequest.Command != "mv" || string(runtime.writtenData) != string(data) {
 		t.Fatalf("unexpected import: result=%#v runtime=%#v", result, runtime)
 	}
 	if runtime.writtenHandle.RuntimeID != "runtime-1" || store.active.ExecutionToken != "" || store.active.ExecutionLeaseUntil != nil {
@@ -406,8 +410,10 @@ func TestImportSandboxAttachmentRejectsCrossConversationAndChecksumMismatch(t *t
 	useCase := ImportSandboxAttachment{
 		Attachments: &stubSandboxAttachmentStore{conversationID: "conv-1", attachment: attachment},
 		Blobs:       &stubSandboxAttachmentBlobs{data: []byte("abc")},
-		Sandboxes:   &stubConversationSandboxStore{},
-		Runtime:     &stubSandboxManager{},
+		Sandboxes: &stubConversationSandboxStore{active: &domain.ConversationSandbox{
+			ID: "sandbox-1", ConversationID: "conv-1", Provider: "cubesandbox", RuntimeID: "runtime-1", Status: domain.SandboxStatusActive,
+		}},
+		Runtime: &stubSandboxManager{},
 	}
 	if _, err := useCase.Execute(t.Context(), ImportSandboxAttachmentInput{ConversationID: "conv-2", AttachmentID: attachmentID}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("cross-conversation error = %v, want not found", err)
@@ -423,6 +429,9 @@ func (s *stubSandboxManager) ExecSandboxCommand(_ context.Context, handle domain
 	s.execRequest = request
 	if s.err != nil {
 		return nil, s.err
+	}
+	if request.Command == "mv" {
+		return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID, ExitCode: 0}, nil
 	}
 	return s.execResult, nil
 }

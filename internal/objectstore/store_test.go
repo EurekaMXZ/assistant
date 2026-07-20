@@ -1,7 +1,9 @@
-package minio
+package objectstore
 
 import (
 	"errors"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -10,12 +12,14 @@ import (
 
 func TestNewUsesSettings(t *testing.T) {
 	store, err := New(Settings{
-		Endpoint:  "127.0.0.1:9000",
-		Region:    "us-east-1",
-		Bucket:    "assistant",
-		AccessKey: "minio",
-		SecretKey: "minio123",
-		UseSSL:    false,
+		Provider:     ProviderMinIO,
+		Endpoint:     "127.0.0.1:9000",
+		Region:       "us-east-1",
+		Bucket:       "assistant",
+		AccessKey:    "minio",
+		SecretKey:    "minio123",
+		UseSSL:       false,
+		BucketLookup: BucketLookupPath,
 	})
 	if err != nil {
 		t.Fatalf("new store: %v", err)
@@ -26,6 +30,55 @@ func TestNewUsesSettings(t *testing.T) {
 	}
 	if store.region != "us-east-1" {
 		t.Fatalf("region = %q, want %q", store.region, "us-east-1")
+	}
+}
+
+func TestPresignedURLsUseBrowserVisibleEndpoint(t *testing.T) {
+	store, err := New(Settings{
+		Provider: ProviderR2, Endpoint: "r2.internal", PublicEndpoint: "https://account.r2.cloudflarestorage.com",
+		Region: "auto", Bucket: "assistant", AccessKey: "access", SecretKey: "secret", BucketLookup: BucketLookupPath,
+	})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	upload, err := store.PresignUpload(t.Context(), "attachments/one.png", "image/png", 42, "XUFAKrxLKna5cZ2REBfFkg==")
+	if err != nil {
+		t.Fatalf("presign upload: %v", err)
+	}
+	parsed, err := url.Parse(upload.URL)
+	if err != nil {
+		t.Fatalf("parse upload url: %v", err)
+	}
+	if parsed.Host != "account.r2.cloudflarestorage.com" || upload.Method != "PUT" || upload.Headers["Content-Type"] != "image/png" || upload.Headers["Content-MD5"] != "XUFAKrxLKna5cZ2REBfFkg==" {
+		t.Fatalf("unexpected upload: %#v", upload)
+	}
+	if signed := parsed.Query().Get("X-Amz-SignedHeaders"); !strings.Contains(signed, "content-length") || !strings.Contains(signed, "content-md5") {
+		t.Fatalf("signed headers = %q", signed)
+	}
+}
+
+func TestNormalizeEndpointAcceptsS3ProviderURLs(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		secure bool
+		host   string
+	}{
+		{name: "aws", input: "https://s3.us-east-1.amazonaws.com", secure: true, host: "s3.us-east-1.amazonaws.com"},
+		{name: "aliyun", input: "https://oss-cn-hangzhou.aliyuncs.com", secure: true, host: "oss-cn-hangzhou.aliyuncs.com"},
+		{name: "r2", input: "https://account.r2.cloudflarestorage.com", secure: true, host: "account.r2.cloudflarestorage.com"},
+		{name: "minio", input: "127.0.0.1:9000", secure: false, host: "127.0.0.1:9000"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			host, secure, err := normalizeEndpoint(test.input, false)
+			if err != nil {
+				t.Fatalf("normalize endpoint: %v", err)
+			}
+			if host != test.host || secure != test.secure {
+				t.Fatalf("endpoint = (%q, %v), want (%q, %v)", host, secure, test.host, test.secure)
+			}
+		})
 	}
 }
 
