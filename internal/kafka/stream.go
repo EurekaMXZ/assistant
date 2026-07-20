@@ -22,6 +22,7 @@ func NewStreamPublisher(settings Settings, next stream.Publisher) *StreamPublish
 			Topic:        settings.EffectiveStreamTopic(),
 			Balancer:     &kafkago.Hash{},
 			RequiredAcks: kafkago.RequireAll,
+			Async:        true,
 		},
 		next: next,
 	}
