@@ -210,7 +210,7 @@ func (r *ConversationRepository) UpdateConversationTitle(ctx context.Context, co
 	return conversation, nil
 }
 
-func (r *ConversationRepository) DeleteConversation(ctx context.Context, conversationID string, ownerUserID string) error {
+func (r *ConversationRepository) DeleteConversation(ctx context.Context, ownerUserID string, conversationID string) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin delete conversation: %w", err)
