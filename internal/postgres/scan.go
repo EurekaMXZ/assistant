@@ -96,12 +96,19 @@ func scanContextHead(row scanRow) (*domain.ContextHead, error) {
 	var head domain.ContextHead
 	if err := row.Scan(
 		&head.ConversationID,
+		&head.Version,
 		&head.AnchorGeneration,
 		&head.AnchorKey,
 		&head.CoveredUntilSeq,
 		&head.RawTailStartSeq,
 		&head.LastSeq,
 		&head.ActiveContextTokens,
+		&head.LatestRequestRunID,
+		&head.LatestSuccessfulRunID,
+		&head.LatestCheckpointKey,
+		&head.CheckpointCoveredEventSeq,
+		&head.LastContextEventSeq,
+		&head.ContextSchemaVersion,
 		&head.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -224,7 +231,10 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		completedAt   sql.NullTime
 		failedAt      sql.NullTime
 		heartbeatAt   sql.NullTime
+		cancelledAt   sql.NullTime
 		billingAmount sql.NullInt64
+		requestSize   sql.NullInt64
+		responseSize  sql.NullInt64
 	)
 
 	if err := row.Scan(
@@ -236,6 +246,16 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		&run.Status,
 		&run.RequestBlobKey,
 		&run.ResponseBlobKey,
+		&run.OutputItemsBlobKey,
+		&run.ToolResultsBlobKey,
+		&run.PresentationEventsBlobKey,
+		&run.CheckpointBlobKey,
+		&run.RequestChecksum,
+		&run.ResponseChecksum,
+		&requestSize,
+		&responseSize,
+		&run.RequestSchemaVersion,
+		&run.ResponseSchemaVersion,
 		&run.ResponseID,
 		&run.InputTokens,
 		&run.CacheReadInputTokens,
@@ -255,6 +275,7 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		&run.StateBlobKey,
 		&run.ResultBlobKey,
 		&heartbeatAt,
+		&cancelledAt,
 	); err != nil {
 		return nil, err
 	}
@@ -267,6 +288,15 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 	}
 	if heartbeatAt.Valid {
 		run.HeartbeatAt = &heartbeatAt.Time
+	}
+	if cancelledAt.Valid {
+		run.CancelledAt = &cancelledAt.Time
+	}
+	if requestSize.Valid {
+		run.RequestSizeBytes = requestSize.Int64
+	}
+	if responseSize.Valid {
+		run.ResponseSizeBytes = responseSize.Int64
 	}
 	if billingAmount.Valid {
 		value := billingAmount.Int64

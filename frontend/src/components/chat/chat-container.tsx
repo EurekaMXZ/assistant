@@ -4,10 +4,12 @@ import { useEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore
 import {
   createConversationShare,
   createMessage,
+  cancelTurn,
   editTurn,
   getConversation,
   getTurn,
   isSessionUnauthorizedError,
+  listConversationEvents,
   listMessages,
   patchConversation,
   retryTurn,
@@ -29,6 +31,7 @@ import {
   type ConversationShareOperation,
 } from "@/lib/conversation-share-operation";
 import type { Conversation, ConversationShare, Message, Turn } from "@/lib/types";
+import { messageSchema, turnSchema } from "@/lib/api-schemas";
 import {
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
@@ -70,7 +73,11 @@ function getMobileViewportSnapshot() {
   return typeof window !== "undefined" && window.matchMedia(mobileViewportQuery).matches;
 }
 
-async function inspectUnresolvedTurns(messages: Message[], conversationId: string) {
+async function inspectUnresolvedTurns(
+  messages: Message[],
+  conversationId: string,
+  eventTurns: Turn[] = [],
+) {
   const assistantTurnIds = new Set(
     messages
       .filter((message) => message.role === "assistant" && message.turn_id)
@@ -80,8 +87,11 @@ async function inspectUnresolvedTurns(messages: Message[], conversationId: strin
     new Set(messages.flatMap((message) => (message.turn_id ? [message.turn_id] : []))),
   );
 
+  const knownTurns = new Map(eventTurns.map((turn) => [turn.id, turn]));
   const turns = await Promise.all(
     turnIds.map(async (turnId) => {
+      const known = knownTurns.get(turnId);
+      if (known) return known;
       try {
         return await getTurn(turnId);
       } catch {
@@ -101,7 +111,7 @@ async function inspectUnresolvedTurns(messages: Message[], conversationId: strin
       if (unresolved) activeTurnId = turn.id;
       continue;
     }
-    if (unresolved && (turn.status === "failed" || turn.status === "completed")) {
+    if (unresolved && ["failed", "completed", "cancelled"].includes(turn.status)) {
       terminalTurns.push(turn);
     }
   }
@@ -110,6 +120,58 @@ async function inspectUnresolvedTurns(messages: Message[], conversationId: strin
     messages: nextMessages,
     terminalTurns,
     turns: turns.filter((turn): turn is Turn => turn !== null),
+  };
+}
+
+function messagesFromConversationEvents(
+  events: Awaited<ReturnType<typeof listConversationEvents>>["events"],
+): Message[] {
+  return events.flatMap((event) => {
+    if (event.event_type !== "message.completed") return [];
+    const parsed = messageSchema.safeParse(event.payload.message);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+function turnsFromConversationEvents(
+  events: Awaited<ReturnType<typeof listConversationEvents>>["events"],
+): Turn[] {
+  const turns = new Map<string, Turn>();
+  for (const event of events) {
+    const parsed = turnSchema.safeParse(event.payload.turn);
+    if (parsed.success) {
+      turns.set(parsed.data.id, parsed.data);
+      continue;
+    }
+    if (!event.turn_id) continue;
+    const existing = turns.get(event.turn_id);
+    if (!existing) continue;
+    if (event.event_type === "turn.failed")
+      turns.set(existing.id, { ...existing, status: "failed" });
+    if (event.event_type === "turn.cancelled")
+      turns.set(existing.id, { ...existing, status: "cancelled" });
+  }
+  return Array.from(turns.values());
+}
+
+function mergeMessages(...groups: Message[][]) {
+  const messages = new Map<string, Message>();
+  for (const group of groups) {
+    for (const message of group) messages.set(message.id, message);
+  }
+  return Array.from(messages.values()).sort((left, right) => left.seq - right.seq);
+}
+
+async function loadConversationMessages(conversationId: string) {
+  const [eventPage, legacyMessages] = await Promise.all([
+    listConversationEvents(conversationId),
+    listMessages(conversationId),
+  ]);
+  const eventMessages = messagesFromConversationEvents(eventPage.events);
+  return {
+    eventPage,
+    messages: mergeMessages(legacyMessages, eventMessages),
+    turns: turnsFromConversationEvents(eventPage.events),
   };
 }
 
@@ -134,6 +196,10 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const [attachments, setAttachments] = useState<ComposerShellAttachment[]>([]);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isLoadingOlderEvents, setIsLoadingOlderEvents] = useState(false);
+  const [hasOlderEvents, setHasOlderEvents] = useState(false);
+  const [olderEventCursor, setOlderEventCursor] = useState<string | null>(null);
   const [resumeTurnId, setResumeTurnId] = useState<string | null>(null);
   const [restoreTurns, setRestoreTurns] = useState<Turn[]>([]);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -213,11 +279,11 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const refreshMessages = useCallback(async () => {
     const requestedConversationId = conversationId;
     try {
-      const nextMessages = await listMessages(conversationId);
+      const nextMessages = await loadConversationMessages(conversationId);
       if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
         return;
       }
-      setMessages(nextMessages);
+      setMessages((previous) => mergeMessages(previous, nextMessages.messages));
     } catch (error) {
       if (!isSessionUnauthorizedError(error)) {
         toast.error(error instanceof Error ? error.message : "刷新消息失败");
@@ -225,12 +291,29 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     }
   }, [conversationId]);
 
-  const { isStreaming, streamingTurnId, streamConnectionState, streamTurn } = useTurnStream({
-    conversationId,
-    onCompleted: refreshMessages,
-    onEvent: dispatchActiveFrame,
-    onFinished: finishActiveTurn,
-  });
+  const { isStreaming, streamingTurnId, streamConnectionState, streamTurn, stopStream } =
+    useTurnStream({
+      conversationId,
+      onCompleted: refreshMessages,
+      onEvent: dispatchActiveFrame,
+      onFinished: finishActiveTurn,
+    });
+
+  const handleCancelGeneration = useCallback(async () => {
+    if (!streamingTurnId || isCancelling) return;
+    setIsCancelling(true);
+    try {
+      await cancelTurn(streamingTurnId);
+      stopStream();
+      await refreshMessages();
+    } catch (error) {
+      if (!isSessionUnauthorizedError(error)) {
+        toast.error(error instanceof Error ? error.message : "停止生成失败");
+      }
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [isCancelling, refreshMessages, stopStream, streamingTurnId]);
 
   const load = useCallback(async () => {
     if (authLoading) {
@@ -245,18 +328,22 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     const requestedConversationId = conversationId;
     setIsLoading(true);
     try {
-      const [conv, msgs] = await Promise.all([
+      const [conv, history] = await Promise.all([
         getConversation(conversationId),
-        listMessages(conversationId),
+        loadConversationMessages(conversationId),
       ]);
       if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
         return;
       const pending = takePendingHomeTurn(conversationId);
-      const loadedMessages = pending ? ensurePendingHomeTurnMessages(msgs, pending) : msgs;
-      const restored = await inspectUnresolvedTurns(loadedMessages, conversationId);
+      const loadedMessages = pending
+        ? ensurePendingHomeTurnMessages(history.messages, pending)
+        : history.messages;
+      const restored = await inspectUnresolvedTurns(loadedMessages, conversationId, history.turns);
       if (activeConversationIdRef.current !== requestedConversationId) return;
       setConversation(conv);
       setMessages(restored.messages);
+      setHasOlderEvents(history.eventPage.has_more_before);
+      setOlderEventCursor(history.eventPage.next_before || null);
       initializeTurns(restored.turns);
       resumeConversationIdRef.current =
         pending?.turn.id || restored.activeTurnId ? requestedConversationId : null;
@@ -319,6 +406,9 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     setAttachments([]);
     setEditingMessage(null);
     setIsSubmittingEdit(false);
+    setIsLoadingOlderEvents(false);
+    setHasOlderEvents(false);
+    setOlderEventCursor(null);
     setResumeTurnId(null);
     setRestoreTurns([]);
     setConversationShare(shareCacheRef.current.get(conversationId) || null);
@@ -328,6 +418,32 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     resumeConversationIdRef.current = null;
     restoreConversationIdRef.current = null;
   }, [conversationId]);
+
+  const handleLoadOlderEvents = useCallback(async () => {
+    if (!hasOlderEvents || !olderEventCursor || isLoadingOlderEvents) return;
+    const requestedConversationId = conversationId;
+    setIsLoadingOlderEvents(true);
+    try {
+      const page = await listConversationEvents(conversationId, { before: olderEventCursor });
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
+        return;
+      }
+      setMessages((previous) =>
+        mergeMessages(messagesFromConversationEvents(page.events), previous),
+      );
+      for (const turn of turnsFromConversationEvents(page.events)) registerTurn(turn);
+      setHasOlderEvents(page.has_more_before);
+      setOlderEventCursor(page.next_before || null);
+    } catch (error) {
+      if (!isSessionUnauthorizedError(error)) {
+        toast.error(error instanceof Error ? error.message : "加载更早消息失败");
+      }
+    } finally {
+      if (activeConversationIdRef.current === requestedConversationId) {
+        setIsLoadingOlderEvents(false);
+      }
+    }
+  }, [conversationId, hasOlderEvents, isLoadingOlderEvents, olderEventCursor, registerTurn]);
 
   const updateComposerAttachment = useCallback(
     (key: string, update: Partial<ComposerShellAttachment>) => {
@@ -780,8 +896,11 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <MessageList
               activityLabels={timelineActivityLabels}
+              hasOlderMessages={hasOlderEvents}
+              loadingOlderMessages={isLoadingOlderEvents}
               messages={displayMessages}
               onEditMessage={handleEditMessage}
+              onLoadOlderMessages={handleLoadOlderEvents}
               onOpenTimeline={handleOpenTimeline}
               onRetryMessage={handleRetryMessage}
               dimmed={Boolean(editingMessage)}
@@ -812,8 +931,10 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               onModelChange={composerPreferences.setModelId}
               onModelReasoningEffortChange={composerPreferences.setModelReasoningEffort}
               onSend={handleSend}
+              onCancelGeneration={() => void handleCancelGeneration()}
               onUploadFiles={handleUploadFiles}
-              disabled={authLoading || isStreaming || isSubmittingEdit}
+              disabled={authLoading || isStreaming || isSubmittingEdit || isCancelling}
+              streaming={isStreaming}
               placeholder={editingMessage ? "编辑消息" : "输入消息"}
               reasoningEfforts={composerPreferences.reasoningEfforts}
               value={draft}

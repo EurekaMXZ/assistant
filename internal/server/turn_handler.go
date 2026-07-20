@@ -35,6 +35,15 @@ func (a *API) handleGetTurn(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"turn": turn})
 }
 
+func (a *API) handleCancelTurn(c *gin.Context) {
+	turn, err := a.useCases.Turns.RequestTurnCancellation(c.Request.Context(), currentUser(c).ID, c.Param("turnID"))
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"turn": turn})
+}
+
 func (a *API) handleRetryTurn(c *gin.Context) {
 	result, err := a.useCases.Conversations.RetryTurn(
 		c.Request.Context(), currentUser(c).ID, c.Param("turnID"),
@@ -102,7 +111,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 	}
 
 	userID := currentUser(c).ID
-	terminal := turn.Status == domain.TurnStatusCompleted || turn.Status == domain.TurnStatusFailed
+	terminal := isTurnStreamTerminal(turn.Status)
 	initiallyTerminal := terminal
 
 	var (
@@ -139,7 +148,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 	}
 	c.Writer.Flush()
 
-	if !terminal && (snapshot.Status == domain.TurnStatusCompleted || snapshot.Status == domain.TurnStatusFailed) {
+	if !terminal && isTurnStreamTerminal(snapshot.Status) {
 		if refreshed, refreshErr := a.useCases.Turns.GetTurn(c.Request.Context(), userID, turn.ID); refreshErr == nil && refreshed != nil {
 			turn = refreshed
 		}
@@ -188,7 +197,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 			c.Writer.Flush()
 		case <-terminalTicker.C:
 			refreshed, refreshErr := a.useCases.Turns.GetTurn(c.Request.Context(), userID, turn.ID)
-			if refreshErr != nil || refreshed == nil || (refreshed.Status != domain.TurnStatusCompleted && refreshed.Status != domain.TurnStatusFailed) {
+			if refreshErr != nil || refreshed == nil || !isTurnStreamTerminal(refreshed.Status) {
 				continue
 			}
 			if err := a.writeFinalTurnStreamState(c.Request.Context(), c.Writer, userID, turn.ID, itemRegistry); err != nil {
@@ -262,7 +271,7 @@ func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWrit
 	if err != nil {
 		return err
 	}
-	if turn == nil || (turn.Status != domain.TurnStatusCompleted && turn.Status != domain.TurnStatusFailed) {
+	if turn == nil || !isTurnStreamTerminal(turn.Status) {
 		return errors.New("terminal stream event arrived before durable turn completion")
 	}
 	snapshot, _, _, _, err := a.loadTurnStreamSnapshot(ctx, ownerUserID, turn, items)
@@ -284,6 +293,10 @@ func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWrit
 		ErrorCode:      errorCode,
 		Error:          publicError,
 	})
+}
+
+func isTurnStreamTerminal(status string) bool {
+	return status == domain.TurnStatusCompleted || status == domain.TurnStatusFailed || status == domain.TurnStatusCancelled
 }
 
 func responseOutputSlotsFromTimeline(items []TurnTimelineItem) *responseOutputSlotResolver {

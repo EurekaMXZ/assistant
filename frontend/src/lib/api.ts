@@ -9,6 +9,7 @@ import type {
   BillingToolPrice,
   BillingUsageEvent,
   Conversation,
+  ConversationEventPage,
   ConversationShareResult,
   ConversationShareSnapshot,
   CursorPageResponse,
@@ -40,6 +41,7 @@ import {
   conversationShareSchema,
   conversationShareSnapshotSchema,
   conversationSchema,
+  conversationEventPageSchema,
   cursorPageSchema,
   initialTurnResultSchema,
   messageSchema,
@@ -899,6 +901,22 @@ export async function listMessages(conversationId: string) {
   ).then((r) => r.messages);
 }
 
+export async function listConversationEvents(
+  conversationId: string,
+  options: { limit?: number; before?: string; after?: string } = {},
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  if (options.after) params.set("after", options.after);
+  const query = params.toString();
+  return apiFetch<ConversationEventPage>(
+    `/conversations/${conversationId}/events${query ? `?${query}` : ""}`,
+    {},
+    conversationEventPageSchema,
+  );
+}
+
 export interface InitialTurnResult {
   conversation_id: string;
   conversation?: Conversation;
@@ -1013,6 +1031,14 @@ export async function getTurn(id: string) {
   return apiFetch<{ turn: Turn }>(`/turns/${id}`, {}, z.object({ turn: turnSchema })).then(
     (r) => r.turn,
   );
+}
+
+export async function cancelTurn(id: string) {
+  return apiFetch<{ turn: Turn }>(
+    `/turns/${id}/cancel`,
+    { method: "POST" },
+    z.object({ turn: turnSchema }),
+  ).then((result) => result.turn);
 }
 
 export function getStreamUrl(streamPath: string): string {

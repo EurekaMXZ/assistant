@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -37,12 +38,32 @@ func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID
 	`, turnID, domain.TurnStatusFailed, requestKey, streamKey, code, message, metadata); err != nil {
 		return fmt.Errorf("update turn failure: %w", err)
 	}
+	head, err := queryContextHeadForUpdate(ctx, tx, turn.ConversationID)
+	if err != nil {
+		return err
+	}
+	failurePayload, err := json.Marshal(map[string]any{
+		"turn_id":    turn.ID,
+		"status":     domain.TurnStatusFailed,
+		"error_code": code,
+		"error":      message,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal failure complete event: %w", err)
+	}
+	if err := insertCompleteEvent(ctx, tx, head, domain.ConversationEventInput{
+		ConversationID:  turn.ConversationID,
+		TurnID:          turn.ID,
+		EventKey:        "turn:" + turn.ID + ":failed",
+		SchemaVersion:   1,
+		EventType:       "turn.failed",
+		Payload:         failurePayload,
+		ContextIncluded: false,
+	}); err != nil {
+		return err
+	}
 	if turn.RetryOfTurnID != "" {
-		head, err := queryContextHeadForUpdate(ctx, tx, turn.ConversationID)
-		if err != nil {
-			return err
-		}
-		if err := enqueueCompactionRequest(ctx, tx, turn, shouldRequestCompaction(head, compactTriggerTokens)); err != nil {
+		if err := enqueueCompactionRequest(ctx, tx, turn, true); err != nil {
 			return err
 		}
 	}

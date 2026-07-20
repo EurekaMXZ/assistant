@@ -18,6 +18,7 @@ type Dependencies struct {
 	Outbox                WorkflowOutboxRepository
 	Turns                 TurnWorkflowRepository
 	Contexts              WorkflowContextRepository
+	CompleteEvents        CompleteEventStore
 	StaleTurns            StaleTurnRepository
 	Model                 llm.ModelClient
 	ToolCatalog           tool.ToolCatalog
@@ -36,6 +37,7 @@ type Dependencies struct {
 	AttachmentBlobs       AttachmentBlobStore
 	Streams               stream.Publisher
 	ContextCache          cache.ContextSnapshotCache
+	SharedContextCache    cache.SharedContextSnapshotCache
 	ContextTail           cache.ContextTailAppender
 	ContextCompaction     cache.ContextCompactionCache
 	Locker                ConversationLocker
@@ -51,10 +53,13 @@ type Engine struct {
 }
 
 func New(deps Dependencies) *Engine {
+	checkpointStore, _ := deps.ContextAnchors.(ContextCheckpointStore)
 	loader := &ContextLoader{
 		store:           deps.Contexts,
+		completeEvents:  deps.CompleteEvents,
 		blobs:           deps.ContextAnchors,
 		cache:           deps.ContextCache,
+		sharedCache:     deps.SharedContextCache,
 		modelContexts:   deps.TurnArtifacts,
 		attachments:     deps.Attachments,
 		attachmentBlobs: deps.AttachmentBlobs,
@@ -82,16 +87,17 @@ func New(deps Dependencies) *Engine {
 			models:               deps.Models,
 		},
 		compactor: &ContextCompactor{
-			settings:  deps.Settings,
-			store:     deps.Contexts,
-			model:     deps.Model,
-			blobs:     deps.ContextAnchors,
-			cache:     deps.ContextCompaction,
-			loader:    loader,
-			tools:     orchestrator,
-			sandboxes: deps.ConversationSandboxes,
-			models:    deps.Models,
-			billing:   deps.BillingUsage,
+			settings:    deps.Settings,
+			store:       deps.Contexts,
+			model:       deps.Model,
+			blobs:       deps.ContextAnchors,
+			checkpoints: checkpointStore,
+			cache:       deps.ContextCompaction,
+			loader:      loader,
+			tools:       orchestrator,
+			sandboxes:   deps.ConversationSandboxes,
+			models:      deps.Models,
+			billing:     deps.BillingUsage,
 		},
 		outbox: &OutboxRelay{
 			settings: deps.Settings,
@@ -129,6 +135,8 @@ func (e *Engine) HandleWorkflowEvent(ctx context.Context, event WorkflowEvent) e
 		return e.ignoreDeletedConversation(ctx, event.ConversationID, err)
 	case EventTurnRunRequested:
 		return e.turns.HandleTurnRunRequested(ctx, event)
+	case EventTurnCancellationRequested:
+		return e.turns.HandleCancellationRequested(ctx, event)
 	case EventContextCompactionRequest:
 		if event.ConversationID == "" {
 			return nil

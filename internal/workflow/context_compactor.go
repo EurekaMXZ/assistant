@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,16 +21,17 @@ const (
 )
 
 type ContextCompactor struct {
-	settings  WorkflowSettings
-	store     WorkflowContextRepository
-	model     llm.ModelClient
-	blobs     ContextAnchorStore
-	cache     cache.ContextCompactionCache
-	loader    *ContextLoader
-	tools     *ToolOrchestrator
-	sandboxes tool.ConversationSandboxReader
-	models    ModelCatalogResolver
-	billing   CompactionUsageRecorder
+	settings    WorkflowSettings
+	store       WorkflowContextRepository
+	model       llm.ModelClient
+	blobs       ContextAnchorStore
+	checkpoints ContextCheckpointStore
+	cache       cache.ContextCompactionCache
+	loader      *ContextLoader
+	tools       *ToolOrchestrator
+	sandboxes   tool.ConversationSandboxReader
+	models      ModelCatalogResolver
+	billing     CompactionUsageRecorder
 }
 
 func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEvent) error {
@@ -236,6 +238,25 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		}
 	}
 	activeContextTokens := estimateModelContextTokens(c.settings.AgentSystemPrompt, postCompactionInput, contextTools)
+	if c.checkpoints != nil {
+		checkpointPayload, marshalErr := json.Marshal(immutableContextCheckpoint{
+			SchemaVersion:  immutableRunArtifactSchemaVersion,
+			ConversationID: event.ConversationID,
+			TurnID:         event.TurnID,
+			ModelItems:     postCompactionInput,
+		})
+		if marshalErr != nil {
+			return fmt.Errorf("marshal compacted context checkpoint: %w", marshalErr)
+		}
+		compressed, _, compressErr := compressImmutableRunPayload(checkpointPayload)
+		if compressErr != nil {
+			return compressErr
+		}
+		anchor.CheckpointKey = c.checkpoints.ContextCheckpointKey(event.ConversationID, head.Version+1)
+		if err := c.checkpoints.PutImmutableBytes(ctx, anchor.CheckpointKey, compressed, immutableRunArtifactContentType); err != nil {
+			return fmt.Errorf("persist compacted context checkpoint: %w", err)
+		}
+	}
 	updatedHead, err := c.store.CompleteCompaction(ctx, event.ConversationID, anchor, head.LastSeq, activeContextTokens)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
@@ -253,6 +274,9 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		Content:         anchor.Content,
 		TokenCount:      anchor.TokenCount,
 	}, *updatedHead, retainedMessages)
+	if c.loader.sharedCache != nil {
+		_, _, _ = c.loader.EnsureHotContext(ctx, event.ConversationID)
+	}
 
 	return nil
 }

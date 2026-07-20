@@ -2,29 +2,27 @@ package workflow
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"sync"
 
-	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/stream"
 )
 
 type ArchivingStreamPublisher struct {
-	next   stream.Publisher
-	store  TurnArtifactStore
-	events TurnStreamEventStore
-
-	mu sync.Mutex
+	next           stream.Publisher
+	completeEvents CompleteEventStore
+	accumulator    *CompleteEventAccumulator
 }
 
-func NewArchivingStreamPublisher(next stream.Publisher, store TurnArtifactStore, events TurnStreamEventStore) *ArchivingStreamPublisher {
+func NewArchivingStreamPublisher(next stream.Publisher, _ TurnArtifactStore, _ TurnStreamEventStore, completeEvents ...CompleteEventStore) *ArchivingStreamPublisher {
+	var completed CompleteEventStore
+	if len(completeEvents) > 0 {
+		completed = completeEvents[0]
+	}
 	return &ArchivingStreamPublisher{
-		next:   next,
-		store:  store,
-		events: events,
+		next:           next,
+		completeEvents: completed,
+		accumulator:    NewCompleteEventAccumulator(),
 	}
 }
 
@@ -47,53 +45,20 @@ func (p *ArchivingStreamPublisher) Publish(ctx context.Context, event stream.Eve
 }
 
 func (p *ArchivingStreamPublisher) archiveEvent(ctx context.Context, event stream.Event) (stream.Event, error) {
-	if p == nil {
+	if p == nil || p.completeEvents == nil || p.accumulator == nil {
 		return event, nil
 	}
-	if strings.TrimSpace(event.ConversationID) == "" || strings.TrimSpace(event.TurnID) == "" {
-		return event, nil
-	}
-
-	raw, err := json.Marshal(event)
+	completed, err := p.accumulator.Apply(event)
 	if err != nil {
-		return event, fmt.Errorf("marshal stream event archive payload: %w", err)
+		return event, err
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	var errs []error
-
-	if p.store != nil {
-		key := p.store.TurnStreamKey(event.ConversationID, event.TurnID)
-		existing, err := p.store.GetBytes(ctx, key)
-		switch {
-		case err == nil:
-			// keep existing bytes as-is
-		case errors.Is(err, domain.ErrNotFound):
-			existing = nil
-		default:
-			errs = append(errs, fmt.Errorf("get stream archive %q: %w", key, err))
-			existing = nil
-		}
-
-		if len(existing) > 0 && existing[len(existing)-1] != '\n' {
-			existing = append(existing, '\n')
-		}
-		existing = append(existing, raw...)
-		existing = append(existing, '\n')
-
-		if err := p.store.PutBytes(ctx, key, existing, "application/x-ndjson"); err != nil {
-			errs = append(errs, fmt.Errorf("persist stream archive %q: %w", key, err))
-		}
-	}
-
-	if p.events != nil {
-		stored, err := p.events.AppendTurnStreamEvent(ctx, event.ConversationID, event.TurnID, event.Type, raw)
+	for _, input := range completed {
+		stored, err := p.completeEvents.AppendCompleteEvent(ctx, input)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("persist turn stream event for turn %q: %w", event.TurnID, err))
+			errs = append(errs, fmt.Errorf("persist complete stream event for turn %q: %w", event.TurnID, err))
 		} else if stored != nil {
-			event.EventIndex = stored.EventIndex
+			event.EventIndex = stored.EventSeq
 		}
 	}
 

@@ -1,6 +1,9 @@
 package workflow
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type TurnArtifactStore interface {
 	PutBytes(ctx context.Context, key string, data []byte, contentType string) error
@@ -27,4 +30,26 @@ type ContextAnchorStore interface {
 	PutJSON(ctx context.Context, key string, value any) error
 	GetJSON(ctx context.Context, key string, target any) error
 	ContextAnchorKey(conversationID string, generation int64) string
+}
+
+type ContextCheckpointStore interface {
+	PutImmutableBytes(ctx context.Context, key string, data []byte, contentType string) error
+	GetBytes(ctx context.Context, key string) ([]byte, error)
+	ContextCheckpointKey(conversationID string, version int64) string
+}
+
+type ImmutableRunArtifactStore interface {
+	PutImmutableBytes(ctx context.Context, key string, data []byte, contentType string) error
+	GetBytes(ctx context.Context, key string) ([]byte, error)
+	ImmutableRunArtifactKey(conversationID, turnID string, stepIndex int, runID string, artifact string) string
+}
+
+type RunArtifactObject struct {
+	Key          string
+	LastModified time.Time
+}
+
+type RunArtifactObjectStore interface {
+	ListRunArtifactObjects(ctx context.Context, prefix string) ([]RunArtifactObject, error)
+	DeleteObject(ctx context.Context, key string) error
 }

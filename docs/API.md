@@ -572,6 +572,46 @@ Response: `200 OK`
 }
 ```
 
+### GET `/conversations/:conversationID/events`
+
+List complete semantic conversation events. This is the primary conversation read path; the message endpoint remains available during migration.
+
+Query params:
+
+- `limit`: default `100`, max `1000`
+- `before`: optional decimal `event_seq`; returns the older page before this sequence
+- `after`: optional decimal `event_seq`; returns the newer page after this sequence
+
+Event sequences are decimal strings so clients do not lose precision in JavaScript.
+
+Response: `200 OK`
+
+```json
+{
+  "events": [
+    {
+      "id": "event_123",
+      "conversation_id": "conv_123",
+      "turn_id": "turn_123",
+      "turn_run_id": "run_123",
+      "event_seq": "42",
+      "event_key": "message:message_123",
+      "schema_version": 1,
+      "event_type": "message.completed",
+      "payload": {
+        "message": {}
+      },
+      "context_included": true,
+      "created_at": "2026-07-20T12:00:00Z"
+    }
+  ],
+  "next_before": "41",
+  "next_after": "42",
+  "has_more_before": true,
+  "has_more_after": false
+}
+```
+
 ### POST `/conversations/:conversationID/messages`
 
 Create a user message and enqueue a model turn.
@@ -825,6 +865,21 @@ Response: `200 OK`
 }
 ```
 
+### POST `/turns/:turnID/cancel`
+
+Request cancellation of an accepted, context-ready, or processing Turn. The first response records `cancel_requested`; the Worker then flushes live deltas and commits a terminal `cancelled` state.
+
+Response: `202 Accepted`
+
+```json
+{
+  "turn": {
+    "id": "turn_123",
+    "status": "cancel_requested"
+  }
+}
+```
+
 ### GET `/turns/:turnID/execution-trace`
 
 Return a debug trace for one turn. This is frontend-usable, but it is best treated as a diagnostics view rather than the primary chat API.
@@ -876,7 +931,7 @@ Notes:
 
 - encrypted reasoning content is redacted from trace artifacts
 - tool calls are exposed as `summary` and `details`, not raw arguments/output
-- each run represents exactly one upstream model request; `queued`, `running`, `completed`, and `failed` are valid run states
+- each run represents exactly one upstream model request; `queued`, `running`, `cancel_requested`, `completed`, `failed`, and `cancelled` are valid run states
 - a turn can contain any number of runs, and a stale worker retries only the current run attempt
 
 ## Stream API
@@ -895,7 +950,7 @@ Authorization: Bearer <access_token>
 Server behavior:
 
 - the server always sends one complete, filtered `turn.snapshot` first
-- if the turn is completed or failed, it then sends `turn.done` and closes
+- if the turn is completed, failed, or cancelled, it then sends `turn.done` and closes
 - if the turn is still running, it continues with canonical item mutation events, then reconciles durable state and sends a final authoritative `turn.snapshot` before `turn.done`
 - terminal snapshots include `started_at` and either `completed_at` or `failed_at`, so clients do not need a separate turn fetch to calculate elapsed time
 - if live terminal delivery is missed, polling performs the same final `turn.snapshot` and `turn.done` reconciliation

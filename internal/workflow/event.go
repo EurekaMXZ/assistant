@@ -5,10 +5,11 @@ import (
 )
 
 const (
-	EventTurnAccepted             = "turn.accepted"
-	EventTurnContextReady         = "turn.context_ready"
-	EventTurnRunRequested         = "turn_run.requested"
-	EventContextCompactionRequest = "context.compaction.requested"
+	EventTurnAccepted              = "turn.accepted"
+	EventTurnContextReady          = "turn.context_ready"
+	EventTurnRunRequested          = "turn_run.requested"
+	EventTurnCancellationRequested = "turn.cancel_requested"
+	EventContextCompactionRequest  = "context.compaction.requested"
 )
 
 type WorkflowEvent struct {

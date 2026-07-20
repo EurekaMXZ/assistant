@@ -22,13 +22,14 @@ type ScheduledRunState struct {
 }
 
 type ScheduledRunOutcome struct {
-	Model               *llm.ModelResult   `json:"model"`
-	ContextWindowTokens int                `json:"context_window_tokens,omitempty"`
-	Tools               []llm.ModelTool    `json:"tools,omitempty"`
-	ContextItems        []llm.ModelItem    `json:"context_items,omitempty"`
-	NextState           *ScheduledRunState `json:"next_state,omitempty"`
-	NextRequest         json.RawMessage    `json:"next_request,omitempty"`
-	Postprocessed       bool               `json:"postprocessed"`
+	Model                *llm.ModelResult               `json:"model"`
+	ContextWindowTokens  int                            `json:"context_window_tokens,omitempty"`
+	Tools                []llm.ModelTool                `json:"tools,omitempty"`
+	ContextItems         []llm.ModelItem                `json:"context_items,omitempty"`
+	NextState            *ScheduledRunState             `json:"next_state,omitempty"`
+	NextRequest          json.RawMessage                `json:"next_request,omitempty"`
+	Postprocessed        bool                           `json:"postprocessed"`
+	GeneratedImageDrafts []domain.AssistantMessageDraft `json:"generated_image_drafts,omitempty"`
 }
 
 func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRunInput, stepIndex int, initialInputCount int) (*ScheduledRunState, json.RawMessage, error) {

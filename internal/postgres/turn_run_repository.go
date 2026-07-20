@@ -23,6 +23,16 @@ const turnRunColumns = `
 	tr.status,
 	tr.request_blob_key,
 	COALESCE(tr.response_blob_key, ''),
+	COALESCE(tr.output_items_blob_key, ''),
+	COALESCE(tr.tool_results_blob_key, ''),
+	COALESCE(tr.presentation_events_blob_key, ''),
+	COALESCE(tr.checkpoint_blob_key, ''),
+	COALESCE(tr.request_checksum, ''),
+	COALESCE(tr.response_checksum, ''),
+	COALESCE(tr.request_size_bytes, 0),
+	COALESCE(tr.response_size_bytes, 0),
+	tr.request_schema_version,
+	tr.response_schema_version,
 	COALESCE(tr.response_id, ''),
 	tr.input_tokens,
 	tr.cache_read_input_tokens,
@@ -41,7 +51,8 @@ const turnRunColumns = `
 	tr.attempt,
 	tr.state_blob_key,
 	COALESCE(tr.result_blob_key, ''),
-	tr.heartbeat_at`
+	tr.heartbeat_at,
+	tr.cancelled_at`
 
 func (r *TurnRunRepository) StartTurnRun(ctx context.Context, turnID string, provider string, model string, requestBlobKey string, stateBlobKey string) (string, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -101,6 +112,90 @@ func (r *TurnRunRepository) StartTurnRun(ctx context.Context, turnID string, pro
 	return runID, nil
 }
 
+func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runID string, requestKey string, responseKey string, outputItemsKey string, toolResultsKey string, presentationEventsKey string, checkpointKey string, requestChecksum string, responseChecksum string, requestSizeBytes int64, responseSizeBytes int64, requestSchemaVersion int, responseSchemaVersion int) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin turn run artifact metadata: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE turn_runs
+		SET
+			request_blob_key = COALESCE(NULLIF($2, ''), request_blob_key),
+			response_blob_key = COALESCE(NULLIF($3, ''), response_blob_key),
+			output_items_blob_key = COALESCE(NULLIF($4, ''), output_items_blob_key),
+			tool_results_blob_key = COALESCE(NULLIF($5, ''), tool_results_blob_key),
+			presentation_events_blob_key = COALESCE(NULLIF($6, ''), presentation_events_blob_key),
+			checkpoint_blob_key = COALESCE(NULLIF($7, ''), checkpoint_blob_key),
+			request_checksum = COALESCE(NULLIF($8, ''), request_checksum),
+			response_checksum = COALESCE(NULLIF($9, ''), response_checksum),
+			request_size_bytes = CASE WHEN $10 > 0 THEN $10 ELSE request_size_bytes END,
+			response_size_bytes = CASE WHEN $11 > 0 THEN $11 ELSE response_size_bytes END,
+			request_schema_version = CASE WHEN $12 > 0 THEN $12 ELSE request_schema_version END,
+			response_schema_version = CASE WHEN $13 > 0 THEN $13 ELSE response_schema_version END
+		WHERE id = $1::uuid
+	`, runID, requestKey, responseKey, outputItemsKey, toolResultsKey, presentationEventsKey, checkpointKey,
+		requestChecksum, responseChecksum, requestSizeBytes, responseSizeBytes, requestSchemaVersion, responseSchemaVersion); err != nil {
+		return fmt.Errorf("update turn run artifact metadata: %w", err)
+	}
+	if requestKey != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE context_heads ch
+			SET latest_request_run_id = $1::uuid
+			FROM turns t
+			JOIN turn_runs tr ON tr.turn_id = t.id
+			WHERE tr.id = $1::uuid AND ch.conversation_id = t.conversation_id
+		`, runID); err != nil {
+			return fmt.Errorf("update latest request run: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit turn run artifact metadata: %w", err)
+	}
+	return nil
+}
+
+func (r *TurnRunRepository) ListReferencedRunArtifactKeys(ctx context.Context) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT object_key
+		FROM (
+			SELECT request_blob_key AS object_key FROM turn_runs
+			UNION ALL SELECT response_blob_key FROM turn_runs
+			UNION ALL SELECT output_items_blob_key FROM turn_runs
+			UNION ALL SELECT tool_results_blob_key FROM turn_runs
+			UNION ALL SELECT presentation_events_blob_key FROM turn_runs
+			UNION ALL SELECT checkpoint_blob_key FROM turn_runs
+			UNION ALL SELECT state_blob_key FROM turn_runs
+			UNION ALL SELECT result_blob_key FROM turn_runs
+			UNION ALL SELECT request_blob_key FROM turns
+			UNION ALL SELECT response_blob_key FROM turns
+			UNION ALL SELECT stream_blob_key FROM turns
+			UNION ALL SELECT anchor_key FROM context_heads
+			UNION ALL SELECT latest_checkpoint_key FROM context_heads
+			UNION ALL SELECT arguments_blob_key FROM tool_calls
+			UNION ALL SELECT output_blob_key FROM tool_calls
+		) artifact_refs
+		WHERE NULLIF(btrim(object_key), '') IS NOT NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list referenced run artifact keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan referenced run artifact key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate referenced run artifact keys: %w", err)
+	}
+	return keys, nil
+}
+
 func (r *TurnRunRepository) ScheduleNextTurnRun(ctx context.Context, turnID string, previousRunID string, stepIndex int, provider string, model string, requestBlobKey string, stateBlobKey string) (string, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -132,14 +227,14 @@ func (r *TurnRunRepository) ScheduleNextTurnRun(ctx context.Context, turnID stri
 			request_blob_key, state_blob_key
 		)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (turn_id, step_index) DO NOTHING
+		ON CONFLICT (turn_id, step_index, attempt) DO NOTHING
 		RETURNING id::text
 	`, turnID, stepIndex, provider, model, domain.TurnRunStatusQueued, requestBlobKey, stateBlobKey).Scan(&runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.QueryRow(ctx, `
 			SELECT id::text
 			FROM turn_runs
-			WHERE turn_id = $1::uuid AND step_index = $2
+			WHERE turn_id = $1::uuid AND step_index = $2 AND attempt = 0
 		`, turnID, stepIndex).Scan(&runID); err != nil {
 			return "", fmt.Errorf("load existing next turn run: %w", err)
 		}
@@ -332,6 +427,16 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 		WHERE t.id = $1::uuid
 	`, run.TurnID).Scan(&modelID, &modelRevision, &modelPriceID, &modelSnapshot, &ownerUserID, &conversationID); err != nil {
 		return nil, fmt.Errorf("load turn billing snapshot: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE context_heads
+		SET latest_successful_run_id = $2::uuid,
+			latest_checkpoint_key = COALESCE(NULLIF($3, ''), latest_checkpoint_key),
+			checkpoint_covered_event_seq = CASE WHEN $3 <> '' THEN last_context_event_seq ELSE checkpoint_covered_event_seq END,
+			version = CASE WHEN $3 <> '' THEN version + 1 ELSE version END
+		WHERE conversation_id = $1::uuid
+	`, conversationID, run.ID, run.CheckpointBlobKey); err != nil {
+		return nil, fmt.Errorf("advance successful run context head: %w", err)
 	}
 	var execution domain.ModelExecutionSnapshot
 	_ = json.Unmarshal(modelSnapshot, &execution)

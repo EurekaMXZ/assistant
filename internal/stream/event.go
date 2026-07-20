@@ -30,6 +30,11 @@ type Event struct {
 	EventIndex     int64  `json:"event_index,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	TurnID         string `json:"turn_id,omitempty"`
+	RunID          string `json:"run_id,omitempty"`
+	ItemID         string `json:"item_id,omitempty"`
+	TransportSeq   int64  `json:"transport_seq,omitempty"`
+	OutputIndex    int    `json:"output_index,omitempty"`
+	ContentIndex   int    `json:"content_index,omitempty"`
 	ResponseID     string `json:"response_id,omitempty"`
 	ToolName       string `json:"tool_name,omitempty"`
 	Payload        string `json:"payload,omitempty"`

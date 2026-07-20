@@ -51,6 +51,18 @@ func (r *TurnRunner) HandleAccepted(ctx context.Context, event WorkflowEvent) er
 	return nil
 }
 
+func (r *TurnRunner) HandleCancellationRequested(ctx context.Context, event WorkflowEvent) error {
+	canceller, ok := r.runs.(TurnCancellationStore)
+	if !ok || canceller == nil {
+		return errors.New("turn cancellation store is not configured")
+	}
+	err := canceller.FinalizeTurnCancellation(ctx, event.ConversationID, event.TurnID)
+	if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent) error {
 	turn := &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}
 	var err error
@@ -138,11 +150,18 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	if err := r.blobs.PutBytes(ctx, requestKey, rawRequest, "application/json"); err != nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, requestKey, "", domain.TurnErrorRequestBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
-	if _, err := r.runs.StartTurnRun(ctx, event.TurnID, toolRunProviderOpenAIResponses, execution.UpstreamModel, runRequestKey, stateKey); err != nil {
+	runID, err := r.runs.StartTurnRun(ctx, event.TurnID, toolRunProviderOpenAIResponses, execution.UpstreamModel, runRequestKey, stateKey)
+	if err != nil {
 		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
 			return nil
 		}
 		return err
+	}
+	run, err := r.runs.GetTurnRun(ctx, runID)
+	if err == nil && run != nil {
+		if err := r.persistImmutableRunRequest(ctx, event.ConversationID, event.TurnID, run.StepIndex, run.ID, rawRequest); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -313,7 +332,7 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	switch run.Status {
 	case domain.TurnRunStatusCompleted:
 		return r.continueCompletedTurnRun(ctx, event, run)
-	case domain.TurnRunStatusFailed, domain.TurnRunStatusRunning:
+	case domain.TurnRunStatusFailed, domain.TurnRunStatusRunning, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusCancelled:
 		return nil
 	case domain.TurnRunStatusQueued:
 	default:
@@ -356,14 +375,21 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		if found {
 			outcome, responseKey, resultKey = recovered, recoveredResponseKey, recoveredResultKey
 		} else {
+			providerState, cloneErr := cloneScheduledRunState(state)
+			if cloneErr != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, cloneErr)
+			}
+			if err := r.loader.hydrateScheduledRunImages(runCtx, providerState); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+			}
 			if r.streamHub != nil {
 				_ = r.streamHub.Publish(runCtx, stream.Event{
 					Type: stream.EventResponseStarted, ConversationID: event.ConversationID, TurnID: event.TurnID,
 				})
 			}
-			outcome, err = r.tools.RequestScheduledRun(runCtx, state, r.modelEventHandler(runCtx, &domain.Turn{
+			outcome, err = r.tools.RequestScheduledRun(runCtx, providerState, r.modelEventHandler(runCtx, &domain.Turn{
 				ID: claimed.TurnID, ConversationID: event.ConversationID,
-			}))
+			}, claimed.ID))
 			if err != nil {
 				if leaseErr := stopLease(); leaseErr != nil {
 					return leaseErr
@@ -400,6 +426,18 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			return err
 		}
 	}
+	if err := r.externalizeGeneratedImages(ctx, &domain.Turn{ID: claimed.TurnID, ConversationID: event.ConversationID}, outcome); err != nil {
+		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+	}
+	immutableResponseKey, checkpointKey, err := r.persistImmutableRunSuccess(ctx, event.ConversationID, claimed.TurnID, claimed, outcome)
+	if err != nil {
+		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+	}
+	if immutableResponseKey != "" {
+		responseKey = immutableResponseKey
+		claimed.ResponseBlobKey = immutableResponseKey
+	}
+	claimed.CheckpointBlobKey = checkpointKey
 	compactTriggerTokens := r.compactTriggerTokens(ctx, event.TurnID, outcome.ContextWindowTokens)
 	settled, err := r.runs.CompleteScheduledTurnRun(
 		ctx, lease, outcome.Model.ResponseID, responseKey, resultKey,
@@ -442,36 +480,42 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		if err != nil {
 			return err
 		}
-		_, err = r.runs.ScheduleNextTurnRun(ctx, run.TurnID, run.ID, outcome.NextState.StepIndex, toolRunProviderOpenAIResponses, outcome.NextState.Request.Model, requestKey, stateKey)
+		nextRunID, err := r.runs.ScheduleNextTurnRun(ctx, run.TurnID, run.ID, outcome.NextState.StepIndex, toolRunProviderOpenAIResponses, outcome.NextState.Request.Model, requestKey, stateKey)
 		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return r.persistImmutableRunRequest(ctx, event.ConversationID, run.TurnID, outcome.NextState.StepIndex, nextRunID, outcome.NextRequest)
 	}
 
 	turn := &domain.Turn{ID: run.TurnID, ConversationID: event.ConversationID}
+	if err := r.externalizeGeneratedImages(ctx, turn, outcome); err != nil {
+		return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorGeneratedImageFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
 	responseKey := r.blobs.TurnResponseKey(turn.ConversationID, turn.ID)
 	if len(outcome.Model.RawResponse) > 0 {
 		if err := r.blobs.PutBytes(ctx, responseKey, outcome.Model.RawResponse, "application/json"); err != nil {
 			return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorResponseBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 		}
 	}
+	if run.ResponseBlobKey != "" {
+		responseKey = run.ResponseBlobKey
+	}
 	toolRun := &ToolRunResult{Model: outcome.Model, Tools: outcome.Tools, ContextItems: outcome.ContextItems}
 	if err := r.persistTurnModelContext(ctx, turn, toolRun); err != nil {
 		return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorModelContextBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
-	generatedImageDrafts, err := r.generatedImageDrafts(ctx, turn, outcome.Model)
-	if err != nil {
-		return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorGeneratedImageFailed, domain.TurnPublicErrorRequestProcessing, err)
-	}
 	summary := domain.TurnRunSummary{
+		RunID: run.ID, CheckpointBlobKey: run.CheckpointBlobKey,
 		RequestBlobKey: r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), ResponseBlobKey: responseKey,
 		StreamBlobKey: r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), ResponseID: outcome.Model.ResponseID,
 		InputTokens: outcome.Model.Usage.InputTokens, OutputTokens: outcome.Model.Usage.OutputTokens,
 		TotalTokens: outcome.Model.Usage.TotalTokens, ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,
 	}
 	assistantDrafts := assistantMessageDraftsFromRun(toolRun, outcome.Model)
-	assistantDrafts = append(assistantDrafts, generatedImageDrafts...)
+	assistantDrafts = append(assistantDrafts, outcome.GeneratedImageDrafts...)
 	compactTriggerTokens := r.compactTriggerTokens(ctx, turn.ID, outcome.ContextWindowTokens)
 	completedTurn, assistantMessages, updatedHead, _, err := r.store.FinalizeTurnSuccess(ctx, turn.ID, assistantDrafts, summary, compactTriggerTokens)
 	if err != nil {
@@ -484,6 +528,7 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		for _, assistantMessage := range assistantMessages {
 			r.cache.AppendTailMessage(turn.ConversationID, *updatedHead, assistantMessage)
 		}
+		_, _, _ = r.loader.EnsureHotContext(ctx, turn.ConversationID)
 	}
 	_ = r.streamHub.Publish(ctx, stream.Event{
 		Type: stream.EventTurnDone, ConversationID: turn.ConversationID, TurnID: turn.ID, ResponseID: outcome.Model.ResponseID,
@@ -492,6 +537,9 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 }
 
 func (r *TurnRunner) failScheduledTurnRun(ctx context.Context, event WorkflowEvent, run *domain.TurnRun, lease TurnRunLease, outcome *ScheduledRunOutcome, cause error) error {
+	if err := r.persistImmutableRunFailure(ctx, event.ConversationID, event.TurnID, run, cause); err != nil && r.logger != nil {
+		r.logger.Printf("persist failed run artifact for %s: %v", run.ID, err)
+	}
 	responseID, responseKey, resultKey := "", "", ""
 	var modelResult *llm.ModelResult
 	contextWindowTokens := 0
@@ -622,16 +670,23 @@ func (r *TurnRunner) publishTurnFailure(ctx context.Context, turn *domain.Turn, 
 	})
 }
 
-func (r *TurnRunner) modelEventHandler(ctx context.Context, turn *domain.Turn) llm.ModelEventHandler {
+func (r *TurnRunner) modelEventHandler(ctx context.Context, turn *domain.Turn, runID string) llm.ModelEventHandler {
+	var transportSeq int64
 	return func(evt llm.ModelEvent) error {
 		if strings.TrimSpace(evt.Type) == "" {
 			return nil
 		}
 
+		transportSeq++
 		streamEvent := stream.Event{
 			Type:           evt.Type,
 			ConversationID: turn.ConversationID,
 			TurnID:         turn.ID,
+			RunID:          runID,
+			ItemID:         evt.ItemID,
+			TransportSeq:   transportSeq,
+			OutputIndex:    evt.OutputIndex,
+			ContentIndex:   evt.ContentIndex,
 			ResponseID:     evt.ResponseID,
 			Delta:          evt.Delta,
 			Text:           evt.Text,

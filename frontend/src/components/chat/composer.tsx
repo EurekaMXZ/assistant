@@ -17,6 +17,7 @@ interface ComposerProps {
   modelId?: string;
   onChange: (content: string) => void;
   onCancelEdit?: () => void;
+  onCancelGeneration?: () => void;
   onRemoveAttachment?: (attachmentId: string) => void;
   onModelChange?: (modelId: string) => void;
   onModelReasoningEffortChange?: (modelId: string, effort: ReasoningEffort | "") => void;
@@ -25,6 +26,7 @@ interface ComposerProps {
   disabled?: boolean;
   placeholder?: string;
   reasoningEfforts?: Record<string, ReasoningEffort>;
+  streaming?: boolean;
   value: string;
 }
 
@@ -39,6 +41,7 @@ export function Composer({
   modelId = "",
   onChange,
   onCancelEdit,
+  onCancelGeneration,
   onRemoveAttachment,
   onModelChange,
   onModelReasoningEffortChange,
@@ -47,6 +50,7 @@ export function Composer({
   disabled,
   placeholder = "输入消息…",
   reasoningEfforts = {},
+  streaming,
   value,
 }: ComposerProps) {
   return (
@@ -83,6 +87,7 @@ export function Composer({
         modelsLoading={modelsLoading}
         modelId={modelId}
         onChange={onChange}
+        onCancel={onCancelGeneration}
         onFilesSelected={(files) => void onUploadFiles?.(files)}
         onModelChange={onModelChange}
         onModelReasoningEffortChange={onModelReasoningEffortChange}
@@ -99,6 +104,7 @@ export function Composer({
         }
         placeholder={placeholder}
         reasoningEfforts={reasoningEfforts}
+        streaming={streaming}
         value={value}
       />
     </div>

@@ -122,6 +122,9 @@ func TestListConversationResourcesEncodeEmptyArrays(t *testing.T) {
 			ListMessages: func(context.Context, string, string, int) ([]domain.Message, error) {
 				return nil, nil
 			},
+			ListConversationEvents: func(context.Context, string, string, int, int64, int64) (*ConversationEventPage, error) {
+				return &ConversationEventPage{}, nil
+			},
 		},
 	})
 	for _, test := range []struct {
@@ -130,6 +133,7 @@ func TestListConversationResourcesEncodeEmptyArrays(t *testing.T) {
 	}{
 		{path: "/api/v1/conversations?limit=200", want: `"conversations":[]`},
 		{path: "/api/v1/conversations/conversation-1/messages", want: `"messages":[]`},
+		{path: "/api/v1/conversations/conversation-1/events", want: `"events":[]`},
 	} {
 		req := httptest.NewRequest(http.MethodGet, test.path, nil)
 		req.Header.Set("Authorization", "Bearer token")
@@ -138,6 +142,44 @@ func TestListConversationResourcesEncodeEmptyArrays(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), test.want) {
 			t.Fatalf("GET %s status=%d body=%s, want %s", test.path, rec.Code, rec.Body.String(), test.want)
 		}
+	}
+}
+
+func TestListConversationEventsUsesDecimalCursors(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{ListConversationEvents: func(_ context.Context, ownerID string, conversationID string, limit int, before int64, after int64) (*ConversationEventPage, error) {
+			if ownerID != "user-1" || conversationID != "conversation-1" || limit != 25 || before != 101 || after != 0 {
+				t.Fatalf("unexpected event query: owner=%s conversation=%s limit=%d before=%d after=%d", ownerID, conversationID, limit, before, after)
+			}
+			return &ConversationEventPage{Items: []domain.ConversationEvent{{ID: "event-1", ConversationID: conversationID, EventSeq: 100, EventKey: "message:1", SchemaVersion: 1, EventType: "message.completed", Payload: []byte(`{}`)}}, NextBefore: "100", HasMoreBefore: true}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/conversation-1/events?limit=25&before=101", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"event_seq":"100"`) || !strings.Contains(rec.Body.String(), `"next_before":"100"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancelTurnRequestsCancellation(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Turns: TurnUseCases{RequestTurnCancellation: func(_ context.Context, ownerID string, turnID string) (*domain.Turn, error) {
+			if ownerID != "user-1" || turnID != "turn-1" {
+				t.Fatalf("unexpected cancellation request: owner=%s turn=%s", ownerID, turnID)
+			}
+			return &domain.Turn{ID: turnID, Status: domain.TurnStatusCancelRequested}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/turns/turn-1/cancel", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"status":"cancel_requested"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

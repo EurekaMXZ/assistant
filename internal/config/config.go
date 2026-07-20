@@ -25,6 +25,7 @@ const (
 	defaultWorkerLeaseTimeout        = 2 * time.Minute
 	defaultWorkerConcurrency         = 4
 	defaultKafkaTopic                = "assistant.workflow"
+	defaultKafkaStreamTopic          = "assistant.stream"
 	defaultKafkaGroup                = "assistant-workers"
 	defaultRedisAddr                 = "127.0.0.1:6379"
 	defaultRedisDB                   = 0
@@ -93,6 +94,7 @@ type Config struct {
 	StreamChannelPrefix         string
 	KafkaBrokers                []string
 	KafkaWorkflowTopic          string
+	KafkaStreamTopic            string
 	KafkaConsumerGroup          string
 	S3Provider                  string
 	S3Endpoint                  string
@@ -181,6 +183,7 @@ func Load() Config {
 		StreamChannelPrefix:         getenv("STREAM_CHANNEL_PREFIX", defaultStreamChannelPrefix),
 		KafkaBrokers:                getenvList("KAFKA_BROKERS", []string{"127.0.0.1:9092"}),
 		KafkaWorkflowTopic:          getenv("KAFKA_WORKFLOW_TOPIC", defaultKafkaTopic),
+		KafkaStreamTopic:            getenv("KAFKA_STREAM_TOPIC", defaultKafkaStreamTopic),
 		KafkaConsumerGroup:          getenv("KAFKA_CONSUMER_GROUP", defaultKafkaGroup),
 		S3Provider:                  s3Provider,
 		S3Endpoint:                  getenv("S3_ENDPOINT", defaultS3Endpoint),

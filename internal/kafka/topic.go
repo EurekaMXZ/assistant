@@ -33,11 +33,10 @@ func EnsureTopic(ctx context.Context, settings Settings) error {
 	}
 	defer controllerConn.Close()
 
-	err = controllerConn.CreateTopics(kafkago.TopicConfig{
-		Topic:             settings.WorkflowTopic,
-		NumPartitions:     16,
-		ReplicationFactor: 1,
-	})
+	err = controllerConn.CreateTopics(
+		kafkago.TopicConfig{Topic: settings.WorkflowTopic, NumPartitions: 16, ReplicationFactor: 1},
+		kafkago.TopicConfig{Topic: settings.EffectiveStreamTopic(), NumPartitions: 16, ReplicationFactor: 1},
+	)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "topic with this name already exists") {
 		return fmt.Errorf("create kafka topic %s: %w", settings.WorkflowTopic, err)
 	}

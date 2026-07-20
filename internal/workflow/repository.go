@@ -34,6 +34,12 @@ type WorkflowContextRepository interface {
 	CompleteCompaction(ctx context.Context, conversationID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error)
 }
 
+type CompleteEventStore interface {
+	AppendCompleteEvent(ctx context.Context, input domain.ConversationEventInput) (*domain.ConversationEvent, error)
+	ListContextEvents(ctx context.Context, conversationID string, fromSeq int64, toSeq int64) ([]domain.ConversationEvent, error)
+	ListConversationEvents(ctx context.Context, conversationID string, limit int, beforeSeq int64, afterSeq int64) ([]domain.ConversationEvent, error)
+}
+
 type AttachmentStore interface {
 	ListAttachmentsByIDs(ctx context.Context, conversationID string, ids []string) ([]domain.Attachment, error)
 }
@@ -79,6 +85,18 @@ type TurnRunWorkflowStore interface {
 	CheckpointScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string) error
 	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error)
 	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
+}
+
+type TurnRunArtifactIndexer interface {
+	SetTurnRunArtifactMetadata(ctx context.Context, runID string, requestKey string, responseKey string, outputItemsKey string, toolResultsKey string, presentationEventsKey string, checkpointKey string, requestChecksum string, responseChecksum string, requestSizeBytes int64, responseSizeBytes int64, requestSchemaVersion int, responseSchemaVersion int) error
+}
+
+type RunArtifactReferenceStore interface {
+	ListReferencedRunArtifactKeys(ctx context.Context) ([]string, error)
+}
+
+type TurnCancellationStore interface {
+	FinalizeTurnCancellation(ctx context.Context, conversationID string, turnID string) error
 }
 
 type ToolCallStore interface {

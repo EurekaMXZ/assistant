@@ -8,8 +8,10 @@ export const turnStatusSchema = z.enum([
   "accepted",
   "context_ready",
   "processing",
+  "cancel_requested",
   "completed",
   "failed",
+  "cancelled",
 ]);
 
 export const userSchema = z.object({
@@ -107,6 +109,28 @@ export const messageSchema = z.object({
   token_count: z.number().int().optional(),
   metadata,
   created_at: dateTime,
+});
+
+export const conversationEventSchema = z.object({
+  id: z.string(),
+  conversation_id: z.string(),
+  turn_id: z.string().optional(),
+  turn_run_id: z.string().optional(),
+  event_seq: z.string().regex(/^\d+$/),
+  event_key: z.string(),
+  schema_version: z.number().int().positive(),
+  event_type: z.string(),
+  payload: z.record(z.string(), z.unknown()),
+  context_included: z.boolean(),
+  created_at: dateTime,
+});
+
+export const conversationEventPageSchema = z.object({
+  events: z.array(conversationEventSchema),
+  next_before: z.string().optional(),
+  next_after: z.string().optional(),
+  has_more_before: z.boolean(),
+  has_more_after: z.boolean(),
 });
 
 export const conversationShareSnapshotSchema = z.object({

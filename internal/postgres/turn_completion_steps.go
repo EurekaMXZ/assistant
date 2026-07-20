@@ -172,23 +172,20 @@ func updateTurnSuccess(ctx context.Context, tx pgx.Tx, turnID string, summary do
 	return turn, nil
 }
 
-func updateContextHeadAfterAssistant(ctx context.Context, tx pgx.Tx, conversationID string, assistantSeq int64, activeTokens int) (*domain.ContextHead, error) {
+func updateContextHeadAfterAssistant(ctx context.Context, tx pgx.Tx, conversationID string, assistantSeq int64, activeTokens int, summary domain.TurnRunSummary) (*domain.ContextHead, error) {
 	row := tx.QueryRow(ctx, `
 		UPDATE context_heads
 		SET
 			last_seq = $2,
-			active_context_tokens = $3
+			active_context_tokens = $3,
+			version = version + 1,
+			latest_request_run_id = COALESCE(NULLIF($4, '')::uuid, latest_request_run_id),
+			latest_successful_run_id = COALESCE(NULLIF($4, '')::uuid, latest_successful_run_id),
+			latest_checkpoint_key = COALESCE(NULLIF($5, ''), latest_checkpoint_key),
+			checkpoint_covered_event_seq = CASE WHEN $5 <> '' THEN last_context_event_seq ELSE checkpoint_covered_event_seq END
 		WHERE conversation_id = $1::uuid
-		RETURNING
-			conversation_id::text,
-			anchor_generation,
-			COALESCE(anchor_key, ''),
-			covered_until_seq,
-			raw_tail_start_seq,
-			last_seq,
-			active_context_tokens,
-			updated_at
-	`, conversationID, assistantSeq, activeTokens)
+		RETURNING `+contextHeadColumns+`
+	`, conversationID, assistantSeq, activeTokens, summary.RunID, summary.CheckpointBlobKey)
 
 	head, err := scanContextHead(row)
 	if err != nil {

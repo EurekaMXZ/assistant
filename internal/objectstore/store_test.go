@@ -106,6 +106,12 @@ func TestStoreKeyBuildersUseStableLayout(t *testing.T) {
 	if got := store.TurnRunOutputItemsKey("conv-1", "turn-1", 2); got != "run-output-items/conv-1/turn-1/step-002.json" {
 		t.Fatalf("run output items key = %q, want %q", got, "run-output-items/conv-1/turn-1/step-002.json")
 	}
+	if got := store.ImmutableRunArtifactKey("conv-1", "turn-1", 2, "run-1", "request.json.zst"); got != "conversations/conv-1/turns/turn-1/runs/000002-run-1/request.json.zst" {
+		t.Fatalf("immutable run key = %q", got)
+	}
+	if got := store.ContextCheckpointKey("conv-1", 7); got != "conversations/conv-1/context-checkpoints/000007.json.zst" {
+		t.Fatalf("context checkpoint key = %q", got)
+	}
 	if got := store.ToolCallArgumentsKey("conv-1", "turn-1", "call-1"); got != "tool-calls/conv-1/turn-1/call-1-arguments.json" {
 		t.Fatalf("tool arguments key = %q, want %q", got, "tool-calls/conv-1/turn-1/call-1-arguments.json")
 	}

@@ -33,6 +33,9 @@ type Store struct {
 var _ workflow.TurnArtifactStore = (*Store)(nil)
 var _ workflow.ToolArtifactStore = (*Store)(nil)
 var _ workflow.ContextAnchorStore = (*Store)(nil)
+var _ workflow.ContextCheckpointStore = (*Store)(nil)
+var _ workflow.ImmutableRunArtifactStore = (*Store)(nil)
+var _ workflow.RunArtifactObjectStore = (*Store)(nil)
 
 func New(settings Settings) (*Store, error) {
 	if err := settings.Validate(); err != nil {
@@ -165,6 +168,25 @@ func (s *Store) PutBytes(ctx context.Context, key string, data []byte, contentTy
 	return s.PutReader(ctx, key, reader, int64(len(data)), contentType)
 }
 
+func (s *Store) PutImmutableBytes(ctx context.Context, key string, data []byte, contentType string) error {
+	options := miniosdk.PutObjectOptions{ContentType: contentType}
+	options.SetMatchETagExcept("*")
+	if _, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), options); err != nil {
+		response := miniosdk.ToErrorResponse(err)
+		if response.Code != "PreconditionFailed" {
+			return fmt.Errorf("put immutable object %s: %w", key, err)
+		}
+		existing, readErr := s.GetBytes(ctx, key)
+		if readErr != nil {
+			return fmt.Errorf("verify immutable object %s: %w", key, readErr)
+		}
+		if !bytes.Equal(existing, data) {
+			return fmt.Errorf("immutable object %s already exists with different content: %w", key, domain.ErrConflict)
+		}
+	}
+	return nil
+}
+
 func (s *Store) PutReader(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
 	_, err := s.client.PutObject(ctx, s.bucket, key, reader, size, miniosdk.PutObjectOptions{
 		ContentType: contentType,
@@ -181,6 +203,17 @@ func (s *Store) DeleteObject(ctx context.Context, key string) error {
 		return fmt.Errorf("delete object %s: %w", key, err)
 	}
 	return nil
+}
+
+func (s *Store) ListRunArtifactObjects(ctx context.Context, prefix string) ([]workflow.RunArtifactObject, error) {
+	objects := make([]workflow.RunArtifactObject, 0)
+	for object := range s.client.ListObjects(ctx, s.bucket, miniosdk.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if object.Err != nil {
+			return nil, fmt.Errorf("list objects with prefix %s: %w", prefix, object.Err)
+		}
+		objects = append(objects, workflow.RunArtifactObject{Key: object.Key, LastModified: object.LastModified})
+	}
+	return objects, nil
 }
 
 func (s *Store) GetBytes(ctx context.Context, key string) ([]byte, error) {
@@ -283,6 +316,14 @@ func (s *Store) TurnRunOutputItemsKey(conversationID, turnID string, stepIndex i
 	return turnRunOutputItemsKey(conversationID, turnID, stepIndex)
 }
 
+func immutableRunArtifactKey(conversationID, turnID string, stepIndex int, runID string, artifact string) string {
+	return fmt.Sprintf("conversations/%s/turns/%s/runs/%06d-%s/%s", conversationID, turnID, stepIndex, runID, artifact)
+}
+
+func (s *Store) ImmutableRunArtifactKey(conversationID, turnID string, stepIndex int, runID string, artifact string) string {
+	return immutableRunArtifactKey(conversationID, turnID, stepIndex, runID, artifact)
+}
+
 func toolCallArgumentsKey(conversationID, turnID, callID string) string {
 	return fmt.Sprintf("tool-calls/%s/%s/%s-arguments.json", conversationID, turnID, callID)
 }
@@ -305,6 +346,10 @@ func contextAnchorKey(conversationID string, generation int64) string {
 
 func (s *Store) ContextAnchorKey(conversationID string, generation int64) string {
 	return contextAnchorKey(conversationID, generation)
+}
+
+func (s *Store) ContextCheckpointKey(conversationID string, version int64) string {
+	return fmt.Sprintf("conversations/%s/context-checkpoints/%06d.json.zst", conversationID, version)
 }
 
 func normalizeEndpoint(endpoint string, defaultSecure bool) (string, bool, error) {

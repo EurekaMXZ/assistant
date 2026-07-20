@@ -11,15 +11,7 @@ import (
 
 func (r *WorkflowContextRepository) GetContextHead(ctx context.Context, conversationID string) (*domain.ContextHead, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT
-			conversation_id::text,
-			anchor_generation,
-			COALESCE(anchor_key, ''),
-			covered_until_seq,
-			raw_tail_start_seq,
-			last_seq,
-			active_context_tokens,
-			updated_at
+		SELECT `+contextHeadColumns+`
 		FROM context_heads
 		WHERE conversation_id = $1::uuid
 	`, conversationID)
@@ -43,9 +35,9 @@ func (r *WorkflowContextRepository) HasActiveRetry(ctx context.Context, conversa
 			FROM turns
 			WHERE conversation_id = $1::uuid
 				AND retry_of_turn_id IS NOT NULL
-				AND status IN ($2, $3, $4)
+				AND status IN ($2, $3, $4, $5)
 		)
-	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing).Scan(&active); err != nil {
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusCancelRequested).Scan(&active); err != nil {
 		return false, fmt.Errorf("check active retry: %w", err)
 	}
 	return active, nil
@@ -120,9 +112,9 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 			FROM turns
 			WHERE conversation_id = $1::uuid
 				AND retry_of_turn_id IS NOT NULL
-				AND status IN ($2, $3, $4)
+				AND status IN ($2, $3, $4, $5)
 		)
-	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing).Scan(&activeRetry); err != nil {
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusCancelRequested).Scan(&activeRetry); err != nil {
 		return nil, fmt.Errorf("check active retry before compaction: %w", err)
 	}
 	if activeRetry {
@@ -140,18 +132,14 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 			anchor_key = $3,
 			covered_until_seq = $4,
 			raw_tail_start_seq = $5,
-			active_context_tokens = $6
+			active_context_tokens = $6,
+			version = version + 1,
+			latest_checkpoint_key = COALESCE(NULLIF($7, ''), latest_checkpoint_key),
+			checkpoint_covered_event_seq = CASE WHEN $7 <> '' THEN last_context_event_seq ELSE checkpoint_covered_event_seq END
 		WHERE conversation_id = $1::uuid
 		RETURNING
-			conversation_id::text,
-			anchor_generation,
-			COALESCE(anchor_key, ''),
-			covered_until_seq,
-			raw_tail_start_seq,
-			last_seq,
-			active_context_tokens,
-			updated_at
-	`, conversationID, anchor.Generation, anchor.ObjectKey, anchor.CoveredUntilSeq, anchor.CoveredUntilSeq+1, max(0, activeContextTokens))
+			`+contextHeadColumns+`
+	`, conversationID, anchor.Generation, anchor.ObjectKey, anchor.CoveredUntilSeq, anchor.CoveredUntilSeq+1, max(0, activeContextTokens), anchor.CheckpointKey)
 
 	head, err = scanContextHead(row)
 	if err != nil {

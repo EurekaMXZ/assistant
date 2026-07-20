@@ -9,6 +9,7 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	"github.com/EurekaMXZ/assistant/internal/llm"
 )
 
 type stubContextLoaderArtifactStore struct {
@@ -196,8 +197,11 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 		t.Fatalf("expected raw item payload, got %#v", input[0])
 	}
 	raw := string(input[0].Raw)
-	if !strings.Contains(raw, `"type":"input_image"`) || !strings.Contains(raw, `data:image/png;base64,`) {
-		t.Fatalf("expected image payload, got %s", raw)
+	if !strings.Contains(raw, `"type":"input_image"`) || !strings.Contains(raw, `"object_key":"attachments/conv-1/att-img/screen.png"`) {
+		t.Fatalf("expected image reference, got %s", raw)
+	}
+	if strings.Contains(raw, `data:image/png;base64,`) {
+		t.Fatalf("persisted model input must not contain image base64, got %s", raw)
 	}
 	if !strings.Contains(raw, `brief.pdf`) || !strings.Contains(raw, `attachment_id=att-pdf`) || !strings.Contains(raw, `sandbox.import_attachment`) {
 		t.Fatalf("expected sandbox attachment manifest, got %s", raw)
@@ -205,13 +209,20 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 	if !strings.Contains(raw, `"text":"Check this"`) {
 		t.Fatalf("expected original text in payload, got %s", raw)
 	}
+	state := &ScheduledRunState{Request: llm.ModelRequest{Input: input}}
+	if err := loader.hydrateScheduledRunImages(t.Context(), state); err != nil {
+		t.Fatalf("hydrate provider request: %v", err)
+	}
+	if hydrated := string(state.Request.Input[0].Raw); !strings.Contains(hydrated, `data:image/png;base64,`) || strings.Contains(hydrated, `"image_ref"`) {
+		t.Fatalf("expected provider-only image hydration, got %s", hydrated)
+	}
 }
 
 func TestContextLoaderRejectsCorruptedImageAttachment(t *testing.T) {
 	loader := &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{data: map[string][]byte{"image": []byte("bad")}}}
-	_, _, err := loader.attachmentContentPart(t.Context(), domain.Attachment{
-		ID: "attachment-1", Category: domain.AttachmentCategoryImage, ContentType: "image/png",
-		SizeBytes: 3, SHA256: strings.Repeat("0", 64), ObjectKey: "image",
+	_, err := loader.hydrateImageReference(t.Context(), modelImageReference{
+		AttachmentID: "attachment-1", ContentType: "image/png", SizeBytes: 3,
+		SHA256: strings.Repeat("0", 64), ObjectKey: "image",
 	})
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("error = %v, want checksum mismatch", err)

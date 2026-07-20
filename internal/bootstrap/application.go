@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	assistantattachment "github.com/EurekaMXZ/assistant/internal/attachment"
@@ -22,6 +23,7 @@ type workflowAdapters struct {
 	Outbox               workflow.WorkflowOutboxRepository
 	Turns                workflow.TurnWorkflowRepository
 	Contexts             workflow.WorkflowContextRepository
+	CompleteEvents       workflow.CompleteEventStore
 	Attachments          workflow.AttachmentStore
 	AttachmentCleanup    assistantattachment.CleanupRepository
 	GeneratedAttachments workflow.GeneratedAttachmentStore
@@ -52,6 +54,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	turnRunRepository := postgres.NewTurnRunRepository(pool)
 	toolCallRepository := postgres.NewToolCallRepository(pool)
 	turnStreamEventRepository := postgres.NewTurnStreamEventRepository(pool)
+	conversationEventRepository := postgres.NewConversationEventRepository(pool)
 	userRepository := postgres.NewUserRepository(pool)
 	modelRepository := postgres.NewModelRepository(pool)
 	providerCredentialRepository := postgres.NewProviderCredentialRepository(pool)
@@ -198,6 +201,37 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				}
 				return messageRepository.ListMessages(ctx, conversationID, limit)
 			},
+			ListConversationEvents: func(ctx context.Context, ownerUserID string, conversationID string, limit int, beforeSeq int64, afterSeq int64) (*server.ConversationEventPage, error) {
+				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
+					return nil, err
+				}
+				if limit <= 0 {
+					limit = 100
+				} else if limit > 1000 {
+					limit = 1000
+				}
+				events, err := conversationEventRepository.ListConversationEvents(ctx, conversationID, limit+1, beforeSeq, afterSeq)
+				if err != nil {
+					return nil, err
+				}
+				page := &server.ConversationEventPage{Items: events}
+				if beforeSeq > 0 || afterSeq == 0 {
+					if len(page.Items) > limit {
+						page.HasMoreBefore = true
+						page.Items = page.Items[len(page.Items)-limit:]
+					}
+					if len(page.Items) > 0 && page.HasMoreBefore {
+						page.NextBefore = strconv.FormatInt(page.Items[0].EventSeq, 10)
+					}
+				} else if len(page.Items) > limit {
+					page.HasMoreAfter = true
+					page.Items = page.Items[:limit]
+				}
+				if len(page.Items) > 0 && afterSeq > 0 && page.HasMoreAfter {
+					page.NextAfter = strconv.FormatInt(page.Items[len(page.Items)-1].EventSeq, 10)
+				}
+				return page, nil
+			},
 		},
 		Storage: server.StorageUseCases{
 			GetStorageUsage: attachmentService.GetStorageUsage,
@@ -289,6 +323,12 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 			GetTurn: func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error) {
 				return ensureOwnedTurn(ctx, ownerUserID, turnID)
 			},
+			RequestTurnCancellation: func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error) {
+				if _, err := ensureOwnedTurn(ctx, ownerUserID, turnID); err != nil {
+					return nil, err
+				}
+				return turnRepository.RequestTurnCancellation(ctx, turnID)
+			},
 			GetTurnExecutionTrace: func(ctx context.Context, ownerUserID string, turnID string) (*server.TurnExecutionTrace, error) {
 				if _, err := ensureOwnedTurn(ctx, ownerUserID, turnID); err != nil {
 					return nil, err
@@ -316,6 +356,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Outbox:               postgres.NewWorkflowOutboxRepository(pool),
 		Turns:                workflowTurnRepository,
 		Contexts:             postgres.NewWorkflowContextRepository(pool),
+		CompleteEvents:       conversationEventRepository,
 		Attachments:          attachmentRepository,
 		AttachmentCleanup:    attachmentRepository,
 		GeneratedAttachments: attachmentRepository,

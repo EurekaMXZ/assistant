@@ -34,13 +34,16 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	}
 
 	cacheStore := cache.New(settings.CacheMaxConversations, settings.CacheTailCapacity)
+	sharedContextCache, _ := publisher.(cache.SharedContextSnapshotCache)
 	writer := assistantkafka.NewWorkflowWriter(settings.Kafka)
 	newReader := func() worker.WorkflowReader {
 		return assistantkafka.NewWorkflowReader(settings.KafkaReader)
 	}
 	openaiClient := openai.New(settings.OpenAI)
 	openaiClient.SetCredentialResolver(credential.NewResolver(workflows.ProviderCredentials, workflows.CredentialCipher))
-	streamPublisher := workflow.NewArchivingStreamPublisher(publisher, artifactStore, workflows.StreamEvents)
+	kafkaStreamPublisher := assistantkafka.NewStreamPublisher(settings.Kafka, publisher)
+	streamRecovery := assistantkafka.NewStreamRecovery(settings.Kafka, settings.KafkaReader.ConsumerGroup, workflows.CompleteEvents)
+	streamPublisher := workflow.NewArchivingStreamPublisher(kafkaStreamPublisher, artifactStore, workflows.StreamEvents, workflows.CompleteEvents)
 	sandboxRuntime, err := buildSandboxRuntime(settings.Sandbox)
 	if err != nil {
 		return nil, err
@@ -103,14 +106,15 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 		toolDefinitions = tool.DefaultToolsWithTavily()
 	}
 	workflowEngine := workflow.New(workflow.Dependencies{
-		Logger:      logger,
-		Settings:    settings.Workflow,
-		Outbox:      workflows.Outbox,
-		Turns:       workflows.Turns,
-		Contexts:    workflows.Contexts,
-		Attachments: workflows.Attachments,
-		StaleTurns:  workflows.StaleTurns,
-		Model:       openaiClient,
+		Logger:         logger,
+		Settings:       settings.Workflow,
+		Outbox:         workflows.Outbox,
+		Turns:          workflows.Turns,
+		Contexts:       workflows.Contexts,
+		CompleteEvents: workflows.CompleteEvents,
+		Attachments:    workflows.Attachments,
+		StaleTurns:     workflows.StaleTurns,
+		Model:          openaiClient,
 		ToolCatalog: tool.StaticCatalog{
 			Tools:             toolDefinitions,
 			EnableSandboxExec: settings.SandboxExecEnabled,
@@ -129,6 +133,7 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 		GeneratedAttachments:  workflows.GeneratedAttachments,
 		Streams:               streamPublisher,
 		ContextCache:          cacheStore,
+		SharedContextCache:    sharedContextCache,
 		ContextTail:           cacheStore,
 		ContextCompaction:     cacheStore,
 		Locker:                workflows.Locker,
@@ -136,7 +141,12 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 
 	reaper := assistantsandbox.NewReaper(settings.SandboxLifecycle, workflows.Sandboxes, sandboxRuntime, workflows.Locker, logger)
 	attachmentReaper := assistantattachment.NewReaper(settings.AttachmentCleanup, workflows.AttachmentCleanup, artifactStore, logger)
-	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper, attachmentReaper), nil
+	runArtifactReferences, ok := workflows.TurnRuns.(workflow.RunArtifactReferenceStore)
+	if !ok {
+		return nil, fmt.Errorf("turn run repository does not support artifact reference listing")
+	}
+	runArtifactReaper := workflow.NewRunArtifactReaper(settings.RunArtifactCleanup, runArtifactReferences, artifactStore, logger)
+	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper, attachmentReaper, runArtifactReaper, kafkaStreamPublisher, streamRecovery), nil
 }
 
 func buildSandboxRuntime(settings assistantsandbox.RuntimeSettings) (tool.SandboxManager, error) {

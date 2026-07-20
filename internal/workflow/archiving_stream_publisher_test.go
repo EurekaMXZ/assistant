@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -16,35 +15,10 @@ type stubArchiveStreamPublisher struct {
 	err    error
 }
 
-func (s *stubArchiveStreamPublisher) Publish(_ context.Context, event stream.Event) error {
-	s.events = append(s.events, event)
-	return s.err
-}
-
 type stubTurnArtifactStore struct {
 	data   map[string][]byte
 	getErr error
 	putErr error
-}
-
-type stubTurnStreamEventStore struct {
-	conversationID string
-	turnID         string
-	eventType      string
-	payload        []byte
-	eventIndex     int64
-	err            error
-}
-
-func (s *stubTurnStreamEventStore) AppendTurnStreamEvent(_ context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) (*domain.TurnStreamEvent, error) {
-	s.conversationID = conversationID
-	s.turnID = turnID
-	s.eventType = eventType
-	s.payload = append([]byte(nil), payload...)
-	if s.err != nil {
-		return nil, s.err
-	}
-	return &domain.TurnStreamEvent{EventIndex: s.eventIndex}, nil
 }
 
 func (s *stubTurnArtifactStore) PutBytes(_ context.Context, key string, data []byte, _ string) error {
@@ -61,9 +35,6 @@ func (s *stubTurnArtifactStore) PutBytes(_ context.Context, key string, data []b
 func (s *stubTurnArtifactStore) GetBytes(_ context.Context, key string) ([]byte, error) {
 	if s.getErr != nil {
 		return nil, s.getErr
-	}
-	if s.data == nil {
-		return nil, domain.ErrNotFound
 	}
 	value, ok := s.data[key]
 	if !ok {
@@ -88,133 +59,102 @@ func (s *stubTurnArtifactStore) TurnModelContextKey(conversationID, turnID strin
 	return "turn-model-context/" + conversationID + "/" + turnID + ".json"
 }
 
-func TestArchivingStreamPublisherPublishesAndArchivesEvents(t *testing.T) {
+func (s *stubArchiveStreamPublisher) Publish(_ context.Context, event stream.Event) error {
+	s.events = append(s.events, event)
+	return s.err
+}
+
+type stubCompleteEventStore struct {
+	inputs []domain.ConversationEventInput
+	err    error
+}
+
+func (s *stubCompleteEventStore) AppendCompleteEvent(_ context.Context, input domain.ConversationEventInput) (*domain.ConversationEvent, error) {
+	s.inputs = append(s.inputs, input)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &domain.ConversationEvent{EventSeq: int64(len(s.inputs))}, nil
+}
+
+func (s *stubCompleteEventStore) ListContextEvents(context.Context, string, int64, int64) ([]domain.ConversationEvent, error) {
+	return nil, nil
+}
+
+func (s *stubCompleteEventStore) ListConversationEvents(context.Context, string, int, int64, int64) ([]domain.ConversationEvent, error) {
+	return nil, nil
+}
+
+func TestArchivingStreamPublisherForwardsLiveDeltasAndPersistsOnlyCompletedItems(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
-	store := &stubTurnArtifactStore{}
-	events := &stubTurnStreamEventStore{eventIndex: 42}
-	publisher := NewArchivingStreamPublisher(next, store, events)
+	complete := &stubCompleteEventStore{}
+	publisher := NewArchivingStreamPublisher(next, nil, nil, complete)
 
-	event := stream.Event{
-		Type:           stream.EventToolCompleted,
-		ConversationID: "conv-1",
-		TurnID:         "turn-1",
-		ToolName:       "sandbox.exec",
-		Payload:        `{"status":"completed"}`,
+	for _, event := range []stream.Event{
+		{Type: "response.output_text.delta", ConversationID: "conv-1", TurnID: "turn-1", RunID: "run-1", ItemID: "item-1", TransportSeq: 1, Delta: "hel"},
+		{Type: "response.output_text.delta", ConversationID: "conv-1", TurnID: "turn-1", RunID: "run-1", ItemID: "item-1", TransportSeq: 2, Delta: "lo"},
+		{Type: "response.output_text.done", ConversationID: "conv-1", TurnID: "turn-1", RunID: "run-1", ItemID: "item-1"},
+	} {
+		if err := publisher.Publish(t.Context(), event); err != nil {
+			t.Fatalf("publish %s: %v", event.Type, err)
+		}
 	}
-
-	if err := publisher.Publish(context.Background(), event); err != nil {
-		t.Fatalf("publish: %v", err)
+	if len(next.events) != 3 {
+		t.Fatalf("live events = %d, want 3", len(next.events))
 	}
-	if len(next.events) != 1 || next.events[0].Type != stream.EventToolCompleted {
-		t.Fatalf("unexpected forwarded events: %#v", next.events)
+	if len(complete.inputs) != 1 {
+		t.Fatalf("complete events = %d, want 1", len(complete.inputs))
 	}
-	if next.events[0].EventIndex != 42 {
-		t.Fatalf("forwarded event index = %d, want 42", next.events[0].EventIndex)
+	if complete.inputs[0].EventType != domain.ConversationEventOutputTextCompleted || !strings.Contains(string(complete.inputs[0].Payload), `"text":"hello"`) {
+		t.Fatalf("unexpected complete event: %#v", complete.inputs[0])
 	}
-	key := "stream-events/conv-1/turn-1.jsonl"
-	got := string(store.data[key])
-	if !strings.Contains(got, `"type":"tool.completed"`) || !strings.Contains(got, `"tool_name":"sandbox.exec"`) {
-		t.Fatalf("unexpected archived stream payload: %q", got)
-	}
-	if events.conversationID != "conv-1" || events.turnID != "turn-1" || events.eventType != stream.EventToolCompleted {
-		t.Fatalf("unexpected persisted event identity: %#v", events)
-	}
-	if !strings.Contains(string(events.payload), `"type":"tool.completed"`) {
-		t.Fatalf("unexpected persisted event payload: %s", events.payload)
+	if next.events[2].EventIndex != 1 {
+		t.Fatalf("forwarded durable event index = %d, want 1", next.events[2].EventIndex)
 	}
 }
 
-func TestArchivingStreamPublisherAppendsJSONLines(t *testing.T) {
-	store := &stubTurnArtifactStore{}
-	publisher := NewArchivingStreamPublisher(nil, store, nil)
-
-	if err := publisher.Publish(context.Background(), stream.Event{
-		Type:           "response.output_text.delta",
-		ConversationID: "conv-2",
-		TurnID:         "turn-2",
-		Delta:          "he",
+func TestArchivingStreamPublisherFlushesInterruptedTextOnFailure(t *testing.T) {
+	complete := &stubCompleteEventStore{}
+	publisher := NewArchivingStreamPublisher(nil, nil, nil, complete)
+	if err := publisher.Publish(t.Context(), stream.Event{
+		Type: "response.output_text.delta", ConversationID: "conv-2", TurnID: "turn-2", RunID: "run-2", ItemID: "item-2", TransportSeq: 1, Delta: "partial",
 	}); err != nil {
-		t.Fatalf("first publish: %v", err)
+		t.Fatal(err)
 	}
-	if err := publisher.Publish(context.Background(), stream.Event{
-		Type:           stream.EventResponseCompleted,
-		ConversationID: "conv-2",
-		TurnID:         "turn-2",
-		Text:           "hello",
+	if err := publisher.Publish(t.Context(), stream.Event{
+		Type: stream.EventResponseFailed, ConversationID: "conv-2", TurnID: "turn-2", RunID: "run-2",
 	}); err != nil {
-		t.Fatalf("second publish: %v", err)
+		t.Fatal(err)
 	}
-
-	got := string(store.data["stream-events/conv-2/turn-2.jsonl"])
-	if lines := strings.Count(got, "\n"); lines != 2 {
-		t.Fatalf("expected two jsonl lines, got %d in %q", lines, got)
-	}
-	if !strings.Contains(got, `"type":"response.output_text.delta"`) || !strings.Contains(got, `"type":"response.completed"`) {
-		t.Fatalf("unexpected jsonl archive: %q", got)
+	if len(complete.inputs) != 2 || complete.inputs[0].EventType != domain.ConversationEventOutputTextInterrupted || complete.inputs[1].EventType != domain.ConversationEventRunFailed {
+		t.Fatalf("unexpected interrupted events: %#v", complete.inputs)
 	}
 }
 
-func TestArchivingStreamPublisherSkipsArchiveWhenTurnIdentityMissing(t *testing.T) {
+func TestArchivingStreamPublisherReturnsCompleteStoreErrorsWithoutSkippingLivePublish(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
-	store := &stubTurnArtifactStore{}
-	events := &stubTurnStreamEventStore{}
-	publisher := NewArchivingStreamPublisher(next, store, events)
+	complete := &stubCompleteEventStore{err: errors.New("postgres down")}
+	publisher := NewArchivingStreamPublisher(next, nil, nil, complete)
 
-	if err := publisher.Publish(context.Background(), stream.Event{
-		Type:       stream.EventResponseStarted,
-		ResponseID: "resp-1",
-	}); err != nil {
-		t.Fatalf("publish: %v", err)
+	err := publisher.Publish(t.Context(), stream.Event{
+		Type: "response.output_text.done", ConversationID: "conv-3", TurnID: "turn-3", RunID: "run-3", ItemID: "item-3", Text: "done",
+	})
+	if err == nil || !strings.Contains(err.Error(), "persist complete stream event") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(next.events) != 1 {
-		t.Fatalf("expected event to be forwarded, got %#v", next.events)
-	}
-	if len(store.data) != 0 {
-		t.Fatalf("expected archive to be skipped, got %#v", store.data)
-	}
-	if len(events.payload) != 0 {
-		t.Fatalf("expected event store persistence to be skipped, got %#v", events)
+		t.Fatalf("live events = %d, want 1", len(next.events))
 	}
 }
 
-func TestArchivingStreamPublisherReturnsArchiveErrorsWithoutSkippingLivePublish(t *testing.T) {
+func TestArchivingStreamPublisherSkipsAccumulatorWithoutTurnIdentity(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
-	store := &stubTurnArtifactStore{putErr: errors.New("minio down")}
-	publisher := NewArchivingStreamPublisher(next, store, nil)
-
-	err := publisher.Publish(context.Background(), stream.Event{
-		Type:           stream.EventResponseFailed,
-		ConversationID: "conv-3",
-		TurnID:         "turn-3",
-		Error:          "boom",
-	})
-	if err == nil || !strings.Contains(err.Error(), "persist stream archive") {
-		t.Fatalf("unexpected error: %v", err)
+	complete := &stubCompleteEventStore{}
+	publisher := NewArchivingStreamPublisher(next, nil, nil, complete)
+	if err := publisher.Publish(t.Context(), stream.Event{Type: "response.output_text.done", Text: "done"}); err != nil {
+		t.Fatal(err)
 	}
-	if len(next.events) != 1 || next.events[0].Type != stream.EventResponseFailed {
-		t.Fatalf("expected live publish to still happen, got %#v", next.events)
-	}
-}
-
-func TestArchivingStreamPublisherReturnsEventStoreErrorsWithoutSkippingLivePublish(t *testing.T) {
-	next := &stubArchiveStreamPublisher{}
-	store := &stubTurnArtifactStore{}
-	events := &stubTurnStreamEventStore{err: errors.New("postgres down")}
-	publisher := NewArchivingStreamPublisher(next, store, events)
-
-	err := publisher.Publish(context.Background(), stream.Event{
-		Type:           stream.EventResponseCompleted,
-		ConversationID: "conv-4",
-		TurnID:         "turn-4",
-		Text:           "done",
-	})
-	if err == nil || !strings.Contains(err.Error(), "persist turn stream event") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(next.events) != 1 || next.events[0].Type != stream.EventResponseCompleted {
-		t.Fatalf("expected live publish to still happen, got %#v", next.events)
-	}
-	if got := string(store.data["stream-events/conv-4/turn-4.jsonl"]); !strings.Contains(got, `"type":"response.completed"`) {
-		t.Fatalf("expected archive to still be written, got %q", got)
+	if len(next.events) != 1 || len(complete.inputs) != 0 {
+		t.Fatalf("unexpected publish state: live=%d complete=%d", len(next.events), len(complete.inputs))
 	}
 }

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -42,6 +43,22 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 			return nil, nil, nil, false, err
 		}
 		assistantMessages = append(assistantMessages, *assistantMessage)
+		payload, err := json.Marshal(map[string]any{"message": assistantMessage})
+		if err != nil {
+			return nil, nil, nil, false, fmt.Errorf("marshal assistant complete event: %w", err)
+		}
+		if err := insertCompleteEvent(ctx, tx, head, domain.ConversationEventInput{
+			ConversationID:  turn.ConversationID,
+			TurnID:          turn.ID,
+			TurnRunID:       summary.RunID,
+			EventKey:        "message:" + assistantMessage.ID,
+			SchemaVersion:   1,
+			EventType:       "message.completed",
+			Payload:         payload,
+			ContextIncluded: true,
+		}); err != nil {
+			return nil, nil, nil, false, err
+		}
 	}
 
 	mergedMetadata, err := buildTurnRunMetadata(turn.Metadata, summary)
@@ -53,9 +70,20 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
+	turnPayload, err := json.Marshal(map[string]any{"turn": turn})
+	if err != nil {
+		return nil, nil, nil, false, fmt.Errorf("marshal turn completion event: %w", err)
+	}
+	if err := insertCompleteEvent(ctx, tx, head, domain.ConversationEventInput{
+		ConversationID: turn.ConversationID, TurnID: turn.ID, TurnRunID: summary.RunID,
+		EventKey: "turn:" + turn.ID + ":completed", SchemaVersion: 1,
+		EventType: domain.ConversationEventTurnCompleted, Payload: turnPayload, ContextIncluded: false,
+	}); err != nil {
+		return nil, nil, nil, false, err
+	}
 
 	activeTokens := activeContextTokensAfterTurn(head, turn, summary, assistantTokens, replacedTokens, selectedUserTokens)
-	head, err = updateContextHeadAfterAssistant(ctx, tx, turn.ConversationID, assistantSeq, activeTokens)
+	head, err = updateContextHeadAfterAssistant(ctx, tx, turn.ConversationID, assistantSeq, activeTokens, summary)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}

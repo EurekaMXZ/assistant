@@ -63,11 +63,68 @@ func billableImageGenerationCount(result *llm.ModelResult) int {
 	}
 	count := 0
 	for _, item := range result.OutputItems {
-		if item.Type == llm.ModelItemImageGenerationCall && strings.TrimSpace(item.Result) != "" {
+		if item.Type == llm.ModelItemImageGenerationCall && (strings.TrimSpace(item.Result) != "" || strings.Contains(string(item.Raw), `"result_ref"`)) {
 			count++
 		}
 	}
 	return count
+}
+
+func (r *TurnRunner) externalizeGeneratedImages(ctx context.Context, turn *domain.Turn, outcome *ScheduledRunOutcome) error {
+	if outcome == nil || outcome.Model == nil {
+		return nil
+	}
+	for index, item := range outcome.Model.OutputItems {
+		if item.Type != llm.ModelItemImageGenerationCall || strings.TrimSpace(item.Result) == "" {
+			continue
+		}
+		draft, err := r.generatedImageDrafts(ctx, turn, &llm.ModelResult{ResponseID: outcome.Model.ResponseID, OutputItems: []llm.ModelItem{item}})
+		if err != nil {
+			return err
+		}
+		outcome.GeneratedImageDrafts = append(outcome.GeneratedImageDrafts, draft...)
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(item.Result))
+		if err != nil {
+			return err
+		}
+		format, contentType := detectGeneratedImageFormat(data)
+		objectKey := generatedImageObjectKey(turn.ConversationID, turn.ID, generatedImageItemID(item, 0), format)
+		ref := modelImageReference{
+			AttachmentID: uuid.NewSHA1(uuid.NameSpaceURL, []byte(objectKey)).String(),
+			ObjectKey:    objectKey, ContentType: contentType, SizeBytes: int64(len(data)), SHA256: generatedImageSHA256(data),
+		}
+		referenced, err := generatedImageReferenceItem(item, ref)
+		if err != nil {
+			return err
+		}
+		outcome.Model.OutputItems[index] = referenced
+		replaceGeneratedImageItem(outcome.ContextItems, item.ID, referenced)
+		if outcome.NextState != nil {
+			replaceGeneratedImageItem(outcome.NextState.Request.Input, item.ID, referenced)
+		}
+	}
+	return nil
+}
+
+func generatedImageReferenceItem(item llm.ModelItem, ref modelImageReference) (llm.ModelItem, error) {
+	raw, err := json.Marshal(map[string]any{
+		"id": item.ID, "type": item.Type, "status": item.Status,
+		"revised_prompt": item.RevisedPrompt, "result_ref": ref,
+	})
+	if err != nil {
+		return item, fmt.Errorf("marshal generated image reference: %w", err)
+	}
+	item.Result = ""
+	item.Raw = raw
+	return item, nil
+}
+
+func replaceGeneratedImageItem(items []llm.ModelItem, itemID string, replacement llm.ModelItem) {
+	for index := range items {
+		if items[index].Type == llm.ModelItemImageGenerationCall && items[index].ID == itemID {
+			items[index] = replacement
+		}
+	}
 }
 
 func (r *TurnRunner) generatedImageDraft(ctx context.Context, turn *domain.Turn, responseID string, ownerUserID string, item llm.ModelItem, outputIndex int) (domain.AssistantMessageDraft, error) {

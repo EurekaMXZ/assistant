@@ -40,6 +40,7 @@ type workerSettings struct {
 	SandboxLifecycle      assistantsandbox.LifecycleSettings
 	ObjectStore           objectstore.Settings
 	AttachmentCleanup     assistantattachment.CleanupSettings
+	RunArtifactCleanup    workflow.RunArtifactReaperSettings
 	Kafka                 assistantkafka.Settings
 	KafkaReader           assistantkafka.ReaderSettings
 	Workflow              workflow.WorkflowSettings
@@ -103,9 +104,15 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			Interval:   cfg.S3UploadReaperInterval,
 			BatchSize:  cfg.S3UploadReaperBatchSize,
 		},
+		RunArtifactCleanup: workflow.RunArtifactReaperSettings{
+			SafetyInterval: cfg.S3PendingUploadTTL,
+			Interval:       cfg.S3UploadReaperInterval,
+			BatchSize:      cfg.S3UploadReaperBatchSize,
+		},
 		Kafka: assistantkafka.Settings{
 			Brokers:       cfg.KafkaBrokers,
 			WorkflowTopic: cfg.KafkaWorkflowTopic,
+			StreamTopic:   cfg.KafkaStreamTopic,
 		},
 		KafkaReader: assistantkafka.ReaderSettings{
 			Brokers:       cfg.KafkaBrokers,

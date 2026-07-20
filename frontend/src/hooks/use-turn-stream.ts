@@ -22,6 +22,7 @@ export interface TurnStreamLifecycle {
   streamingTurnId: string | null;
   streamConnectionState: TurnStreamConnectionState | "idle";
   streamTurn: (turnId: string, streamPath?: string) => Promise<void>;
+  stopStream: () => void;
 }
 
 export function useTurnStream({
@@ -82,7 +83,7 @@ export function useTurnStream({
         });
         if (result.kind === "terminal") {
           completed = result.done.status === "completed";
-          if (!completed) {
+          if (!completed && result.done.status !== "cancelled") {
             toast.error(result.done.error || "生成失败");
           }
         } else {
@@ -114,10 +115,15 @@ export function useTurnStream({
     [conversationId, onCompleted, onEvent, onFinished],
   );
 
+  const stopStream = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
   return {
     isStreaming,
     streamingTurnId,
     streamConnectionState,
     streamTurn,
+    stopStream,
   };
 }

@@ -10,6 +10,7 @@ import {
   FileText,
   ImageIcon,
   Loader2,
+  Square,
   Upload,
   X,
 } from "lucide-react";
@@ -52,8 +53,10 @@ interface ComposerShellProps {
   onModelReasoningEffortChange?: (modelId: string, effort: ReasoningEffort | "") => void;
   onRemoveAttachment?: (key: string) => void;
   onSubmit: () => void;
+  onCancel?: () => void;
   placeholder: string;
   reasoningEfforts: Record<string, ReasoningEffort>;
+  streaming?: boolean;
   value: string;
 }
 
@@ -310,8 +313,10 @@ export function ComposerShell({
   onModelReasoningEffortChange,
   onRemoveAttachment,
   onSubmit,
+  onCancel,
   placeholder,
   reasoningEfforts,
+  streaming,
   value,
 }: ComposerShellProps) {
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
@@ -450,13 +455,21 @@ export function ComposerShell({
 
       <Button
         size="icon"
-        onClick={onSubmit}
-        disabled={(!allowEmpty && !value.trim() && !hasReadyAttachment) || inactive}
+        onClick={streaming ? onCancel : onSubmit}
+        disabled={
+          streaming ? !onCancel : (!allowEmpty && !value.trim() && !hasReadyAttachment) || inactive
+        }
         className="absolute rounded-full"
         style={{ right: 12, bottom: 10 }}
       >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
-        <span className="sr-only">发送</span>
+        {streaming ? (
+          <Square className="h-3.5 w-3.5 fill-current" />
+        ) : busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <ArrowUp className="h-4 w-4" />
+        )}
+        <span className="sr-only">{streaming ? "停止生成" : "发送"}</span>
       </Button>
     </div>
   );

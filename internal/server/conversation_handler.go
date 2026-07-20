@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -204,6 +205,61 @@ func (a *API) handleListMessages(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"messages": nonNilSlice(messages)})
+}
+
+func (a *API) handleListConversationEvents(c *gin.Context) {
+	parseSequence := func(name string) (int64, error) {
+		value := strings.TrimSpace(c.Query(name))
+		if value == "" {
+			return 0, nil
+		}
+		sequence, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || sequence < 0 {
+			return 0, domain.NewValidationError(name + " must be a non-negative decimal sequence")
+		}
+		return sequence, nil
+	}
+	beforeSeq, err := parseSequence("before")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	afterSeq, err := parseSequence("after")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	page, err := a.useCases.Conversations.ListConversationEvents(
+		c.Request.Context(), currentUser(c).ID, c.Param("conversationID"), parseLimit(c, 100, 1000), beforeSeq, afterSeq,
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	events := make([]gin.H, 0, len(page.Items))
+	for _, event := range page.Items {
+		events = append(events, gin.H{
+			"id":               event.ID,
+			"conversation_id":  event.ConversationID,
+			"turn_id":          event.TurnID,
+			"turn_run_id":      event.TurnRunID,
+			"event_seq":        strconv.FormatInt(event.EventSeq, 10),
+			"event_key":        event.EventKey,
+			"schema_version":   event.SchemaVersion,
+			"event_type":       event.EventType,
+			"payload":          json.RawMessage(event.Payload),
+			"context_included": event.ContextIncluded,
+			"created_at":       event.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"events":          nonNilSlice(events),
+		"next_before":     page.NextBefore,
+		"next_after":      page.NextAfter,
+		"has_more_before": page.HasMoreBefore,
+		"has_more_after":  page.HasMoreAfter,
+	})
 }
 
 func (a *API) handleCreateMessage(c *gin.Context) {

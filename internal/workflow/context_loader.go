@@ -3,9 +3,6 @@ package workflow
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,8 +16,10 @@ import (
 
 type ContextLoader struct {
 	store           WorkflowContextRepository
+	completeEvents  CompleteEventStore
 	blobs           ContextAnchorStore
 	cache           cache.ContextSnapshotCache
+	sharedCache     cache.SharedContextSnapshotCache
 	modelContexts   TurnArtifactStore
 	attachments     AttachmentStore
 	attachmentBlobs AttachmentBlobStore
@@ -32,7 +31,10 @@ func (l *ContextLoader) EnsureHotContext(ctx context.Context, conversationID str
 		return nil, nil, err
 	}
 
-	if cached, ok := l.cache.Get(conversationID); ok {
+	if cached, ok := l.getLocalSnapshot(conversationID, head.Version); ok {
+		if contextSnapshotMatchesHead(cached, head) && cached.ModelInputReady {
+			return cached, head, nil
+		}
 		if cached.AnchorGeneration == head.AnchorGeneration &&
 			cached.RawTailStartSeq == head.RawTailStartSeq &&
 			cached.LastSeq == head.LastSeq &&
@@ -41,8 +43,28 @@ func (l *ContextLoader) EnsureHotContext(ctx context.Context, conversationID str
 			if err := l.loadConversationModelInput(ctx, conversationID, cached); err != nil {
 				return nil, nil, err
 			}
+			l.putLocalSnapshot(conversationID, head.Version, cached)
+			if l.sharedCache != nil {
+				_ = l.sharedCache.PutContextSnapshot(ctx, cached)
+			}
 			return cached, head, nil
 		}
+	}
+	if l.sharedCache != nil {
+		cached, found, sharedErr := l.sharedCache.GetContextSnapshot(ctx, conversationID, head.Version)
+		if sharedErr == nil && found && contextSnapshotMatchesHead(cached, head) {
+			l.putLocalSnapshot(conversationID, head.Version, cached)
+			return cached, head, nil
+		}
+	}
+	if checkpointSnapshot, found, checkpointErr := l.loadCheckpointSnapshot(ctx, conversationID, head); checkpointErr != nil {
+		return nil, nil, checkpointErr
+	} else if found {
+		l.putLocalSnapshot(conversationID, head.Version, checkpointSnapshot)
+		if l.sharedCache != nil {
+			_ = l.sharedCache.PutContextSnapshot(ctx, checkpointSnapshot)
+		}
+		return checkpointSnapshot, head, nil
 	}
 
 	var anchor *cache.ContextAnchor
@@ -71,20 +93,30 @@ func (l *ContextLoader) EnsureHotContext(ctx context.Context, conversationID str
 	}
 
 	entry := &cache.ContextSnapshot{
-		Anchor:            anchor,
-		AnchorGeneration:  head.AnchorGeneration,
-		CoveredUntilSeq:   head.CoveredUntilSeq,
-		RawTailStartSeq:   head.RawTailStartSeq,
-		LastSeq:           head.LastSeq,
-		ActiveTokens:      head.ActiveContextTokens,
-		TailCacheStartSeq: tailCacheStartSeq(head, tail),
-		TailCacheEndSeq:   tailCacheEndSeq(head, tail),
-		Tail:              tail,
-		UpdatedAt:         time.Now(),
+		ConversationID:        conversationID,
+		Version:               head.Version,
+		SchemaVersion:         head.ContextSchemaVersion,
+		CoveredEventSeq:       head.LastContextEventSeq,
+		LatestCheckpointKey:   head.LatestCheckpointKey,
+		LatestSuccessfulRunID: head.LatestSuccessfulRunID,
+		CreatedAt:             time.Now().UTC(),
+		Anchor:                anchor,
+		AnchorGeneration:      head.AnchorGeneration,
+		CoveredUntilSeq:       head.CoveredUntilSeq,
+		RawTailStartSeq:       head.RawTailStartSeq,
+		LastSeq:               head.LastSeq,
+		ActiveTokens:          head.ActiveContextTokens,
+		TailCacheStartSeq:     tailCacheStartSeq(head, tail),
+		TailCacheEndSeq:       tailCacheEndSeq(head, tail),
+		Tail:                  tail,
+		UpdatedAt:             time.Now(),
 	}
-	l.cache.Put(conversationID, entry)
 	if err := l.loadConversationModelInput(ctx, conversationID, entry); err != nil {
 		return nil, nil, err
+	}
+	l.putLocalSnapshot(conversationID, head.Version, entry)
+	if l.sharedCache != nil {
+		_ = l.sharedCache.PutContextSnapshot(ctx, entry)
 	}
 
 	return entry, head, nil
@@ -130,6 +162,9 @@ func buildTextConversationHistoryInput(hot *cache.ContextSnapshot) []llm.ModelIt
 
 func (l *ContextLoader) loadConversationModelInput(ctx context.Context, conversationID string, hot *cache.ContextSnapshot) error {
 	if hot == nil {
+		return nil
+	}
+	if hot.ModelInputReady {
 		return nil
 	}
 
@@ -189,7 +224,41 @@ func (l *ContextLoader) loadConversationModelInput(ctx context.Context, conversa
 	}
 
 	hot.ModelInput = input
+	hot.ModelInputReady = true
 	return nil
+}
+
+func (l *ContextLoader) getLocalSnapshot(conversationID string, version int64) (*cache.ContextSnapshot, bool) {
+	if l == nil || l.cache == nil {
+		return nil, false
+	}
+	if versioned, ok := l.cache.(cache.VersionedContextSnapshotCache); ok {
+		return versioned.GetVersion(conversationID, version)
+	}
+	return l.cache.Get(conversationID)
+}
+
+func (l *ContextLoader) putLocalSnapshot(conversationID string, version int64, snapshot *cache.ContextSnapshot) {
+	if l == nil || l.cache == nil || snapshot == nil {
+		return
+	}
+	if versioned, ok := l.cache.(cache.VersionedContextSnapshotCache); ok {
+		versioned.PutVersion(conversationID, version, snapshot)
+		return
+	}
+	l.cache.Put(conversationID, snapshot)
+}
+
+func contextSnapshotMatchesHead(snapshot *cache.ContextSnapshot, head *domain.ContextHead) bool {
+	if snapshot == nil || head == nil {
+		return false
+	}
+	return snapshot.ConversationID == head.ConversationID &&
+		snapshot.Version == head.Version &&
+		snapshot.CoveredEventSeq == head.LastContextEventSeq &&
+		snapshot.LatestCheckpointKey == head.LatestCheckpointKey &&
+		snapshot.LatestSuccessfulRunID == head.LatestSuccessfulRunID &&
+		(snapshot.SchemaVersion == head.ContextSchemaVersion || head.ContextSchemaVersion == 0)
 }
 
 func (l *ContextLoader) modelInputItemsForMessage(ctx context.Context, conversationID string, message domain.Message) ([]llm.ModelItem, error) {
@@ -249,7 +318,7 @@ func (l *ContextLoader) userMessageInputItems(ctx context.Context, conversationI
 		return nil, false, err
 	}
 
-	content := make([]map[string]string, 0, len(attachments)+2)
+	content := make([]any, 0, len(attachments)+2)
 	if text := strings.TrimSpace(message.ContentText); text != "" {
 		content = append(content, map[string]string{
 			"type": "input_text",
@@ -291,33 +360,22 @@ func (l *ContextLoader) userMessageInputItems(ctx context.Context, conversationI
 	}}, true, nil
 }
 
-func (l *ContextLoader) attachmentContentPart(ctx context.Context, attachment domain.Attachment) (map[string]string, string, error) {
+func (l *ContextLoader) attachmentContentPart(_ context.Context, attachment domain.Attachment) (map[string]any, string, error) {
 	if attachment.Category != domain.AttachmentCategoryImage {
 		return nil, attachment.Filename, nil
 	}
 	if !isSupportedModelImageType(attachment.ContentType) {
 		return nil, attachment.Filename, nil
 	}
-	if l == nil || l.attachmentBlobs == nil {
-		return nil, "", fmt.Errorf("load image attachment %s: attachment blob store is not configured", attachment.ID)
-	}
-
-	data, err := l.attachmentBlobs.GetBytes(ctx, attachment.ObjectKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("load image attachment %s: %w", attachment.ID, err)
-	}
-	if attachment.SizeBytes > 0 && int64(len(data)) != attachment.SizeBytes {
-		return nil, "", fmt.Errorf("load image attachment %s: size mismatch", attachment.ID)
-	}
-	if expected := strings.TrimSpace(attachment.SHA256); expected != "" {
-		digest := sha256.Sum256(data)
-		if !strings.EqualFold(expected, hex.EncodeToString(digest[:])) {
-			return nil, "", fmt.Errorf("load image attachment %s: checksum mismatch", attachment.ID)
-		}
-	}
-	return map[string]string{
-		"type":      "input_image",
-		"image_url": "data:" + attachment.ContentType + ";base64," + base64.StdEncoding.EncodeToString(data),
+	return map[string]any{
+		"type": "input_image",
+		"image_ref": modelImageReference{
+			AttachmentID: attachment.ID,
+			ObjectKey:    attachment.ObjectKey,
+			ContentType:  attachment.ContentType,
+			SizeBytes:    attachment.SizeBytes,
+			SHA256:       attachment.SHA256,
+		},
 	}, "", nil
 }
 

@@ -604,6 +604,7 @@ func (o *ToolOrchestrator) publishToolCompleted(ctx context.Context, scope tool.
 		Type:           stream.EventToolCompleted,
 		ConversationID: scope.ConversationID,
 		TurnID:         scope.TurnID,
+		RunID:          recordTurnRunID(record),
 		ToolName:       describeToolCall(call),
 		Payload:        toolEventPayload(record, call, stream.ToolEventStatusCompleted, payload, ""),
 	})
@@ -617,6 +618,7 @@ func (o *ToolOrchestrator) publishToolFailed(ctx context.Context, scope tool.Too
 		Type:           stream.EventToolFailed,
 		ConversationID: scope.ConversationID,
 		TurnID:         scope.TurnID,
+		RunID:          recordTurnRunID(record),
 		ToolName:       describeToolCall(call),
 		Payload:        toolEventPayload(record, call, stream.ToolEventStatusFailed, payload, message),
 		Error:          strings.TrimSpace(message),
@@ -667,6 +669,7 @@ func (o *ToolOrchestrator) publishReasoningSummary(ctx context.Context, scope to
 		Type:           stream.EventReasoningSummary,
 		ConversationID: scope.ConversationID,
 		TurnID:         scope.TurnID,
+		RunID:          recordIDFromRun(run),
 		ResponseID:     result.ResponseID,
 		Payload:        string(raw),
 	})
@@ -680,6 +683,7 @@ func (o *ToolOrchestrator) publishToolStarted(ctx context.Context, scope tool.To
 		Type:           stream.EventToolStarted,
 		ConversationID: scope.ConversationID,
 		TurnID:         scope.TurnID,
+		RunID:          recordTurnRunID(record),
 		ToolName:       describeToolCall(call),
 		Payload:        toolEventPayload(record, call, stream.ToolEventStatusStarted, nil, ""),
 	})

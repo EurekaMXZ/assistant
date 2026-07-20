@@ -310,7 +310,36 @@ export interface Message {
   created_at: string;
 }
 
-export type TurnStatus = "accepted" | "context_ready" | "processing" | "completed" | "failed";
+export interface ConversationEvent {
+  id: string;
+  conversation_id: string;
+  turn_id?: string;
+  turn_run_id?: string;
+  event_seq: string;
+  event_key: string;
+  schema_version: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  context_included: boolean;
+  created_at: string;
+}
+
+export interface ConversationEventPage {
+  events: ConversationEvent[];
+  next_before?: string;
+  next_after?: string;
+  has_more_before: boolean;
+  has_more_after: boolean;
+}
+
+export type TurnStatus =
+  | "accepted"
+  | "context_ready"
+  | "processing"
+  | "cancel_requested"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface Turn {
   id: string;

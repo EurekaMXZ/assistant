@@ -96,6 +96,14 @@ type PageResult[T any] struct {
 	NextCursor string
 }
 
+type ConversationEventPage struct {
+	Items         []domain.ConversationEvent
+	NextBefore    string
+	NextAfter     string
+	HasMoreBefore bool
+	HasMoreAfter  bool
+}
+
 type CreateProviderCredentialInput struct {
 	Provider string
 	Name     string
@@ -268,6 +276,7 @@ type ConversationUseCases struct {
 	RetryTurn               func(ctx context.Context, ownerUserID string, sourceTurnID string) (*domain.EnqueuedRetryTurn, error)
 	EditTurn                func(ctx context.Context, ownerUserID string, sourceTurnID string, content string) (*domain.EnqueuedRetryTurn, error)
 	ListMessages            func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error)
+	ListConversationEvents  func(ctx context.Context, ownerUserID string, conversationID string, limit int, beforeSeq int64, afterSeq int64) (*ConversationEventPage, error)
 }
 
 type AttachmentUseCases struct {
@@ -290,9 +299,10 @@ type SandboxUseCases struct {
 }
 
 type TurnUseCases struct {
-	GetTurn               func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error)
-	GetTurnExecutionTrace func(ctx context.Context, ownerUserID string, turnID string) (*TurnExecutionTrace, error)
-	GetTurnTimeline       func(ctx context.Context, ownerUserID string, turnID string) (*TurnTimeline, error)
+	GetTurn                 func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error)
+	RequestTurnCancellation func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error)
+	GetTurnExecutionTrace   func(ctx context.Context, ownerUserID string, turnID string) (*TurnExecutionTrace, error)
+	GetTurnTimeline         func(ctx context.Context, ownerUserID string, turnID string) (*TurnTimeline, error)
 }
 
 type ModelUseCases struct {

@@ -132,12 +132,28 @@ func createUserTurn(ctx context.Context, tx pgx.Tx, params CreateUserTurnParams)
 	if err != nil {
 		return nil, fmt.Errorf("insert user message: %w", err)
 	}
+	messagePayload, err := json.Marshal(map[string]any{"message": message, "turn": turn})
+	if err != nil {
+		return nil, fmt.Errorf("marshal user complete event: %w", err)
+	}
+	if err := insertCompleteEvent(ctx, tx, head, domain.ConversationEventInput{
+		ConversationID:  params.ConversationID,
+		TurnID:          turn.ID,
+		EventKey:        "message:" + message.ID,
+		SchemaVersion:   1,
+		EventType:       "message.completed",
+		Payload:         messagePayload,
+		ContextIncluded: true,
+	}); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE context_heads
 		SET
 			last_seq = $2,
-			active_context_tokens = active_context_tokens + $3
+			active_context_tokens = active_context_tokens + $3,
+			version = version + 1
 		WHERE conversation_id = $1::uuid
 	`, params.ConversationID, nextSeq, tokenCount); err != nil {
 		return nil, fmt.Errorf("update context head: %w", err)
@@ -332,6 +348,21 @@ func (r *TurnRepository) CreateRetryTurn(ctx context.Context, sourceTurnID strin
 	`, root.ConversationID, turn.ID, nextSeq, domain.RoleUser, nullableText(trimmedContent), tokenCount, normalizedJSON(params.Metadata)))
 	if err != nil {
 		return nil, fmt.Errorf("insert retry user message: %w", err)
+	}
+	messagePayload, err := json.Marshal(map[string]any{"message": message, "turn": turn})
+	if err != nil {
+		return nil, fmt.Errorf("marshal retry user complete event: %w", err)
+	}
+	if err := insertCompleteEvent(ctx, tx, head, domain.ConversationEventInput{
+		ConversationID:  root.ConversationID,
+		TurnID:          turn.ID,
+		EventKey:        "message:" + message.ID,
+		SchemaVersion:   1,
+		EventType:       "message.completed",
+		Payload:         messagePayload,
+		ContextIncluded: false,
+	}); err != nil {
+		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE context_heads SET last_seq = $2 WHERE conversation_id = $1::uuid

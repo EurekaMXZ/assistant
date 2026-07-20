@@ -2,16 +2,21 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { Message, Turn } from "@/lib/types";
 import { shouldFollowAfterScroll } from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
+import { ChevronUp, Loader2 } from "lucide-react";
 
 interface MessageListProps {
   activityLabels?: Record<string, string | null>;
   dimmed?: boolean;
+  hasOlderMessages?: boolean;
+  loadingOlderMessages?: boolean;
   messages: Message[];
   onEditMessage: (message: Message) => void;
+  onLoadOlderMessages?: () => Promise<void>;
   onOpenTimeline: (turnId: string) => void;
   onRetryMessage: (message: Message) => void;
   streamingTurnId?: string | null;
@@ -82,8 +87,11 @@ export function groupMessageEntries(messages: Message[], turnsById: Record<strin
 export function MessageList({
   activityLabels,
   dimmed,
+  hasOlderMessages = false,
+  loadingOlderMessages = false,
   messages,
   onEditMessage,
+  onLoadOlderMessages,
   onOpenTimeline,
   onRetryMessage,
   streamingTurnId,
@@ -170,6 +178,20 @@ export function MessageList({
 
   const entries = groupMessageEntries(messages, turnsById);
   const retryableRootTurnId = entries.findLast((entry) => entry.kind === "turn")?.rootTurnId;
+  const loadOlderMessages = async () => {
+    const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    const previousHeight = viewport?.scrollHeight || 0;
+    const previousTop = viewport?.scrollTop || 0;
+    shouldFollowRef.current = false;
+    await onLoadOlderMessages?.();
+    requestAnimationFrame(() => {
+      if (!viewport) return;
+      viewport.scrollTop = previousTop + viewport.scrollHeight - previousHeight;
+      lastScrollTopRef.current = viewport.scrollTop;
+    });
+  };
 
   return (
     <div
@@ -181,6 +203,24 @@ export function MessageList({
     >
       <ScrollArea className="h-full">
         <div className="mx-auto min-w-0 w-full max-w-2xl px-4 pt-4 pb-52 sm:px-6">
+          {hasOlderMessages ? (
+            <div className="mb-4 flex justify-center">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={loadingOlderMessages}
+                onClick={() => void loadOlderMessages()}
+              >
+                {loadingOlderMessages ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <ChevronUp className="size-4" />
+                )}
+                更早消息
+              </Button>
+            </div>
+          ) : null}
           {messages.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               发送第一条消息开始对话
