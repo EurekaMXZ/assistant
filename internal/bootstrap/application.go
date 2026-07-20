@@ -107,6 +107,9 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Repo:   attachmentRepository,
 		Signer: attachmentSigner,
 	}
+	if objectDeleter, ok := attachmentSigner.(assistantattachment.ObjectDeleter); ok {
+		attachmentService.Objects = objectDeleter
+	}
 
 	ensureOwnedConversation := func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error) {
 		return conversationRepository.GetConversationByOwner(ctx, conversationID, ownerUserID)
@@ -158,6 +161,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 			CreateManagedUser:    authService.CreateManagedUser,
 			UpdateManagedUser:    authService.UpdateManagedUser,
 			ResetManagedPassword: authService.ResetManagedPassword,
+			DeleteManagedUser:    authService.DeleteManagedUser,
 		},
 		Conversations: server.ConversationUseCases{
 			CreateConversation: conversationRepository.CreateConversation,
@@ -184,15 +188,27 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 					Archived:       input.Archived,
 				})
 			},
-			SendMessage: messageService.SendMessage,
-			RetryTurn:   messageService.RetryTurn,
-			EditTurn:    messageService.EditTurn,
+			DeleteConversation: conversationRepository.DeleteConversation,
+			SendMessage:        messageService.SendMessage,
+			RetryTurn:          messageService.RetryTurn,
+			EditTurn:           messageService.EditTurn,
 			ListMessages: func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
 					return nil, err
 				}
 				return messageRepository.ListMessages(ctx, conversationID, limit)
 			},
+		},
+		Storage: server.StorageUseCases{
+			GetStorageUsage: attachmentService.GetStorageUsage,
+			ListStorageAttachments: func(ctx context.Context, userID string, limit int, cursor string) (*server.PageResult[domain.StorageAttachment], error) {
+				items, next, err := attachmentService.ListStorageAttachments(ctx, userID, limit, cursor)
+				if err != nil {
+					return nil, err
+				}
+				return &server.PageResult[domain.StorageAttachment]{Items: items, NextCursor: next}, nil
+			},
+			DeleteAttachment: attachmentService.DeleteStorageAttachment,
 		},
 		Attachments: server.AttachmentUseCases{
 			CreateConversationAttachmentUpload: func(ctx context.Context, ownerUserID string, conversationID string, input server.CreateConversationAttachmentUploadInput) (*server.ConversationAttachmentUpload, error) {

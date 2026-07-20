@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { isSessionUnauthorizedError, listConversations, patchConversation } from "@/lib/api";
+import {
+  deleteConversation,
+  isSessionUnauthorizedError,
+  listConversations,
+  patchConversation,
+} from "@/lib/api";
 import { emitConversationUpdated, subscribeConversationUpdated } from "@/lib/conversation-events";
 import type { Conversation, User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -20,7 +25,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SidebarConversationList } from "@/components/layout/sidebar-conversation-list";
 import { SidebarSearchDialog } from "@/components/layout/sidebar-search-dialog";
 import { SidebarUserPanel } from "@/components/layout/sidebar-user-panel";
-import { PanelLeft, Search, StickyNotePlus } from "lucide-react";
+import { HardDrive, PanelLeft, Search, StickyNotePlus } from "lucide-react";
 import { toast } from "sonner";
 import type { SettingsSection } from "@/lib/settings-hash";
 import { cn } from "@/lib/utils";
@@ -31,6 +36,7 @@ interface SidebarProps {
   authLoading?: boolean;
   collapsed?: boolean;
   currentConversationId?: string | null;
+  storageActive?: boolean;
   user: User | null;
   onNavigate?: () => void;
   onLogout: () => void;
@@ -44,6 +50,7 @@ export function Sidebar({
   authLoading = false,
   collapsed = false,
   currentConversationId,
+  storageActive = false,
   user,
   onNavigate,
   onLogout,
@@ -56,6 +63,9 @@ export function Sidebar({
   const [isLoading, setIsLoading] = useState(true);
   const [renameConversation, setRenameConversation] = useState<Conversation | null>(null);
   const [archiveConversation, setArchiveConversation] = useState<Conversation | null>(null);
+  const [deleteConversationTarget, setDeleteConversationTarget] = useState<Conversation | null>(
+    null,
+  );
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [newTitle, setNewTitle] = useState("");
@@ -269,6 +279,33 @@ export function Sidebar({
     }
   };
 
+  const handleDelete = async () => {
+    if (!deleteConversationTarget) return;
+    const target = deleteConversationTarget;
+    try {
+      await deleteConversation(target.id);
+      setConversations((prev) => prev.filter((conversation) => conversation.id !== target.id));
+      setDeleteConversationTarget(null);
+      if (currentConversationId === target.id) {
+        onNavigate?.();
+        router.push("/");
+      }
+      toast.success("会话已删除");
+    } catch (err) {
+      if (isSessionUnauthorizedError(err)) return;
+      toast.error(err instanceof Error ? err.message : "会话删除失败");
+    }
+  };
+
+  const handleOpenStorage = () => {
+    if (!user) {
+      onOpenLogin();
+      return;
+    }
+    onNavigate?.();
+    router.push("/storage");
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -351,6 +388,21 @@ export function Sidebar({
           <Search className="h-4 w-4" />
           {!collapsed ? "搜索会话" : <span className="sr-only">搜索会话</span>}
         </Button>
+
+        <Button
+          variant="ghost"
+          size={collapsed ? "icon-sm" : "sm"}
+          aria-pressed={storageActive}
+          className={cn(
+            "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent aria-pressed:text-sidebar-accent-foreground",
+            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
+          )}
+          disabled={authLoading}
+          onClick={handleOpenStorage}
+        >
+          <HardDrive className="h-4 w-4" />
+          {!collapsed ? "存储空间" : <span className="sr-only">存储空间</span>}
+        </Button>
       </div>
 
       {!collapsed ? (
@@ -363,6 +415,7 @@ export function Sidebar({
             isSignedIn={!!user}
             onSelectConversation={handleSelectConversation}
             onOpenArchive={setArchiveConversation}
+            onOpenDelete={setDeleteConversationTarget}
             onOpenRename={(conversation) => {
               setRenameConversation(conversation);
               setNewTitle(conversation.title || "");
@@ -433,6 +486,16 @@ export function Sidebar({
         description={`确认归档 "${archiveConversation?.title || "新会话"}" 吗？归档后将从侧边栏隐藏。`}
         confirmText="归档"
         onConfirm={() => void handleArchive()}
+      />
+
+      <ConfirmDialog
+        open={!!deleteConversationTarget}
+        onOpenChange={(open) => !open && setDeleteConversationTarget(null)}
+        title="删除会话"
+        description={`确认删除“${deleteConversationTarget?.title || "新会话"}”吗？删除后无法恢复。`}
+        confirmText="删除"
+        destructive
+        onConfirm={() => void handleDelete()}
       />
     </div>
   );

@@ -15,6 +15,7 @@ type UserStore interface {
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	ListUsers(ctx context.Context, params ListUsersParams) ([]domain.User, string, error)
 	UpdateUser(ctx context.Context, params UpdateUserParams) (*domain.User, error)
+	DeleteManagedUser(ctx context.Context, userID string, allowedCurrentRoles []string) error
 	UpdateUserPassword(ctx context.Context, userID string, passwordHash string, allowedCurrentRoles []string) (*domain.User, error)
 	TouchUserLogin(ctx context.Context, userID string) (*domain.User, error)
 	EnsureSystemUser(ctx context.Context, params EnsureSystemUserParams) (*domain.User, error)
@@ -76,6 +77,7 @@ type UpdateUserParams struct {
 	Username            *string
 	Role                *string
 	Status              *string
+	StorageQuotaBytes   *int64
 	AllowedCurrentRoles []string
 }
 
@@ -134,11 +136,12 @@ type CreateManagedUserInput struct {
 }
 
 type UpdateManagedUserInput struct {
-	UserID   string
-	Email    *string
-	Username *string
-	Role     *string
-	Status   *string
+	UserID            string
+	Email             *string
+	Username          *string
+	Role              *string
+	Status            *string
+	StorageQuotaBytes *int64
 }
 
 type ResetManagedPasswordInput struct {
@@ -401,6 +404,9 @@ func (s *Service) UpdateManagedUser(ctx context.Context, actor *domain.User, inp
 	if err != nil {
 		return nil, err
 	}
+	if target.DeletedAt != nil {
+		return nil, domain.ErrNotFound
+	}
 	if err := ensureManageableTarget(actor, target); err != nil {
 		return nil, err
 	}
@@ -437,8 +443,34 @@ func (s *Service) UpdateManagedUser(ctx context.Context, actor *domain.User, inp
 		}
 		params.Status = &normalized
 	}
+	if input.StorageQuotaBytes != nil {
+		if *input.StorageQuotaBytes < 0 {
+			return nil, domain.NewValidationError("storage quota must be non-negative")
+		}
+		params.StorageQuotaBytes = input.StorageQuotaBytes
+	}
 
 	return s.Users.UpdateUser(ctx, params)
+}
+
+func (s *Service) DeleteManagedUser(ctx context.Context, actor *domain.User, userID string) error {
+	if s == nil || s.Users == nil {
+		return errors.New("auth service is not configured")
+	}
+	if actor == nil {
+		return domain.NewUnauthorizedError("authentication required")
+	}
+	target, err := s.Users.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if target.DeletedAt != nil {
+		return domain.ErrNotFound
+	}
+	if err := ensureManageableTarget(actor, target); err != nil {
+		return err
+	}
+	return s.Users.DeleteManagedUser(ctx, userID, domain.ManageableUserRoles(actor.Role))
 }
 
 func (s *Service) ResetManagedPassword(ctx context.Context, actor *domain.User, input ResetManagedPasswordInput) (*domain.User, error) {
@@ -617,6 +649,9 @@ func ensureManageableTarget(actor *domain.User, target *domain.User) error {
 		return domain.NewUnauthorizedError("authentication required")
 	}
 	if target == nil {
+		return domain.ErrNotFound
+	}
+	if target.DeletedAt != nil {
 		return domain.ErrNotFound
 	}
 	if actor.ID == target.ID {

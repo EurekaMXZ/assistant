@@ -85,7 +85,7 @@ func (r *ActionTokenRepository) VerifyEmailWithToken(ctx context.Context, tokenH
 			UPDATE users SET email_verified_at = COALESCE(email_verified_at, $2)
 			WHERE id = $1::uuid
 			RETURNING id::text, email, username, password_hash, role, status, last_login_at,
-				email_verified_at, auth_version, created_at, updated_at
+				email_verified_at, auth_version, storage_quota_bytes, storage_used_bytes, deleted_at, created_at, updated_at
 		`, userID, now)
 		user, err = scanUser(row)
 		return err
@@ -110,7 +110,7 @@ func (r *ActionTokenRepository) ResetPasswordWithToken(ctx context.Context, toke
 			UPDATE users SET password_hash = $2, auth_version = auth_version + 1
 			WHERE id = $1::uuid
 			RETURNING id::text, email, username, password_hash, role, status, last_login_at,
-				email_verified_at, auth_version, created_at, updated_at
+				email_verified_at, auth_version, storage_quota_bytes, storage_used_bytes, deleted_at, created_at, updated_at
 		`, userID, passwordHash)
 		user, err = scanUser(row)
 		return err

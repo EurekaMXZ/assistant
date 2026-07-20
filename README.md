@@ -89,7 +89,7 @@ cd frontend && pnpm install && pnpm dev
 
 前端开发服务器不代理 API。复制的 `frontend/.env.local.example` 将 `NEXT_PUBLIC_API_BASE_URL` 设置为 `http://localhost:8080/api/v1`；本地开发后端时应将 `WEB_ORIGIN` 设置为 `http://localhost:3000` 以允许跨域访问。未设置 `NEXT_PUBLIC_API_BASE_URL` 时，前端源码默认使用同源 `/api/v1`。
 
-附件不会经过 Go API 传输。浏览器先分块计算 SHA-256/MD5，再向 API 申请 presigned PUT 并直接上传到 S3；长度、类型和 `Content-MD5` 都包含在签名中。上传成功并完成元数据确认后附件才进入 `ready`，发送按钮在此之前保持禁用；下载时 API 只返回 presigned GET。API/Worker 使用私网 `S3_ENDPOINT`，浏览器使用 `S3_PUBLIC_ENDPOINT`，两者可以不同。bucket 必须允许 `WEB_ORIGIN` 发起 `PUT`、`GET`、`HEAD`，并允许 `Content-Type` 与 `Content-MD5` 请求头。
+附件不会经过 Go API 传输。浏览器先分块计算 SHA-256/MD5，再向 API 申请 presigned PUT 并直接上传到 S3；长度、类型和 `Content-MD5` 都包含在签名中。上传成功并完成元数据确认后附件才进入 `ready`，发送时只携带当下已完成的附件；下载时 API 只返回 presigned GET。每个用户默认拥有 `512 MiB` 存储配额，可在用户管理中调整；存储空间 workspace 可列出、下载和删除自己的附件。API/Worker 使用私网 `S3_ENDPOINT`，浏览器使用 `S3_PUBLIC_ENDPOINT`，两者可以不同。bucket 必须允许 `WEB_ORIGIN` 发起 `PUT`、`GET`、`HEAD`，并允许 `Content-Type` 与 `Content-MD5` 请求头。
 
 对象存储通过统一 `S3_*` 配置支持 AWS S3、阿里云 OSS 的 S3 兼容 endpoint、Cloudflare R2 和 MinIO：
 

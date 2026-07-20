@@ -73,7 +73,7 @@ const modelColumns = `
 	id::text, provider, credential_id::text, slug, upstream_model, display_name, description,
 	input_modalities, output_modalities, supports_tools, supports_parallel_tools, supported_reasoning_efforts,
 	context_window_tokens, max_output_tokens, default_parameters, status, revision,
-	created_by_user_id::text, updated_by_user_id::text, created_at, updated_at`
+	created_by_user_id::text, updated_by_user_id::text, created_at, updated_at, deleted_at`
 
 const modelPriceColumns = `
 	id::text, model_id::text, version, currency,
@@ -111,7 +111,7 @@ func (r *ModelRepository) Create(ctx context.Context, params CreateModelParams) 
 }
 
 func (r *ModelRepository) Get(ctx context.Context, id string) (*domain.Model, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+modelColumns+` FROM models WHERE id = $1::uuid`, id)
+	row := r.pool.QueryRow(ctx, `SELECT `+modelColumns+` FROM models WHERE id = $1::uuid AND deleted_at IS NULL`, id)
 	model, err := scanModel(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -130,6 +130,7 @@ func (r *ModelRepository) List(ctx context.Context, enabledOnly bool, limit int,
 	}
 	conditions := []string{}
 	args := []any{}
+	conditions = append(conditions, "deleted_at IS NULL")
 	if enabledOnly {
 		args = append(args, domain.ModelStatusEnabled)
 		conditions = append(conditions, fmt.Sprintf("status = $%d", len(args)))
@@ -196,6 +197,39 @@ func (r *ModelRepository) Update(ctx context.Context, params UpdateModelParams) 
 		return nil, fmt.Errorf("update model: %w", err)
 	}
 	return model, nil
+}
+
+func (r *ModelRepository) Delete(ctx context.Context, modelID string) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin delete model: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
+		UPDATE models
+		SET status = 'disabled', deleted_at = COALESCE(deleted_at, now()), revision = revision + 1
+		WHERE id = $1::uuid AND deleted_at IS NULL
+	`, modelID)
+	if err != nil {
+		return fmt.Errorf("delete model: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE model_settings
+		SET default_chat_model_id = CASE WHEN default_chat_model_id = $1::uuid THEN NULL ELSE default_chat_model_id END,
+			compaction_model_id = CASE WHEN compaction_model_id = $1::uuid THEN NULL ELSE compaction_model_id END,
+			updated_at = now()
+		WHERE singleton = true
+	`, modelID); err != nil {
+		return fmt.Errorf("clear deleted model settings: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete model: %w", err)
+	}
+	return nil
 }
 
 func (r *ModelRepository) CreatePrice(ctx context.Context, params CreateModelPriceParams) (*domain.ModelPriceVersion, error) {
@@ -395,7 +429,7 @@ func scanModel(row scanRow) (*domain.Model, error) {
 		&item.SupportsTools, &item.SupportsParallelTools, &item.SupportedReasoningEfforts,
 		&item.ContextWindowTokens, &item.MaxOutputTokens, &item.DefaultParameters,
 		&item.Status, &item.Revision, &item.CreatedByUserID, &item.UpdatedByUserID,
-		&item.CreatedAt, &item.UpdatedAt)
+		&item.CreatedAt, &item.UpdatedAt, &item.DeletedAt)
 	return &item, err
 }
 

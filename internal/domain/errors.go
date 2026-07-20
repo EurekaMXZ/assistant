@@ -10,6 +10,7 @@ var (
 	ErrInvalidInput         = errors.New("invalid input")
 	ErrAuthenticationFailed = errors.New("authentication failed")
 	ErrPaymentRequired      = errors.New("payment required")
+	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
 )
 
 type typedError struct {

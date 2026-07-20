@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   Pencil,
   Pin,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -56,6 +57,7 @@ interface SidebarConversationListProps {
   isSignedIn: boolean;
   onSelectConversation: (conversationId: string) => void;
   onOpenArchive: (conversation: Conversation) => void;
+  onOpenDelete: (conversation: Conversation) => void;
   onOpenRename: (conversation: Conversation) => void;
 }
 
@@ -67,6 +69,7 @@ export function SidebarConversationList({
   isSignedIn,
   onSelectConversation,
   onOpenArchive,
+  onOpenDelete,
   onOpenRename,
 }: SidebarConversationListProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -209,6 +212,13 @@ export function SidebarConversationList({
                         <DropdownMenuItem onClick={() => onOpenArchive(conversation)}>
                           <Archive className="mr-2 h-4 w-4" />
                           归档
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => onOpenDelete(conversation)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          删除
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

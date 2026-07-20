@@ -50,6 +50,9 @@ func (r *UserRepository) CreateUser(ctx context.Context, params assistantauth.Cr
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 	`, params.Email, params.Username, params.PasswordHash, params.Role, params.Status, params.EmailVerifiedAt)
@@ -77,6 +80,9 @@ func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*domai
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 		FROM users
@@ -106,6 +112,9 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (*dom
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 		FROM users
@@ -141,12 +150,15 @@ func (r *UserRepository) ListUsers(ctx context.Context, params assistantauth.Lis
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 		FROM users
 	`
 
-	conditions := make([]string, 0, 3)
+	conditions := []string{"deleted_at IS NULL"}
 	args := make([]any, 0, 5)
 
 	if len(params.Roles) > 0 {
@@ -216,6 +228,10 @@ func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.Up
 		setClauses = append(setClauses, fmt.Sprintf("status = $%d", len(args)+1))
 		args = append(args, *params.Status)
 	}
+	if params.StorageQuotaBytes != nil {
+		setClauses = append(setClauses, fmt.Sprintf("storage_quota_bytes = $%d", len(args)+1))
+		args = append(args, *params.StorageQuotaBytes)
+	}
 
 	if len(setClauses) == 0 {
 		return r.GetUserByID(ctx, params.UserID)
@@ -224,7 +240,7 @@ func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.Up
 	query := `
 		UPDATE users
 		SET ` + strings.Join(setClauses, ", ") + `
-		WHERE id = $1::uuid`
+		WHERE id = $1::uuid AND deleted_at IS NULL`
 	if len(params.AllowedCurrentRoles) > 0 {
 		args = append(args, params.AllowedCurrentRoles)
 		query += fmt.Sprintf(" AND role = ANY($%d::text[])", len(args))
@@ -240,6 +256,9 @@ func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.Up
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 	`
@@ -263,7 +282,7 @@ func (r *UserRepository) UpdateUserPassword(ctx context.Context, userID string, 
 	query := `
 		UPDATE users
 		SET password_hash = $2, auth_version = auth_version + 1
-		WHERE id = $1::uuid`
+		WHERE id = $1::uuid AND deleted_at IS NULL`
 	args := []any{userID, passwordHash}
 	if len(allowedCurrentRoles) > 0 {
 		args = append(args, allowedCurrentRoles)
@@ -280,6 +299,9 @@ func (r *UserRepository) UpdateUserPassword(ctx context.Context, userID string, 
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 	`
@@ -311,6 +333,9 @@ func (r *UserRepository) TouchUserLogin(ctx context.Context, userID string) (*do
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 	`, userID)
@@ -358,6 +383,9 @@ func (r *UserRepository) EnsureSystemUser(ctx context.Context, params assistanta
 			last_login_at,
 			email_verified_at,
 			auth_version,
+			storage_quota_bytes,
+			storage_used_bytes,
+			deleted_at,
 			created_at,
 			updated_at
 	`, params.Email, params.Username, params.PasswordHash, domain.UserRoleSystem, domain.UserStatusActive)
@@ -371,6 +399,49 @@ func (r *UserRepository) EnsureSystemUser(ctx context.Context, params assistanta
 	}
 
 	return user, nil
+}
+
+func (r *UserRepository) DeleteManagedUser(ctx context.Context, userID string, allowedCurrentRoles []string) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin delete managed user: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := []any{userID}
+	query := `
+		UPDATE users
+		SET status = 'disabled', deleted_at = COALESCE(deleted_at, now()), auth_version = auth_version + 1
+		WHERE id = $1::uuid AND deleted_at IS NULL`
+	if len(allowedCurrentRoles) > 0 {
+		args = append(args, allowedCurrentRoles)
+		query += ` AND role = ANY($2::text[])`
+	}
+	result, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("delete managed user: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE attachments
+		SET status = 'deleting', updated_at = now()
+		WHERE uploaded_by_user_id = $1::uuid AND status IN ('pending', 'ready')
+	`, userID); err != nil {
+		return fmt.Errorf("mark deleted user attachments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversations
+		SET status = 'deleted', deleted_at = now()
+		WHERE owner_user_id = $1::uuid AND deleted_at IS NULL
+	`, userID); err != nil {
+		return fmt.Errorf("delete managed user conversations: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete managed user: %w", err)
+	}
+	return nil
 }
 
 func classifyUserConflict(err error) error {

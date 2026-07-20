@@ -181,6 +181,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             authLoading={isLoading}
             collapsed={desktopSidebarCollapsed}
             currentConversationId={currentConversationId}
+            storageActive={pathname === "/storage"}
             user={user}
             onLogout={logout}
             onNavigate={() => setSidebarOpen(false)}
@@ -204,6 +205,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Sidebar
                   authLoading={isLoading}
                   currentConversationId={currentConversationId}
+                  storageActive={pathname === "/storage"}
                   user={user}
                   onLogout={() => {
                     setSidebarOpen(false);

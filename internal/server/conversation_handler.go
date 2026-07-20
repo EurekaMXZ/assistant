@@ -142,6 +142,18 @@ func (a *API) handleUpdateConversation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"conversation": conversation})
 }
 
+func (a *API) handleDeleteConversation(c *gin.Context) {
+	if err := a.useCases.Conversations.DeleteConversation(
+		c.Request.Context(),
+		currentUser(c).ID,
+		c.Param("conversationID"),
+	); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *API) handleCreateConversationShare(c *gin.Context) {
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 128 {

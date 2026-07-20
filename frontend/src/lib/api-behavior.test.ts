@@ -3,9 +3,14 @@ import {
   ApiError,
   applyAdminBillingAdjustment,
   createConversationShare,
+  deleteAdminModel,
+  deleteAdminUser,
+  deleteConversation,
+  deleteStorageAttachment,
   disableAdminBillingRedemptionCode,
   getAdminOverview,
   getConversationShare,
+  getStorageOverview,
   getStreamUrl,
   handleSessionUnauthorized,
   issueAdminBillingRedemptionCodes,
@@ -89,6 +94,57 @@ describe("backend API routing", () => {
   it("routes backend stream paths directly to the public API", () => {
     expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
     expect(getStreamUrl("/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
+  });
+});
+
+describe("storage and deletion APIs", () => {
+  it("loads storage usage and attachment metadata", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        storage: { quota_bytes: 512, used_bytes: 128, available_bytes: 384 },
+        data: [
+          {
+            id: "attachment-1",
+            conversation_id: "conversation-1",
+            uploaded_by_user_id: "user-1",
+            filename: "report.txt",
+            content_type: "text/plain",
+            category: "text",
+            size_bytes: 128,
+            sha256: "0".repeat(64),
+            status: "ready",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+            conversation_title: "Report",
+          },
+        ],
+        page: { has_more: false },
+      }),
+    );
+
+    const result = await getStorageOverview();
+
+    expect(result.storage.available_bytes).toBe(384);
+    expect(result.data[0]?.conversation_title).toBe("Report");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/storage?limit=50");
+  });
+
+  it("uses no-content deletes for attachment and management resources", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    await deleteStorageAttachment("attachment-1");
+    await deleteConversation("conversation-1");
+    await deleteAdminUser("user-1");
+    await deleteAdminModel("model-1");
+
+    expect(fetchMock.mock.calls.map((call) => [String(call[0]), call[1]?.method])).toEqual([
+      ["/api/v1/storage/attachments/attachment-1", "DELETE"],
+      ["/api/v1/conversations/conversation-1", "DELETE"],
+      ["/api/v1/users/user-1", "DELETE"],
+      ["/api/v1/admin/models/model-1", "DELETE"],
+    ]);
   });
 });
 

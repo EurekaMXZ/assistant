@@ -21,6 +21,8 @@ import type {
   ReasoningEffort,
   RegistrationResult,
   Session,
+  StorageAttachment,
+  StorageUsage,
   Turn,
   User,
 } from "./types";
@@ -48,6 +50,8 @@ import {
   providerCredentialSchema,
   registrationResultSchema,
   sessionSchema,
+  storageAttachmentSchema,
+  storageUsageSchema,
   turnSchema,
   userSchema,
   presignedObjectUrlSchema,
@@ -412,12 +416,16 @@ export async function createAdminUser(payload: {
 
 export async function updateAdminUser(
   userId: string,
-  payload: Partial<Pick<User, "email" | "username" | "role" | "status">>,
+  payload: Partial<Pick<User, "email" | "username" | "role" | "status" | "storage_quota_bytes">>,
 ) {
   return apiFetch<{ user: User }>(`/users/${userId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   }).then((result) => result.user);
+}
+
+export async function deleteAdminUser(userId: string) {
+  await apiFetch<void>(`/users/${userId}`, { method: "DELETE" });
 }
 
 export async function resetAdminUserPassword(userId: string, newPassword: string) {
@@ -478,6 +486,10 @@ export async function setAdminModelEnabled(modelId: string, enabled: boolean) {
     { method: "POST" },
     z.object({ model: modelSchema }),
   ).then((result) => result.model);
+}
+
+export async function deleteAdminModel(modelId: string) {
+  await apiFetch<void>(`/admin/models/${modelId}`, { method: "DELETE" });
 }
 
 export async function getAdminModelSettings() {
@@ -753,6 +765,10 @@ export async function patchConversation(
   }).then((r) => r.conversation);
 }
 
+export async function deleteConversation(conversationId: string) {
+  await apiFetch<void>(`/conversations/${conversationId}`, { method: "DELETE" });
+}
+
 export async function createConversationShare(conversationId: string, idempotencyKey: string) {
   return apiFetch<ConversationShareResult>(
     `/conversations/${conversationId}/shares`,
@@ -770,6 +786,28 @@ export async function getConversationShare(shareId: string, signal?: AbortSignal
     { signal },
     z.object({ share: conversationShareSnapshotSchema }),
   ).then((result) => result.share);
+}
+
+export async function getStorageOverview(cursor?: string) {
+  const query = new URLSearchParams({ limit: "50" });
+  if (cursor) query.set("cursor", cursor);
+  return apiFetch<{
+    storage: StorageUsage;
+    data: StorageAttachment[];
+    page: { next_cursor?: string; has_more: boolean };
+  }>(
+    `/storage?${query.toString()}`,
+    {},
+    z.object({
+      storage: storageUsageSchema,
+      data: z.array(storageAttachmentSchema),
+      page: z.object({ next_cursor: z.string().optional(), has_more: z.boolean() }),
+    }),
+  );
+}
+
+export async function deleteStorageAttachment(attachmentId: string) {
+  await apiFetch<void>(`/storage/attachments/${attachmentId}`, { method: "DELETE" });
 }
 
 // Attachments

@@ -40,7 +40,7 @@ func (r *ConversationRepository) CreateConversation(ctx context.Context, ownerUs
 	row := tx.QueryRow(ctx, `
 		INSERT INTO conversations (owner_user_id, title, metadata)
 		VALUES ($1::uuid, $2, $3::jsonb)
-		RETURNING id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at
+		RETURNING id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at, deleted_at
 	`, ownerUserID, titleValue, normalizedJSON(metadata))
 
 	conversation, err := scanConversation(row)
@@ -64,9 +64,9 @@ func (r *ConversationRepository) CreateConversation(ctx context.Context, ownerUs
 
 func (r *ConversationRepository) GetConversation(ctx context.Context, conversationID string) (*domain.Conversation, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id::text, COALESCE(owner_user_id::text, ''), title, status, metadata, created_at, updated_at, archived_at
+		SELECT id::text, COALESCE(owner_user_id::text, ''), title, status, metadata, created_at, updated_at, archived_at, deleted_at
 		FROM conversations
-		WHERE id = $1::uuid
+		WHERE id = $1::uuid AND deleted_at IS NULL
 	`, conversationID)
 
 	conversation, err := scanConversation(row)
@@ -82,9 +82,10 @@ func (r *ConversationRepository) GetConversation(ctx context.Context, conversati
 
 func (r *ConversationRepository) ListConversationsByOwner(ctx context.Context, ownerUserID string, limit int) ([]domain.Conversation, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at
+		SELECT id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at, deleted_at
 		FROM conversations
 		WHERE owner_user_id = $1::uuid
+		  AND deleted_at IS NULL
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM conversation_initial_turns initial_turn
@@ -116,10 +117,11 @@ func (r *ConversationRepository) ListConversationsByOwner(ctx context.Context, o
 
 func (r *ConversationRepository) GetConversationByOwner(ctx context.Context, conversationID string, ownerUserID string) (*domain.Conversation, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at
+		SELECT id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at, deleted_at
 		FROM conversations
 		WHERE id = $1::uuid
 		  AND owner_user_id = $2::uuid
+		  AND deleted_at IS NULL
 	`, conversationID, ownerUserID)
 
 	conversation, err := scanConversation(row)
@@ -170,7 +172,7 @@ func (r *ConversationRepository) UpdateConversation(ctx context.Context, params 
 		UPDATE conversations
 		SET ` + strings.Join(setClauses, ", ") + `
 		WHERE id = $1::uuid
-		RETURNING id::text, COALESCE(owner_user_id::text, ''), title, status, metadata, created_at, updated_at, archived_at
+		RETURNING id::text, COALESCE(owner_user_id::text, ''), title, status, metadata, created_at, updated_at, archived_at, deleted_at
 	`
 	row := r.pool.QueryRow(ctx, query, args...)
 	conversation, err := scanConversation(row)
@@ -194,7 +196,7 @@ func (r *ConversationRepository) UpdateConversationTitle(ctx context.Context, co
 		UPDATE conversations
 		SET title = $2
 		WHERE id = $1::uuid
-		RETURNING id::text, COALESCE(owner_user_id::text, ''), title, status, metadata, created_at, updated_at, archived_at
+		RETURNING id::text, COALESCE(owner_user_id::text, ''), title, status, metadata, created_at, updated_at, archived_at, deleted_at
 	`, conversationID, trimmedTitle)
 
 	conversation, err := scanConversation(row)
@@ -206,4 +208,35 @@ func (r *ConversationRepository) UpdateConversationTitle(ctx context.Context, co
 	}
 
 	return conversation, nil
+}
+
+func (r *ConversationRepository) DeleteConversation(ctx context.Context, conversationID string, ownerUserID string) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin delete conversation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
+		UPDATE conversations
+		SET status = 'deleted', deleted_at = now()
+		WHERE id = $1::uuid AND owner_user_id = $2::uuid AND deleted_at IS NULL
+	`, conversationID, ownerUserID)
+	if err != nil {
+		return fmt.Errorf("delete conversation: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE attachments
+		SET status = 'deleting', updated_at = now()
+		WHERE conversation_id = $1::uuid AND status IN ('pending', 'ready')
+	`, conversationID); err != nil {
+		return fmt.Errorf("mark conversation attachments for deletion: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete conversation: %w", err)
+	}
+	return nil
 }

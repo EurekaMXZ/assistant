@@ -64,7 +64,7 @@ func (r *InitialTurnRepository) Prepare(ctx context.Context, params PrepareIniti
 	}
 
 	row := tx.QueryRow(ctx, `
-		SELECT c.id::text, c.owner_user_id::text, c.title, c.status, c.metadata, c.created_at, c.updated_at, c.archived_at,
+		SELECT c.id::text, c.owner_user_id::text, c.title, c.status, c.metadata, c.created_at, c.updated_at, c.archived_at, c.deleted_at,
 		       initial_turn.prepare_fingerprint
 		FROM conversation_initial_turns initial_turn
 		JOIN conversations c ON c.id = initial_turn.conversation_id
@@ -92,7 +92,7 @@ func (r *InitialTurnRepository) Prepare(ctx context.Context, params PrepareIniti
 	conversation, err = scanConversation(tx.QueryRow(ctx, `
 		INSERT INTO conversations (owner_user_id, title, metadata)
 		VALUES ($1::uuid, $2, $3::jsonb)
-		RETURNING id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at
+		RETURNING id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at, deleted_at
 	`, ownerUserID, title, normalizedJSON(params.Metadata)))
 	if err != nil {
 		return nil, fmt.Errorf("insert initial conversation: %w", err)
@@ -236,10 +236,11 @@ func scanPreparedConversation(row pgx.Row) (*domain.Conversation, string, error)
 		title        sql.NullString
 		metadata     []byte
 		archivedAt   sql.NullTime
+		deletedAt    sql.NullTime
 		fingerprint  string
 	)
 	if err := row.Scan(&conversation.ID, &conversation.OwnerUserID, &title, &conversation.Status, &metadata,
-		&conversation.CreatedAt, &conversation.UpdatedAt, &archivedAt, &fingerprint); err != nil {
+		&conversation.CreatedAt, &conversation.UpdatedAt, &archivedAt, &deletedAt, &fingerprint); err != nil {
 		return nil, "", err
 	}
 	if title.Valid {
@@ -248,13 +249,16 @@ func scanPreparedConversation(row pgx.Row) (*domain.Conversation, string, error)
 	if archivedAt.Valid {
 		conversation.ArchivedAt = &archivedAt.Time
 	}
+	if deletedAt.Valid {
+		conversation.DeletedAt = &deletedAt.Time
+	}
 	conversation.Metadata = cloneJSON(metadata)
 	return &conversation, fingerprint, nil
 }
 
 func getConversationTx(ctx context.Context, tx pgx.Tx, conversationID string) (*domain.Conversation, error) {
 	conversation, err := scanConversation(tx.QueryRow(ctx, `
-		SELECT id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at
+		SELECT id::text, owner_user_id::text, title, status, metadata, created_at, updated_at, archived_at, deleted_at
 		FROM conversations WHERE id = $1::uuid
 	`, conversationID))
 	if err != nil {

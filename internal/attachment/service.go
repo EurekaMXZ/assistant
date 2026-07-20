@@ -23,6 +23,10 @@ type Repository interface {
 	RefreshPendingAttachment(ctx context.Context, attachmentID string) (*domain.Attachment, error)
 	CompleteAttachment(ctx context.Context, conversationID string, uploadedByUserID string, attachmentID string, sha256 string) (*domain.Attachment, error)
 	ListAttachmentsByIDs(ctx context.Context, conversationID string, ids []string) ([]domain.Attachment, error)
+	GetStorageUsage(ctx context.Context, userID string) (*domain.StorageUsage, error)
+	ListStorageAttachments(ctx context.Context, userID string, limit int, cursor string) ([]domain.StorageAttachment, string, error)
+	ClaimAttachmentDeletion(ctx context.Context, userID string, attachmentID string) (*domain.Attachment, error)
+	DeleteClaimedAttachmentUpload(ctx context.Context, attachmentID string) error
 }
 
 type PresignedURL struct {
@@ -83,8 +87,37 @@ type UploadIntent struct {
 }
 
 type Service struct {
-	Repo   Repository
-	Signer URLSigner
+	Repo    Repository
+	Signer  URLSigner
+	Objects ObjectDeleter
+}
+
+func (s *Service) GetStorageUsage(ctx context.Context, userID string) (*domain.StorageUsage, error) {
+	if s == nil || s.Repo == nil {
+		return nil, fmt.Errorf("attachment repository is required")
+	}
+	return s.Repo.GetStorageUsage(ctx, userID)
+}
+
+func (s *Service) ListStorageAttachments(ctx context.Context, userID string, limit int, cursor string) ([]domain.StorageAttachment, string, error) {
+	if s == nil || s.Repo == nil {
+		return nil, "", fmt.Errorf("attachment repository is required")
+	}
+	return s.Repo.ListStorageAttachments(ctx, userID, limit, cursor)
+}
+
+func (s *Service) DeleteStorageAttachment(ctx context.Context, userID string, attachmentID string) error {
+	if s == nil || s.Repo == nil || s.Objects == nil {
+		return fmt.Errorf("attachment deletion is not configured")
+	}
+	attachment, err := s.Repo.ClaimAttachmentDeletion(ctx, userID, attachmentID)
+	if err != nil {
+		return err
+	}
+	if err := s.Objects.DeleteObject(ctx, attachment.ObjectKey); err != nil {
+		return fmt.Errorf("delete attachment object: %w", err)
+	}
+	return s.Repo.DeleteClaimedAttachmentUpload(ctx, attachment.ID)
 }
 
 const MaxUploadBytes int64 = 128 << 20

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { KeyRound, MoreHorizontal, Plus, UserRound, Users } from "lucide-react";
+import { KeyRound, MoreHorizontal, Plus, Trash2, UserRound, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   AdminEmpty,
@@ -33,8 +33,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   createAdminUser,
+  deleteAdminUser,
   listAdminUsersPage,
   resetAdminUserPassword,
   updateAdminUser,
@@ -42,6 +44,7 @@ import {
 import { canManageUser, manageableUserRoles } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 import { useCursorPagination } from "@/lib/use-cursor-pagination";
+import { formatStorageBytes } from "@/lib/storage";
 
 const roleLabels: Record<UserRole, string> = {
   system: "系统",
@@ -63,10 +66,12 @@ export function AdminUsers({ actor }: { actor: User }) {
   } = useCursorPagination<User>(listAdminUsersPage, "用户加载失败");
   const [editor, setEditor] = useState<User | "create" | null>(null);
   const [resetUser, setResetUser] = useState<User | null>(null);
+  const [deleteUser, setDeleteUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Exclude<UserRole, "system">>("user");
+  const [storageQuotaMB, setStorageQuotaMB] = useState("512");
   const [saving, setSaving] = useState(false);
   const manageableRoles = manageableUserRoles(actor);
 
@@ -75,10 +80,18 @@ export function AdminUsers({ actor }: { actor: User }) {
     setEmail(item === "create" ? "" : item.email);
     setUsername(item === "create" ? "" : item.username);
     setRole(item === "create" || item.role === "system" ? "user" : item.role);
+    setStorageQuotaMB(
+      item === "create" ? "512" : String(Math.round(item.storage_quota_bytes / (1024 * 1024))),
+    );
     setPassword("");
   };
 
   const save = async () => {
+    const quotaMB = Number(storageQuotaMB);
+    if (editor !== "create" && (!Number.isFinite(quotaMB) || quotaMB < 0)) {
+      toast.error("存储配额必须是非负数");
+      return;
+    }
     setSaving(true);
     try {
       const saved =
@@ -95,6 +108,7 @@ export function AdminUsers({ actor }: { actor: User }) {
                 email: email.trim(),
                 username: username.trim(),
                 role,
+                storage_quota_bytes: Math.round(quotaMB * 1024 * 1024),
               })
             : null;
       if (!saved) return;
@@ -138,6 +152,18 @@ export function AdminUsers({ actor }: { actor: User }) {
     }
   };
 
+  const removeUser = async () => {
+    if (!deleteUser) return;
+    try {
+      await deleteAdminUser(deleteUser.id);
+      setUsers((items) => items.filter((item) => item.id !== deleteUser.id));
+      setDeleteUser(null);
+      toast.success("用户已删除");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "用户删除失败");
+    }
+  };
+
   return (
     <div>
       <AdminPageHeader
@@ -161,10 +187,11 @@ export function AdminUsers({ actor }: { actor: User }) {
           onLoadMore={loadMore}
           aria-label="用户列表"
         >
-          <table className="w-[64rem] min-w-full table-fixed text-left text-sm">
+          <table className="w-[72rem] min-w-full table-fixed text-left text-sm">
             <colgroup>
               <col className="w-[26rem]" />
               <col className="w-[9rem]" />
+              <col className="w-[11rem]" />
               <col className="w-[13rem]" />
               <col className="w-[9rem]" />
               <col className="w-[7rem]" />
@@ -173,6 +200,7 @@ export function AdminUsers({ actor }: { actor: User }) {
               <tr className="border-b">
                 <th className="py-3 pr-4 font-medium">用户</th>
                 <th className="px-4 py-3 font-medium">角色</th>
+                <th className="px-4 py-3 font-medium">存储空间</th>
                 <th className="px-4 py-3 font-medium">最近登录</th>
                 <th className="px-4 py-3 font-medium">状态</th>
                 <th className="py-3 pl-4 text-right font-medium">操作</th>
@@ -202,6 +230,10 @@ export function AdminUsers({ actor }: { actor: User }) {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{roleLabels[item.role]}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
+                      {formatStorageBytes(item.storage_used_bytes)} /{" "}
+                      {formatStorageBytes(item.storage_quota_bytes)}
+                    </td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
                       {formatAdminDate(item.last_login_at)}
                     </td>
@@ -233,6 +265,13 @@ export function AdminUsers({ actor }: { actor: User }) {
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => void toggleStatus(item)}>
                                 {item.status === "active" ? "停用用户" : "启用用户"}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onClick={() => setDeleteUser(item)}
+                              >
+                                <Trash2 />
+                                删除用户
                               </DropdownMenuItem>
                             </DropdownMenuGroup>
                           </DropdownMenuContent>
@@ -289,6 +328,19 @@ export function AdminUsers({ actor }: { actor: User }) {
                 </select>
               </div>
             ) : null}
+            {editor !== "create" ? (
+              <div className="space-y-2">
+                <Label htmlFor="admin-user-storage-quota">存储配额（MB）</Label>
+                <Input
+                  id="admin-user-storage-quota"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={storageQuotaMB}
+                  onChange={(event) => setStorageQuotaMB(event.target.value)}
+                />
+              </div>
+            ) : null}
             {editor === "create" ? (
               <div className="space-y-2">
                 <Label htmlFor="admin-user-password">初始密码</Label>
@@ -312,6 +364,8 @@ export function AdminUsers({ actor }: { actor: User }) {
                 saving ||
                 !email.trim() ||
                 !username.trim() ||
+                (editor !== "create" &&
+                  (!Number.isFinite(Number(storageQuotaMB)) || Number(storageQuotaMB) < 0)) ||
                 (editor === "create" && password.length < 8)
               }
               onClick={() => void save()}
@@ -350,6 +404,16 @@ export function AdminUsers({ actor }: { actor: User }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={deleteUser !== null}
+        onOpenChange={(open) => !open && setDeleteUser(null)}
+        title="删除用户"
+        description={`确认删除“${deleteUser?.username || "此用户"}”吗？该用户将无法登录，操作不可恢复。`}
+        confirmText="删除"
+        destructive
+        onConfirm={() => void removeUser()}
+      />
     </div>
   );
 }

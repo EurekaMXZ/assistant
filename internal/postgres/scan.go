@@ -17,6 +17,7 @@ func scanConversation(row scanRow) (*domain.Conversation, error) {
 		ownerUserID  sql.NullString
 		title        sql.NullString
 		archivedAt   sql.NullTime
+		deletedAt    sql.NullTime
 		metadata     []byte
 	)
 
@@ -29,6 +30,7 @@ func scanConversation(row scanRow) (*domain.Conversation, error) {
 		&conversation.CreatedAt,
 		&conversation.UpdatedAt,
 		&archivedAt,
+		&deletedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -42,6 +44,9 @@ func scanConversation(row scanRow) (*domain.Conversation, error) {
 	if archivedAt.Valid {
 		conversation.ArchivedAt = &archivedAt.Time
 	}
+	if deletedAt.Valid {
+		conversation.DeletedAt = &deletedAt.Time
+	}
 	conversation.Metadata = cloneJSON(metadata)
 
 	return &conversation, nil
@@ -52,6 +57,7 @@ func scanUser(row scanRow) (*domain.User, error) {
 		user            domain.User
 		lastLoginAt     sql.NullTime
 		emailVerifiedAt sql.NullTime
+		deletedAt       sql.NullTime
 	)
 
 	if err := row.Scan(
@@ -64,6 +70,9 @@ func scanUser(row scanRow) (*domain.User, error) {
 		&lastLoginAt,
 		&emailVerifiedAt,
 		&user.AuthVersion,
+		&user.StorageQuotaBytes,
+		&user.StorageUsedBytes,
+		&deletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	); err != nil {
@@ -75,6 +84,9 @@ func scanUser(row scanRow) (*domain.User, error) {
 	}
 	if emailVerifiedAt.Valid {
 		user.EmailVerifiedAt = &emailVerifiedAt.Time
+	}
+	if deletedAt.Valid {
+		user.DeletedAt = &deletedAt.Time
 	}
 
 	return &user, nil
@@ -417,4 +429,37 @@ func scanAttachment(row scanRow) (*domain.Attachment, error) {
 
 	attachment.Metadata = cloneJSON(metadata)
 	return &attachment, nil
+}
+
+func scanStorageAttachment(row scanRow) (*domain.StorageAttachment, error) {
+	var (
+		item              domain.StorageAttachment
+		metadata          []byte
+		conversationTitle sql.NullString
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.ConversationID,
+		&item.UploadedByUserID,
+		&item.Filename,
+		&item.ContentType,
+		&item.Category,
+		&item.SizeBytes,
+		&item.SHA256,
+		&item.ContentMD5,
+		&item.Status,
+		&item.ObjectKey,
+		&metadata,
+		&item.UploadCompletedAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+		&conversationTitle,
+	); err != nil {
+		return nil, err
+	}
+	item.Metadata = cloneJSON(metadata)
+	if conversationTitle.Valid {
+		item.ConversationTitle = conversationTitle.String
+	}
+	return &item, nil
 }

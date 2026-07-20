@@ -125,6 +125,14 @@ func (a *API) handleUpdateModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"model": model})
 }
 
+func (a *API) handleDeleteModel(c *gin.Context) {
+	if err := a.useCases.Models.DeleteModel(c.Request.Context(), currentUser(c), c.Param("modelID")); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *API) handleSetModelEnabled(c *gin.Context, enabled bool) {
 	status := domain.ModelStatusDisabled
 	if enabled {

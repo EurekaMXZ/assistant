@@ -105,7 +105,7 @@ func auditRequiredRole(path string) string {
 }
 
 func firstPathID(c *gin.Context) string {
-	for _, name := range []string{"transactionID", "usageEventID", "auditEventID", "credentialID", "priceID", "modelID", "turnID", "conversationID", "codeID", "userID"} {
+	for _, name := range []string{"transactionID", "usageEventID", "auditEventID", "credentialID", "priceID", "modelID", "attachmentID", "turnID", "conversationID", "codeID", "userID"} {
 		if value := strings.TrimSpace(c.Param(name)); value != "" {
 			return value
 		}
@@ -221,6 +221,8 @@ func writeAPIError(c *gin.Context, err error) {
 		writeError(c, http.StatusConflict, message)
 	case errors.Is(err, domain.ErrPaymentRequired):
 		writeError(c, http.StatusPaymentRequired, err.Error())
+	case errors.Is(err, domain.ErrStorageQuotaExceeded):
+		writeError(c, http.StatusRequestEntityTooLarge, "storage quota exceeded")
 	default:
 		writeError(c, http.StatusInternalServerError, "internal server error")
 	}

@@ -14,4 +14,5 @@ type Conversation struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 	ArchivedAt  *time.Time      `json:"archived_at,omitempty"`
+	DeletedAt   *time.Time      `json:"deleted_at,omitempty"`
 }

@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Boxes, CircleDollarSign, MoreHorizontal, Plus, Settings2, Sparkles } from "lucide-react";
+import {
+  Boxes,
+  CircleDollarSign,
+  MoreHorizontal,
+  Plus,
+  Settings2,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   AdminEmpty,
@@ -35,9 +43,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   createAdminModel,
   createAdminModelPrice,
+  deleteAdminModel,
   getAdminModelSettings,
   listAdminCredentials,
   listAdminCredentialsPage,
@@ -135,6 +145,7 @@ export function AdminModels() {
   const [defaultChatModelId, setDefaultChatModelId] = useState("");
   const [compactionModelId, setCompactionModelId] = useState("");
   const [priceModel, setPriceModel] = useState<Model | null>(null);
+  const [deleteModel, setDeleteModel] = useState<Model | null>(null);
 
   const loadMetadata = async () => {
     setMetadataLoading(true);
@@ -238,6 +249,21 @@ export function AdminModels() {
       toast.success(saved.status === "enabled" ? "模型已启用" : "模型已停用");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "模型状态更新失败");
+    }
+  };
+
+  const removeModel = async () => {
+    if (!deleteModel) return;
+    try {
+      await deleteAdminModel(deleteModel.id);
+      setModels((items) => items.filter((item) => item.id !== deleteModel.id));
+      setSettingsModels((items) => items.filter((item) => item.id !== deleteModel.id));
+      setDefaultChatModelId((current) => (current === deleteModel.id ? "" : current));
+      setCompactionModelId((current) => (current === deleteModel.id ? "" : current));
+      setDeleteModel(null);
+      toast.success("模型已删除");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "模型删除失败");
     }
   };
 
@@ -372,6 +398,13 @@ export function AdminModels() {
                           <DropdownMenuItem onClick={() => void toggleModel(item)}>
                             {item.status === "enabled" ? "停用模型" : "启用模型"}
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => setDeleteModel(item)}
+                          >
+                            <Trash2 />
+                            删除模型
+                          </DropdownMenuItem>
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -449,6 +482,16 @@ export function AdminModels() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={deleteModel !== null}
+        onOpenChange={(open) => !open && setDeleteModel(null)}
+        title="删除模型"
+        description={`确认删除“${deleteModel?.display_name || "此模型"}”吗？模型将从目录中移除，历史记录会保留。`}
+        confirmText="删除"
+        destructive
+        onConfirm={() => void removeModel()}
+      />
 
       <PriceDialog model={priceModel} onOpenChange={(open) => !open && setPriceModel(null)} />
     </div>

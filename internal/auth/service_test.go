@@ -126,6 +126,18 @@ func (s *stubUserStore) UpdateUserPassword(_ context.Context, userID string, pas
 	return &clone, nil
 }
 
+func (s *stubUserStore) DeleteManagedUser(_ context.Context, userID string, allowedCurrentRoles []string) error {
+	user, ok := s.users[userID]
+	if !ok || (len(allowedCurrentRoles) > 0 && !containsRole(allowedCurrentRoles, user.Role)) {
+		return domain.ErrNotFound
+	}
+	user.Status = domain.UserStatusDisabled
+	user.AuthVersion++
+	now := time.Now().UTC()
+	user.DeletedAt = &now
+	return nil
+}
+
 func containsRole(roles []string, role string) bool {
 	for _, candidate := range roles {
 		if candidate == role {

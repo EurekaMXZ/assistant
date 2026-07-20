@@ -8,7 +8,7 @@ export const turnRequestDescriptorSchema = z.object({
   attachment_ids: z.array(z.string()),
   model_id: z.string().optional(),
   reasoning_effort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
-  metadata: z.record(z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
 });
 
 export type TurnRequestDescriptor = z.infer<typeof turnRequestDescriptorSchema>;

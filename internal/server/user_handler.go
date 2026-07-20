@@ -64,10 +64,11 @@ func (a *API) handleCreateManagedUser(c *gin.Context) {
 
 func (a *API) handleUpdateManagedUser(c *gin.Context) {
 	var request struct {
-		Email    *string `json:"email"`
-		Username *string `json:"username"`
-		Role     *string `json:"role"`
-		Status   *string `json:"status"`
+		Email             *string `json:"email"`
+		Username          *string `json:"username"`
+		Role              *string `json:"role"`
+		Status            *string `json:"status"`
+		StorageQuotaBytes *int64  `json:"storage_quota_bytes"`
 	}
 
 	if err := bindJSON(c, &request); err != nil {
@@ -76,11 +77,12 @@ func (a *API) handleUpdateManagedUser(c *gin.Context) {
 	}
 
 	user, err := a.useCases.Users.UpdateManagedUser(c.Request.Context(), currentUser(c), assistantauth.UpdateManagedUserInput{
-		UserID:   c.Param("userID"),
-		Email:    request.Email,
-		Username: request.Username,
-		Role:     request.Role,
-		Status:   request.Status,
+		UserID:            c.Param("userID"),
+		Email:             request.Email,
+		Username:          request.Username,
+		Role:              request.Role,
+		Status:            request.Status,
+		StorageQuotaBytes: request.StorageQuotaBytes,
 	})
 	if err != nil {
 		writeAPIError(c, err)
@@ -88,6 +90,14 @@ func (a *API) handleUpdateManagedUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
+func (a *API) handleDeleteManagedUser(c *gin.Context) {
+	if err := a.useCases.Users.DeleteManagedUser(c.Request.Context(), currentUser(c), c.Param("userID")); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (a *API) handleResetManagedUserPassword(c *gin.Context) {

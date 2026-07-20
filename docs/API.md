@@ -522,6 +522,12 @@ Response: `200 OK`
 }
 ```
 
+### DELETE `/conversations/:conversationID`
+
+Delete an owned conversation from the user's workspace. The conversation is retained as a deleted historical record; its attachments are marked for object-store cleanup by the attachment worker.
+
+Response: `204 No Content`.
+
 ### POST `/conversations/:conversationID/shares`
 
 Create a share snapshot boundary for an owned conversation. A non-empty caller-generated `Idempotency-Key` header of at most 128 bytes is required.
@@ -677,7 +683,7 @@ Response: `200 OK`
 }
 ```
 
-Only `ready` attachment IDs are accepted by message and initial-turn commit endpoints. Clients must keep send disabled while any selected attachment is still uploading or waiting for completion.
+Only `ready` attachment IDs are accepted by message and initial-turn commit endpoints. Clients may send while other selected files are still uploading; only the IDs that are `ready` at send time are included.
 
 ### GET `/conversations/:conversationID/attachments/:attachmentID`
 
@@ -702,6 +708,45 @@ Response: `200 OK`
 The S3 bucket CORS policy must allow the frontend origin to use `PUT`, `GET`, and `HEAD`, including the `Content-Type` and `Content-MD5` request headers.
 
 Incomplete uploads expire after `S3_PENDING_UPLOAD_TTL`. A worker claims their database rows, removes their S3 objects, and then deletes the rows; failed object deletions remain claimed and are retried by the next reaper pass.
+
+## Storage APIs
+
+The default per-user storage quota is `536870912` bytes (`512 MiB`). The quota includes pending and ready attachments. Deleted objects remain counted until object-store cleanup completes.
+
+### GET `/storage`
+
+List the current user's stored attachments and usage. Query params: `limit` (default `50`, max `200`) and `cursor`.
+
+Response: `200 OK`
+
+```json
+{
+  "storage": {
+    "quota_bytes": 536870912,
+    "used_bytes": 48231,
+    "available_bytes": 536822681
+  },
+  "data": [
+    {
+      "id": "attachment_123",
+      "filename": "report.pdf",
+      "size_bytes": 48231,
+      "conversation_id": "conversation_123",
+      "conversation_title": "Quarterly planning",
+      "status": "ready"
+    }
+  ],
+  "page": {
+    "has_more": false
+  }
+}
+```
+
+### DELETE `/storage/attachments/:attachmentID`
+
+Delete an attachment owned by the current user. The object is deleted from object storage before the database row is removed; failed cleanup remains retryable by the worker.
+
+Response: `204 No Content`.
 
 ## Sandbox APIs
 
@@ -1377,11 +1422,14 @@ Request:
   "email": "new@example.com",
   "username": "new-name",
   "role": "user",
-  "status": "disabled"
+  "status": "disabled",
+  "storage_quota_bytes": 536870912
 }
 ```
 
 All fields are optional.
+
+`storage_quota_bytes` is an optional quota override in bytes. New users default to `536870912` bytes (`512 MiB`).
 
 Response:
 
@@ -1390,6 +1438,12 @@ Response:
   "user": {}
 }
 ```
+
+### DELETE `/users/:userID`
+
+Delete a manageable user. The account is disabled, active sessions are invalidated, owned conversations are removed from the workspace, and their attachments enter asynchronous object cleanup. System users and the current actor cannot be deleted.
+
+Response: `204 No Content`.
 
 ### POST `/users/:userID/reset-password`
 
@@ -1508,6 +1562,12 @@ Returns one model, including its credential ID.
 ### PATCH `/admin/models/:modelID`
 
 Optional fields: `credential_id`, `display_name`, `description`, modalities, tool capability booleans, `supported_reasoning_efforts`, token limits, and `default_parameters`. Each update increments `revision`.
+
+### DELETE `/admin/models/:modelID`
+
+Remove a model from the catalog. Historical turns, prices, and usage records are retained; default model settings referencing it are cleared.
+
+Response: `204 No Content`.
 
 ### POST `/admin/models/:modelID/enable`
 

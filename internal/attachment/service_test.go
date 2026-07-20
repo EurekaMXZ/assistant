@@ -17,6 +17,7 @@ const (
 type stubRepository struct {
 	params   CreateAttachmentParams
 	existing *domain.Attachment
+	deleted  string
 }
 
 func (s *stubRepository) CreateAttachment(_ context.Context, params CreateAttachmentParams) (*domain.Attachment, error) {
@@ -61,6 +62,32 @@ func (s *stubRepository) ListAttachmentsByIDs(context.Context, string, []string)
 	return nil, nil
 }
 
+func (s *stubRepository) GetStorageUsage(context.Context, string) (*domain.StorageUsage, error) {
+	return &domain.StorageUsage{QuotaBytes: domain.DefaultStorageQuotaBytes}, nil
+}
+
+func (s *stubRepository) ListStorageAttachments(context.Context, string, int, string) ([]domain.StorageAttachment, string, error) {
+	return nil, "", nil
+}
+
+func (s *stubRepository) ClaimAttachmentDeletion(context.Context, string, string) (*domain.Attachment, error) {
+	return s.existing, nil
+}
+
+func (s *stubRepository) DeleteClaimedAttachmentUpload(_ context.Context, attachmentID string) error {
+	s.deleted = attachmentID
+	return nil
+}
+
+type stubObjectDeleter struct {
+	key string
+}
+
+func (s *stubObjectDeleter) DeleteObject(_ context.Context, key string) error {
+	s.key = key
+	return nil
+}
+
 type stubURLSigner struct {
 	key         string
 	contentType string
@@ -102,6 +129,23 @@ func TestCreateUploadStoresPendingMetadataAndReturnsPresignedURL(t *testing.T) {
 	}
 	if repo.params.SHA256 != testSHA256 || repo.params.ContentMD5 != testMD5 || repo.params.ObjectKey == "" || signer.key != repo.params.ObjectKey {
 		t.Fatalf("unexpected object metadata: %#v", repo.params)
+	}
+}
+
+func TestDeleteStorageAttachmentRemovesObjectAndRow(t *testing.T) {
+	repo := &stubRepository{existing: &domain.Attachment{
+		ID: "attachment-1", ObjectKey: "attachments/conv-1/attachment-1/file.txt",
+	}}
+	objects := &stubObjectDeleter{}
+
+	if err := (&Service{Repo: repo, Objects: objects}).DeleteStorageAttachment(t.Context(), "user-1", "attachment-1"); err != nil {
+		t.Fatalf("delete storage attachment: %v", err)
+	}
+	if objects.key != repo.existing.ObjectKey {
+		t.Fatalf("deleted object key = %q, want %q", objects.key, repo.existing.ObjectKey)
+	}
+	if repo.deleted != repo.existing.ID {
+		t.Fatalf("deleted row = %q, want %q", repo.deleted, repo.existing.ID)
 	}
 }
 

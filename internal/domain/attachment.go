@@ -32,3 +32,14 @@ type Attachment struct {
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
+
+type StorageAttachment struct {
+	Attachment
+	ConversationTitle string `json:"conversation_title,omitempty"`
+}
+
+type StorageUsage struct {
+	QuotaBytes     int64 `json:"quota_bytes"`
+	UsedBytes      int64 `json:"used_bytes"`
+	AvailableBytes int64 `json:"available_bytes"`
+}

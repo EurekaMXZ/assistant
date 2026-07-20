@@ -15,6 +15,10 @@ import (
 	"github.com/google/uuid"
 )
 
+type generatedImageObjectDeleter interface {
+	DeleteObject(ctx context.Context, key string) error
+}
+
 func (r *TurnRunner) generatedImageDrafts(ctx context.Context, turn *domain.Turn, result *llm.ModelResult) ([]domain.AssistantMessageDraft, error) {
 	if turn == nil || result == nil || len(result.OutputItems) == 0 {
 		return nil, nil
@@ -107,6 +111,9 @@ func (r *TurnRunner) generatedImageDraft(ctx context.Context, turn *domain.Turn,
 		Metadata:         metadata,
 	})
 	if err != nil {
+		if deleter, ok := r.blobs.(generatedImageObjectDeleter); ok {
+			_ = deleter.DeleteObject(ctx, objectKey)
+		}
 		return domain.AssistantMessageDraft{}, fmt.Errorf("record generated image attachment: %w", err)
 	}
 

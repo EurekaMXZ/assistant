@@ -11,6 +11,9 @@ export interface User {
   last_login_at?: string;
   created_at: string;
   updated_at: string;
+  storage_quota_bytes: number;
+  storage_used_bytes: number;
+  deleted_at?: string;
 }
 
 export interface Session {
@@ -242,6 +245,7 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   archived_at?: string;
+  deleted_at?: string;
 }
 
 export interface ConversationShare {
@@ -275,11 +279,21 @@ export interface Attachment {
   category: "image" | "text" | "document" | "binary" | string;
   size_bytes: number;
   sha256: string;
-  status: "pending" | "ready";
+  status: "pending" | "ready" | "deleting";
   metadata?: Record<string, unknown>;
   upload_completed_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface StorageUsage {
+  quota_bytes: number;
+  used_bytes: number;
+  available_bytes: number;
+}
+
+export interface StorageAttachment extends Attachment {
+  conversation_title?: string;
 }
 
 type MessageRole = "system" | "developer" | "user" | "assistant" | "tool";

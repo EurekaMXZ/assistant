@@ -178,6 +178,12 @@ func attachManagementUseCases(useCases *server.UseCases, deps managementDependen
 			Status: input.Status, ActorUserID: actor.ID,
 		})
 	}
+	useCases.Models.DeleteModel = func(ctx context.Context, actor *domain.User, modelID string) error {
+		if err := requireSystemActor(actor); err != nil {
+			return err
+		}
+		return deps.models.Delete(ctx, modelID)
+	}
 	useCases.Models.ListModelPrices = func(ctx context.Context, actor *domain.User, modelID string, limit int, cursor string) (*server.PageResult[domain.ModelPriceVersion], error) {
 		if err := requireSystemActor(actor); err != nil {
 			return nil, err

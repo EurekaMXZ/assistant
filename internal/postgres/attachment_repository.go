@@ -9,7 +9,9 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/attachment"
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	"github.com/EurekaMXZ/assistant/internal/pagination"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -64,6 +66,12 @@ func (r *AttachmentRepository) CreateAttachment(ctx context.Context, params atta
 
 	stored, err := scanAttachment(row)
 	if err != nil {
+		if errors.Is(err, domain.ErrStorageQuotaExceeded) {
+			return nil, err
+		}
+		if quotaErr := classifyStorageQuotaError(err); quotaErr != nil {
+			return nil, quotaErr
+		}
 		return nil, fmt.Errorf("insert attachment: %w", err)
 	}
 
@@ -244,6 +252,9 @@ func (r *AttachmentRepository) UpsertAttachment(ctx context.Context, params atta
 
 	stored, err := scanAttachment(row)
 	if err != nil {
+		if quotaErr := classifyStorageQuotaError(err); quotaErr != nil {
+			return nil, quotaErr
+		}
 		return nil, fmt.Errorf("upsert attachment: %w", err)
 	}
 
@@ -304,6 +315,95 @@ func (r *AttachmentRepository) ListAttachmentsByIDs(ctx context.Context, convers
 	}
 
 	return attachments, nil
+}
+
+func (r *AttachmentRepository) GetStorageUsage(ctx context.Context, userID string) (*domain.StorageUsage, error) {
+	var usage domain.StorageUsage
+	if err := r.pool.QueryRow(ctx, `
+		SELECT storage_quota_bytes, storage_used_bytes
+		FROM users
+		WHERE id = $1::uuid AND deleted_at IS NULL
+	`, userID).Scan(&usage.QuotaBytes, &usage.UsedBytes); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get storage usage: %w", err)
+	}
+	usage.AvailableBytes = usage.QuotaBytes - usage.UsedBytes
+	if usage.AvailableBytes < 0 {
+		usage.AvailableBytes = 0
+	}
+	return &usage, nil
+}
+
+func (r *AttachmentRepository) ListStorageAttachments(ctx context.Context, userID string, limit int, cursor string) ([]domain.StorageAttachment, string, error) {
+	limit = clampLimit(limit, 50, 200)
+	decoded, err := pagination.Decode(strings.TrimSpace(cursor))
+	if err != nil {
+		return nil, "", domain.NewValidationError("invalid cursor")
+	}
+	args := []any{userID}
+	conditions := []string{
+		"a.uploaded_by_user_id = $1::uuid",
+		"a.status <> 'deleting'",
+		"c.deleted_at IS NULL",
+	}
+	if decoded != nil {
+		args = append(args, decoded.CreatedAt, decoded.ID)
+		conditions = append(conditions, fmt.Sprintf("(a.created_at, a.id) < ($%d, $%d::uuid)", len(args)-1, len(args)))
+	}
+	args = append(args, limit+1)
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.id::text, a.conversation_id::text, a.uploaded_by_user_id::text, a.filename,
+			a.content_type, a.category, a.size_bytes, a.sha256, a.content_md5, a.status,
+			a.object_key, a.metadata, a.upload_completed_at, a.created_at, a.updated_at, c.title
+		FROM attachments a
+		JOIN conversations c ON c.id = a.conversation_id
+		WHERE `+strings.Join(conditions, " AND ")+`
+		ORDER BY a.created_at DESC, a.id DESC
+		LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("list storage attachments: %w", err)
+	}
+	defer rows.Close()
+	items := make([]domain.StorageAttachment, 0, limit+1)
+	for rows.Next() {
+		item, err := scanStorageAttachment(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate storage attachments: %w", err)
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		next = pagination.Encode(last.CreatedAt, last.ID)
+	}
+	return items, next, nil
+}
+
+func (r *AttachmentRepository) ClaimAttachmentDeletion(ctx context.Context, userID string, attachmentID string) (*domain.Attachment, error) {
+	item, err := scanAttachment(r.pool.QueryRow(ctx, `
+		UPDATE attachments
+		SET status = 'deleting', updated_at = now()
+		WHERE id = $1::uuid
+		  AND uploaded_by_user_id = $2::uuid
+		  AND status IN ('pending', 'ready')
+		RETURNING id::text, conversation_id::text, uploaded_by_user_id::text, filename, content_type,
+			category, size_bytes, sha256, content_md5, status, object_key, metadata, upload_completed_at,
+			created_at, updated_at
+	`, attachmentID, userID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("claim attachment deletion: %w", err)
+	}
+	return item, nil
 }
 
 func (r *AttachmentRepository) ListExpiredAttachmentUploads(ctx context.Context, createdBefore time.Time, limit int) ([]domain.Attachment, error) {
@@ -368,4 +468,12 @@ func attachmentStatus(status string) string {
 		return domain.AttachmentStatusPending
 	}
 	return domain.AttachmentStatusReady
+}
+
+func classifyStorageQuotaError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23514" && strings.Contains(pgErr.Message, "storage quota exceeded") {
+		return domain.ErrStorageQuotaExceeded
+	}
+	return nil
 }

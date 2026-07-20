@@ -13,20 +13,25 @@ const (
 
 	UserStatusActive   = "active"
 	UserStatusDisabled = "disabled"
+
+	DefaultStorageQuotaBytes int64 = 512 << 20
 )
 
 type User struct {
-	ID              string     `json:"id"`
-	Email           string     `json:"email"`
-	Username        string     `json:"username"`
-	Role            string     `json:"role"`
-	Status          string     `json:"status"`
-	PasswordHash    string     `json:"-"`
-	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
-	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
-	AuthVersion     int64      `json:"-"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                string     `json:"id"`
+	Email             string     `json:"email"`
+	Username          string     `json:"username"`
+	Role              string     `json:"role"`
+	Status            string     `json:"status"`
+	PasswordHash      string     `json:"-"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	EmailVerifiedAt   *time.Time `json:"email_verified_at,omitempty"`
+	AuthVersion       int64      `json:"-"`
+	StorageQuotaBytes int64      `json:"storage_quota_bytes"`
+	StorageUsedBytes  int64      `json:"storage_used_bytes"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 func NormalizeEmail(email string) (string, error) {

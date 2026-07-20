@@ -252,6 +252,7 @@ type UserUseCases struct {
 	CreateManagedUser    func(ctx context.Context, actor *domain.User, input assistantauth.CreateManagedUserInput) (*domain.User, error)
 	UpdateManagedUser    func(ctx context.Context, actor *domain.User, input assistantauth.UpdateManagedUserInput) (*domain.User, error)
 	ResetManagedPassword func(ctx context.Context, actor *domain.User, input assistantauth.ResetManagedPasswordInput) (*domain.User, error)
+	DeleteManagedUser    func(ctx context.Context, actor *domain.User, userID string) error
 }
 
 type ConversationUseCases struct {
@@ -262,6 +263,7 @@ type ConversationUseCases struct {
 	ListConversations       func(ctx context.Context, ownerUserID string, limit int) ([]domain.Conversation, error)
 	GetConversation         func(ctx context.Context, ownerUserID string, conversationID string) (*domain.Conversation, error)
 	UpdateConversation      func(ctx context.Context, ownerUserID string, input UpdateConversationInput) (*domain.Conversation, error)
+	DeleteConversation      func(ctx context.Context, ownerUserID string, conversationID string) error
 	SendMessage             func(ctx context.Context, ownerUserID string, conversationID string, input SendMessageInput) (*domain.EnqueuedTurn, error)
 	RetryTurn               func(ctx context.Context, ownerUserID string, sourceTurnID string) (*domain.EnqueuedRetryTurn, error)
 	EditTurn                func(ctx context.Context, ownerUserID string, sourceTurnID string, content string) (*domain.EnqueuedRetryTurn, error)
@@ -272,6 +274,12 @@ type AttachmentUseCases struct {
 	CreateConversationAttachmentUpload   func(ctx context.Context, ownerUserID string, conversationID string, input CreateConversationAttachmentUploadInput) (*ConversationAttachmentUpload, error)
 	CompleteConversationAttachmentUpload func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, input CompleteConversationAttachmentUploadInput) (*domain.Attachment, error)
 	GetConversationAttachmentDownload    func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, download bool) (*ConversationAttachmentDownload, error)
+}
+
+type StorageUseCases struct {
+	GetStorageUsage        func(ctx context.Context, userID string) (*domain.StorageUsage, error)
+	ListStorageAttachments func(ctx context.Context, userID string, limit int, cursor string) (*PageResult[domain.StorageAttachment], error)
+	DeleteAttachment       func(ctx context.Context, userID string, attachmentID string) error
 }
 
 type SandboxUseCases struct {
@@ -294,6 +302,7 @@ type ModelUseCases struct {
 	GetAdminModel       func(ctx context.Context, actor *domain.User, modelID string) (*domain.Model, error)
 	CreateModel         func(ctx context.Context, actor *domain.User, input CreateModelInput) (*domain.Model, error)
 	UpdateModel         func(ctx context.Context, actor *domain.User, input UpdateModelInput) (*domain.Model, error)
+	DeleteModel         func(ctx context.Context, actor *domain.User, modelID string) error
 	ListModelPrices     func(ctx context.Context, actor *domain.User, modelID string, limit int, cursor string) (*PageResult[domain.ModelPriceVersion], error)
 	GetModelPrice       func(ctx context.Context, actor *domain.User, modelID string, priceID string) (*domain.ModelPriceVersion, error)
 	CreateModelPrice    func(ctx context.Context, actor *domain.User, input CreateModelPriceInput) (*domain.ModelPriceVersion, error)
@@ -361,6 +370,7 @@ type UseCases struct {
 	Users         UserUseCases
 	Conversations ConversationUseCases
 	Attachments   AttachmentUseCases
+	Storage       StorageUseCases
 	Sandboxes     SandboxUseCases
 	Turns         TurnUseCases
 	Models        ModelUseCases

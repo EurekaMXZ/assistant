@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const dateTime = z.string().min(1);
-const metadata = z.record(z.unknown());
+const metadata = z.record(z.string(), z.unknown());
 
 export const reasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 export const turnStatusSchema = z.enum([
@@ -22,6 +22,13 @@ export const userSchema = z.object({
   last_login_at: dateTime.optional(),
   created_at: dateTime,
   updated_at: dateTime,
+  storage_quota_bytes: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(512 * 1024 * 1024),
+  storage_used_bytes: z.number().int().nonnegative().default(0),
+  deleted_at: dateTime.optional(),
 });
 
 export const sessionSchema = z.object({
@@ -45,6 +52,7 @@ export const conversationSchema = z.object({
   created_at: dateTime,
   updated_at: dateTime,
   archived_at: dateTime.optional(),
+  deleted_at: dateTime.optional(),
 });
 
 export const conversationShareSchema = z.object({
@@ -65,7 +73,7 @@ export const attachmentSchema = z.object({
   category: z.string(),
   size_bytes: z.number().int().nonnegative(),
   sha256: z.string(),
-  status: z.enum(["pending", "ready"]),
+  status: z.enum(["pending", "ready", "deleting"]),
   metadata: metadata.optional(),
   upload_completed_at: dateTime.optional(),
   created_at: dateTime,
@@ -75,8 +83,18 @@ export const attachmentSchema = z.object({
 export const presignedObjectUrlSchema = z.object({
   url: z.string().url(),
   method: z.string(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   expires_at: dateTime,
+});
+
+export const storageUsageSchema = z.object({
+  quota_bytes: z.number().int().nonnegative(),
+  used_bytes: z.number().int().nonnegative(),
+  available_bytes: z.number().int().nonnegative(),
+});
+
+export const storageAttachmentSchema = attachmentSchema.extend({
+  conversation_title: z.string().optional(),
 });
 
 export const messageSchema = z.object({
@@ -139,6 +157,7 @@ export const modelSchema = z.object({
   status: z.enum(["enabled", "disabled"]),
   is_default: z.boolean().optional(),
   revision: z.number().int(),
+  deleted_at: dateTime.optional(),
 });
 
 export const modelSettingsSchema = z.object({
@@ -279,7 +298,7 @@ export const billingUsageEventSchema = z.object({
   total_tokens: z.number().int(),
   tool_amount_nanos: z.number().int().nonnegative(),
   tool_amount: z.string(),
-  tool_usage: z.record(z.number().int().nonnegative()),
+  tool_usage: z.record(z.string(), z.number().int().nonnegative()),
   tool_pricing_snapshot: metadata,
   billing_transaction_id: z.string().optional(),
   error_code: z.string().optional(),
