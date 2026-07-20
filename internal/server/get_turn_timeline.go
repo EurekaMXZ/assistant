@@ -738,12 +738,16 @@ func fallbackStatusItem(turn *domain.Turn) *TurnTimelineItem {
 	switch turn.Status {
 	case domain.TurnStatusFailed:
 		_, publicError := presentationFailure(turn.ErrorCode)
+		createdAt := turn.CreatedAt
+		if turn.FailedAt != nil {
+			createdAt = *turn.FailedAt
+		}
 		item := &TurnTimelineItem{
 			ID:        stableTimelineStatusID("turn-failed", "", 0),
 			Type:      turnTimelineItemStatus,
 			Title:     "Status",
 			Status:    "failed",
-			CreatedAt: turn.CreatedAt,
+			CreatedAt: createdAt,
 		}
 		item.ContentText = failureContentText(publicError)
 		return item

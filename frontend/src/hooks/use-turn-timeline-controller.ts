@@ -264,17 +264,14 @@ export function useTurnTimelineController({
           applyAction({ type: "turn-done", turnId, done });
           if (mode === "active") pendingDoneTextMessageIdRef.current = null;
           if (mirrorMessages && done.status === "failed") {
-            const retryOfTurnId = projectionRef.current.turnsById[turnId]?.retry_of_turn_id;
             setMessages((previous) =>
-              retryOfTurnId
-                ? previous.filter((message) => message.turn_id !== turnId)
-                : upsertTurnFailureMessage(
-                    previous,
-                    turnId,
-                    conversationId,
-                    done.error,
-                    done.error_code,
-                  ),
+              upsertTurnFailureMessage(
+                previous,
+                turnId,
+                conversationId,
+                done.error,
+                done.error_code,
+              ),
             );
           }
         },

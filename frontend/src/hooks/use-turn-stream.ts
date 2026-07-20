@@ -83,9 +83,6 @@ export function useTurnStream({
         });
         if (result.kind === "terminal") {
           settled = true;
-          if (result.done.status !== "completed" && result.done.status !== "cancelled") {
-            toast.error(result.done.error || "生成失败");
-          }
         } else {
           toast.error(result.error.message);
         }
