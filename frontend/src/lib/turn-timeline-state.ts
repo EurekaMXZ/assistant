@@ -83,6 +83,16 @@ function currentTimeline(state: TurnTimelineState, turnId: string, conversationI
   );
 }
 
+function isOlderTurnUpdate(current: Turn, incoming: Turn) {
+  const currentUpdatedAt = Date.parse(current.updated_at);
+  const incomingUpdatedAt = Date.parse(incoming.updated_at);
+  return (
+    Number.isFinite(currentUpdatedAt) &&
+    Number.isFinite(incomingUpdatedAt) &&
+    incomingUpdatedAt < currentUpdatedAt
+  );
+}
+
 function updateItem(
   state: TurnTimelineState,
   turnId: string,
@@ -117,6 +127,10 @@ export function transitionTurnTimelineState(
     };
   }
   if (action.type === "register-turn") {
+    const current = state.turnsById[action.turn.id];
+    if (current && isOlderTurnUpdate(current, action.turn)) {
+      return { accepted: false, state };
+    }
     return {
       accepted: true,
       state: {
