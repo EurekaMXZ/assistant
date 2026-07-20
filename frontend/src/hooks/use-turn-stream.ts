@@ -68,7 +68,7 @@ export function useTurnStream({
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      let completed = false;
+      let settled = false;
 
       try {
         const result = await runTurnStreamController({
@@ -82,8 +82,8 @@ export function useTurnStream({
           shouldReconnect: (error) => !isSessionUnauthorizedError(error),
         });
         if (result.kind === "terminal") {
-          completed = result.done.status === "completed";
-          if (!completed && result.done.status !== "cancelled") {
+          settled = true;
+          if (result.done.status !== "completed" && result.done.status !== "cancelled") {
             toast.error(result.done.error || "生成失败");
           }
         } else {
@@ -95,7 +95,7 @@ export function useTurnStream({
         }
       } finally {
         if (abortRef.current !== controller) return;
-        if (completed && activeConversationIdRef.current === requestedConversationId) {
+        if (settled && activeConversationIdRef.current === requestedConversationId) {
           await onCompleted();
         }
         if (

@@ -2,7 +2,7 @@ import type { TurnStreamFrame } from "./api-schemas";
 import type { Turn, TurnStreamDone } from "./types";
 
 export type TurnStreamConnectionState =
-  "connecting" | "streaming" | "reconnecting" | "settling" | "completed" | "failed";
+  "connecting" | "streaming" | "reconnecting" | "settling" | "completed" | "cancelled" | "failed";
 
 export interface TurnStreamControllerOptions {
   turnId: string;
@@ -61,7 +61,13 @@ export async function runTurnStreamController({
         if (frame.event === "turn.done") terminal = frame.data;
       }
       if (terminal) {
-        onStateChange?.(terminal.status === "completed" ? "completed" : "failed");
+        onStateChange?.(
+          terminal.status === "completed"
+            ? "completed"
+            : terminal.status === "cancelled"
+              ? "cancelled"
+              : "failed",
+        );
         return { kind: "terminal", done: terminal };
       }
       lastError = new Error("流式连接在任务完成前已关闭");
@@ -78,7 +84,7 @@ export async function runTurnStreamController({
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
   onStateChange?.("settling");
   const turn = await getTurn(turnId);
-  if (turn.status === "completed" || turn.status === "failed") {
+  if (turn.status === "completed" || turn.status === "failed" || turn.status === "cancelled") {
     const done: TurnStreamDone = {
       turn_id: turn.id,
       conversation_id: turn.conversation_id,
@@ -87,7 +93,13 @@ export async function runTurnStreamController({
       ...(turn.error_message ? { error: turn.error_message } : {}),
     };
     onEvent({ event: "turn.done", data: done });
-    onStateChange?.(turn.status === "completed" ? "completed" : "failed");
+    onStateChange?.(
+      turn.status === "completed"
+        ? "completed"
+        : turn.status === "cancelled"
+          ? "cancelled"
+          : "failed",
+    );
     return { kind: "terminal", done };
   }
   const error = new Error(`${lastError?.message || "流式连接失败"}，任务仍在处理中，请重试连接`);

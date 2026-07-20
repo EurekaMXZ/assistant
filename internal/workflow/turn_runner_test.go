@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
+	"github.com/EurekaMXZ/assistant/internal/stream"
 	"github.com/EurekaMXZ/assistant/internal/tool"
 )
 
@@ -77,6 +79,110 @@ type stubScheduledRunStore struct {
 	failErr      error
 	failed       int
 	parentFailed int
+	cancelled    int
+}
+
+type blockingCancellationModel struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (m *blockingCancellationModel) MarshalRequest(llm.ModelRequest) (json.RawMessage, error) {
+	return json.RawMessage(`{"model":"gpt-test"}`), nil
+}
+
+func (m *blockingCancellationModel) StreamResponse(ctx context.Context, _ llm.ModelRequest, _ llm.ModelEventHandler) (*llm.ModelResult, error) {
+	m.once.Do(func() { close(m.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestTurnRunnerCancelActiveRun(t *testing.T) {
+	runner := &TurnRunner{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	unregister := runner.registerActiveRun("turn-1", "run-1", cancel)
+
+	if got := runner.cancelActiveRun("turn-1"); got != "run-1" {
+		t.Fatalf("cancelled run id = %q, want run-1", got)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("active run context was not cancelled")
+	}
+	unregister()
+	if got := runner.cancelActiveRun("turn-1"); got != "" {
+		t.Fatalf("run id after unregister = %q, want empty", got)
+	}
+}
+
+func TestTurnRunnerCancellationPublishesTerminalStreamEvent(t *testing.T) {
+	runs := &stubScheduledRunStore{}
+	publisher := &recordingPublisher{}
+	runner := &TurnRunner{runs: runs, streamHub: publisher}
+
+	if err := runner.HandleCancellationRequested(t.Context(), WorkflowEvent{
+		ConversationID: "conv-1", TurnID: "turn-1",
+	}); err != nil {
+		t.Fatalf("handle cancellation: %v", err)
+	}
+	if runs.cancelled != 1 {
+		t.Fatalf("cancellation finalizations = %d, want 1", runs.cancelled)
+	}
+	if len(publisher.events) != 2 || publisher.events[0].Type != domain.ConversationEventRunCancelled || publisher.events[1].Type != stream.EventTurnDone {
+		t.Fatalf("cancellation stream events = %#v", publisher.events)
+	}
+}
+
+func TestTurnRunnerCancellationCancelsProviderContext(t *testing.T) {
+	model := &blockingCancellationModel{started: make(chan struct{})}
+	artifacts := &stubToolArtifactStore{}
+	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, artifacts, nil)
+	state := &ScheduledRunState{
+		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
+		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{
+			Model: "gpt-test", ContextWindowTokens: 1_000,
+			Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "hello"}},
+		},
+	}
+	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{"step":1}`))
+	if err != nil {
+		t.Fatalf("persist scheduled state: %v", err)
+	}
+	runs := &stubScheduledRunStore{run: &domain.TurnRun{
+		ID: "run-1", TurnID: "turn-1", StepIndex: 1, Status: domain.TurnRunStatusQueued, StateBlobKey: stateKey,
+	}}
+	runner := &TurnRunner{
+		settings:  WorkflowSettings{WorkerLeaseTimeout: time.Hour},
+		tools:     orchestrator,
+		runs:      runs,
+		streamHub: &recordingPublisher{},
+		blobs:     &stubTurnArtifactStore{},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.HandleTurnRunRequested(t.Context(), WorkflowEvent{
+			EventType: EventTurnRunRequested, ConversationID: "conv-1", TurnID: "turn-1", TurnRunID: "run-1",
+		})
+	}()
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider request did not start")
+	}
+	if got := runner.cancelActiveRun("turn-1"); got != "run-1" {
+		t.Fatalf("cancelled run id = %q, want run-1", got)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled run returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider request did not stop after cancellation")
+	}
 }
 
 type stubTurnWorkflowStore struct {
@@ -172,6 +278,11 @@ func (s *stubScheduledRunStore) FailScheduledTurnRun(context.Context, TurnRunLea
 	}
 	s.parentFailed++
 	return s.run, nil
+}
+
+func (s *stubScheduledRunStore) FinalizeTurnCancellation(context.Context, string, string) error {
+	s.cancelled++
+	return nil
 }
 
 func (s *stubGeneratedAttachmentStore) UpsertAttachment(_ context.Context, params assistantattachment.CreateAttachmentParams) (*domain.Attachment, error) {

@@ -9,6 +9,7 @@ import { ComposerShell, type ComposerShellAttachment } from "./composer-shell";
 interface ComposerProps {
   attachments?: ComposerShellAttachment[];
   allowEmpty?: boolean;
+  cancelling?: boolean;
   editing?: boolean;
   editingBusy?: boolean;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
@@ -33,6 +34,7 @@ interface ComposerProps {
 export function Composer({
   attachments = [],
   allowEmpty,
+  cancelling,
   editing,
   editingBusy,
   inputRef,
@@ -80,6 +82,7 @@ export function Composer({
           editing && "border-foreground/35 shadow-lg ring-2 ring-foreground/10",
         )}
         busy={editingBusy}
+        cancelling={cancelling}
         disabled={disabled}
         editing={editing}
         inputRef={inputRef}

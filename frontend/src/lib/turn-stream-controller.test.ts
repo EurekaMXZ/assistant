@@ -55,6 +55,24 @@ describe("turn stream reconnect", () => {
     expect(events.at(-1)?.event).toBe("turn.done");
   });
 
+  it("reconciles a cancelled turn after the stream disconnects", async () => {
+    const events: TurnStreamFrame[] = [];
+    const result = await runTurnStreamController({
+      turnId: "turn-1",
+      signal: new AbortController().signal,
+      openStream: () => frames([]),
+      getTurn: async () => ({
+        ...processingTurn,
+        status: "cancelled",
+      }),
+      onEvent: (event) => events.push(event),
+      wait: async () => undefined,
+      maxReconnects: 0,
+    });
+    expect(result).toMatchObject({ kind: "terminal", done: { status: "cancelled" } });
+    expect(events.at(-1)?.event).toBe("turn.done");
+  });
+
   it("returns a retryable result when the turn remains nonterminal", async () => {
     const result = await runTurnStreamController({
       turnId: "turn-1",

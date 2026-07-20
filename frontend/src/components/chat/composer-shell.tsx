@@ -40,6 +40,7 @@ interface ComposerShellProps {
   attachments: ComposerShellAttachment[];
   autoFocus?: boolean;
   busy?: boolean;
+  cancelling?: boolean;
   className?: string;
   disabled?: boolean;
   editing?: boolean;
@@ -300,6 +301,7 @@ export function ComposerShell({
   attachments,
   autoFocus,
   busy,
+  cancelling,
   className,
   disabled,
   editing,
@@ -457,19 +459,25 @@ export function ComposerShell({
         size="icon"
         onClick={streaming ? onCancel : onSubmit}
         disabled={
-          streaming ? !onCancel : (!allowEmpty && !value.trim() && !hasReadyAttachment) || inactive
+          streaming
+            ? cancelling || !onCancel
+            : (!allowEmpty && !value.trim() && !hasReadyAttachment) || inactive
         }
         className="absolute rounded-full"
         style={{ right: 12, bottom: 10 }}
       >
-        {streaming ? (
+        {streaming && cancelling ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : streaming ? (
           <Square className="h-3.5 w-3.5 fill-current" />
         ) : busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <ArrowUp className="h-4 w-4" />
         )}
-        <span className="sr-only">{streaming ? "停止生成" : "发送"}</span>
+        <span className="sr-only">
+          {streaming ? (cancelling ? "正在停止生成" : "停止生成") : "发送"}
+        </span>
       </Button>
     </div>
   );

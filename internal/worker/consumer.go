@@ -14,10 +14,11 @@ import (
 const maxQueuedWorkflowEvents = 1024
 
 type workflowTask struct {
-	message   kafka.Message
-	event     workflow.WorkflowEvent
-	offset    *trackedOffset
-	decodeErr error
+	message    kafka.Message
+	event      workflow.WorkflowEvent
+	offset     *trackedOffset
+	decodeErr  error
+	bypassLane bool
 }
 
 type workflowTaskResult struct {
@@ -74,6 +75,7 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 
 	lanes := make(map[string]*conversationLane)
 	ready := make([]string, 0)
+	readyCancellations := make([]*workflowTask, 0)
 	tracker := newOffsetTracker()
 	queuedCount := 0
 	commitTicker := time.NewTicker(time.Second)
@@ -86,7 +88,10 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 		if queuedCount < maxQueuedWorkflowEvents {
 			fetchedCh = fetched
 		}
-		if len(ready) > 0 {
+		if len(readyCancellations) > 0 {
+			nextJob = readyCancellations[0]
+			jobCh = jobs
+		} else if len(ready) > 0 {
 			conversationID := ready[0]
 			lane := lanes[conversationID]
 			if lane == nil || lane.running || len(lane.pending) == 0 {
@@ -95,6 +100,9 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 			}
 			nextJob = lane.pending[0]
 			jobCh = jobs
+		}
+		if jobCh != nil {
+			fetchedCh = nil
 		}
 
 		select {
@@ -122,14 +130,43 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 			}
 			lane.pending = append(lane.pending, task)
 			queuedCount++
-			ready = enqueueReadyConversation(ready, task.event.ConversationID, lane)
+			if task.event.EventType == workflow.EventTurnCancellationRequested && lane.running {
+				task.bypassLane = true
+				lane.pending = lane.pending[:len(lane.pending)-1]
+				readyCancellations = append(readyCancellations, task)
+			} else {
+				ready = enqueueReadyConversation(ready, task.event.ConversationID, lane)
+			}
 		case jobCh <- nextJob:
+			if nextJob.bypassLane {
+				readyCancellations = readyCancellations[1:]
+				break
+			}
 			conversationID := nextJob.event.ConversationID
 			lane := lanes[conversationID]
 			lane.running = true
 			lane.ready = false
 			ready = ready[1:]
 		case result := <-results:
+			if result.task.bypassLane {
+				conversationID := result.task.event.ConversationID
+				if result.err != nil {
+					s.logger.Printf("handle %s: %v", result.task.event.EventType, result.err)
+					result.task.bypassLane = false
+					lane := lanes[conversationID]
+					if lane == nil {
+						lane = &conversationLane{}
+						lanes[conversationID] = lane
+					}
+					lane.pending = append([]*workflowTask{result.task}, lane.pending...)
+					ready = enqueueReadyConversation(ready, conversationID, lane)
+					continue
+				}
+				tracker.complete(result.task.offset)
+				queuedCount--
+				s.commitReadyOffsets(ctx, reader, tracker)
+				continue
+			}
 			conversationID := result.task.event.ConversationID
 			lane := lanes[conversationID]
 			if lane == nil || len(lane.pending) == 0 || lane.pending[0] != result.task {

@@ -106,7 +106,7 @@ async function inspectUnresolvedTurns(
   for (const turn of turns) {
     if (!turn) continue;
     const unresolved = !assistantTurnIds.has(turn.id);
-    if (["accepted", "context_ready", "processing"].includes(turn.status)) {
+    if (["accepted", "context_ready", "processing", "cancel_requested"].includes(turn.status)) {
       nextMessages = ensureStreamingThinkingMessage(nextMessages, turn.id, conversationId);
       if (unresolved) activeTurnId = turn.id;
       continue;
@@ -291,29 +291,29 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     }
   }, [conversationId]);
 
-  const { isStreaming, streamingTurnId, streamConnectionState, streamTurn, stopStream } =
-    useTurnStream({
-      conversationId,
-      onCompleted: refreshMessages,
-      onEvent: dispatchActiveFrame,
-      onFinished: finishActiveTurn,
-    });
+  const { isStreaming, streamingTurnId, streamConnectionState, streamTurn } = useTurnStream({
+    conversationId,
+    onCompleted: refreshMessages,
+    onEvent: dispatchActiveFrame,
+    onFinished: finishActiveTurn,
+  });
 
   const handleCancelGeneration = useCallback(async () => {
     if (!streamingTurnId || isCancelling) return;
     setIsCancelling(true);
     try {
       await cancelTurn(streamingTurnId);
-      stopStream();
-      await refreshMessages();
     } catch (error) {
+      setIsCancelling(false);
       if (!isSessionUnauthorizedError(error)) {
         toast.error(error instanceof Error ? error.message : "停止生成失败");
       }
-    } finally {
-      setIsCancelling(false);
     }
-  }, [isCancelling, refreshMessages, stopStream, streamingTurnId]);
+  }, [isCancelling, streamingTurnId]);
+
+  useEffect(() => {
+    if (!isStreaming) setIsCancelling(false);
+  }, [isStreaming]);
 
   const load = useCallback(async () => {
     if (authLoading) {
@@ -915,6 +915,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
                 editingMessage.metadata.attachment_ids.length > 0,
               )}
               attachments={attachments}
+              cancelling={isCancelling}
               editing={Boolean(editingMessage)}
               editingBusy={isSubmittingEdit}
               inputRef={composerInputRef}

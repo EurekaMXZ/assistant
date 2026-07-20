@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -30,6 +31,13 @@ type TurnRunner struct {
 	sandboxes            tool.ConversationSandboxReader
 	runs                 TurnRunWorkflowStore
 	models               ModelCatalogResolver
+	activeMu             sync.Mutex
+	activeRuns           map[string]activeTurnRun
+}
+
+type activeTurnRun struct {
+	runID  string
+	cancel context.CancelFunc
 }
 
 func (r *TurnRunner) HandleAccepted(ctx context.Context, event WorkflowEvent) error {
@@ -52,6 +60,17 @@ func (r *TurnRunner) HandleAccepted(ctx context.Context, event WorkflowEvent) er
 }
 
 func (r *TurnRunner) HandleCancellationRequested(ctx context.Context, event WorkflowEvent) error {
+	runID := r.cancelActiveRun(event.TurnID)
+	if r.streamHub != nil {
+		if err := r.streamHub.Publish(ctx, stream.Event{
+			Type:           domain.ConversationEventRunCancelled,
+			ConversationID: event.ConversationID,
+			TurnID:         event.TurnID,
+			RunID:          runID,
+		}); err != nil {
+			return err
+		}
+	}
 	canceller, ok := r.runs.(TurnCancellationStore)
 	if !ok || canceller == nil {
 		return errors.New("turn cancellation store is not configured")
@@ -60,7 +79,51 @@ func (r *TurnRunner) HandleCancellationRequested(ctx context.Context, event Work
 	if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if r.streamHub == nil {
+		return nil
+	}
+	return r.streamHub.Publish(ctx, stream.Event{
+		Type:           stream.EventTurnDone,
+		ConversationID: event.ConversationID,
+		TurnID:         event.TurnID,
+		RunID:          runID,
+	})
+}
+
+func (r *TurnRunner) registerActiveRun(turnID string, runID string, cancel context.CancelFunc) func() {
+	if r == nil || strings.TrimSpace(turnID) == "" || cancel == nil {
+		return func() {}
+	}
+	r.activeMu.Lock()
+	if r.activeRuns == nil {
+		r.activeRuns = make(map[string]activeTurnRun)
+	}
+	r.activeRuns[turnID] = activeTurnRun{runID: runID, cancel: cancel}
+	r.activeMu.Unlock()
+	return func() {
+		r.activeMu.Lock()
+		if active, ok := r.activeRuns[turnID]; ok && active.runID == runID {
+			delete(r.activeRuns, turnID)
+		}
+		r.activeMu.Unlock()
+	}
+}
+
+func (r *TurnRunner) cancelActiveRun(turnID string) string {
+	if r == nil {
+		return ""
+	}
+	r.activeMu.Lock()
+	active, ok := r.activeRuns[turnID]
+	r.activeMu.Unlock()
+	if !ok {
+		return ""
+	}
+	active.cancel()
+	return active.runID
 }
 
 func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent) error {
@@ -339,6 +402,15 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		return fmt.Errorf("unsupported turn run status %q", run.Status)
 	}
 
+	executionParent, cancelExecution := context.WithCancel(ctx)
+	unregisterActiveRun := r.registerActiveRun(run.TurnID, run.ID, cancelExecution)
+	stopLease := func() error { return nil }
+	defer func() {
+		unregisterActiveRun()
+		cancelExecution()
+		_ = stopLease()
+	}()
+
 	claimed, lease, err := r.runs.ClaimTurnRun(ctx, run.ID)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
@@ -346,8 +418,11 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		}
 		return err
 	}
-	runCtx, stopLease := startTurnRunLeaseHeartbeat(ctx, r.runs, lease, r.settings.WorkerLeaseTimeout)
-	defer stopLease()
+	runCtx, stop := startTurnRunLeaseHeartbeat(executionParent, r.runs, lease, r.settings.WorkerLeaseTimeout)
+	stopLease = stop
+	if runCtx.Err() != nil {
+		return nil
+	}
 	var state *ScheduledRunState
 	var outcome *ScheduledRunOutcome
 	responseKey := claimed.ResponseBlobKey

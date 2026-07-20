@@ -394,6 +394,83 @@ func TestConsumeHandlesEventAndCommitsMessage(t *testing.T) {
 	}
 }
 
+func TestConsumePrioritizesCancellationForRunningConversation(t *testing.T) {
+	makeMessage := func(eventType string) kafka.Message {
+		payload, err := json.Marshal(workflow.WorkflowEvent{
+			ID:             eventType,
+			EventType:      eventType,
+			ConversationID: "conversation-1",
+			TurnID:         "turn-1",
+		})
+		if err != nil {
+			t.Fatalf("marshal workflow event: %v", err)
+		}
+		return kafka.Message{Topic: "workflow", Partition: 0, Key: []byte("conversation-1"), Value: payload}
+	}
+
+	first := makeMessage(workflow.EventTurnRunRequested)
+	first.Offset = 1
+	second := makeMessage(workflow.EventTurnCancellationRequested)
+	second.Offset = 2
+	reader := &stubWorkflowReader{fetches: []fetchResult{{message: first}, {message: second}}}
+	started := make(chan struct{})
+	cancellationHandled := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	var cancellationOnce sync.Once
+	engine := &stubWorkflowEngine{onHandle: func(event workflow.WorkflowEvent) {
+		switch event.EventType {
+		case workflow.EventTurnRunRequested:
+			startOnce.Do(func() { close(started) })
+			<-release
+		case workflow.EventTurnCancellationRequested:
+			cancellationOnce.Do(func() { close(cancellationHandled) })
+		}
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	service := &Service{
+		logger:    testLogger(),
+		engine:    engine,
+		newReader: func() WorkflowReader { return reader },
+		sleep:     time.Sleep,
+	}
+	done := make(chan struct{})
+	go func() {
+		service.consume(ctx, 2)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for running workflow event")
+	}
+	select {
+	case <-cancellationHandled:
+	case <-time.After(time.Second):
+		t.Fatalf("cancellation did not bypass the running conversation lane: handled=%#v", engine.handledEvents())
+	}
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		committed, _ := reader.snapshot()
+		if len(committed) == 1 && committed[0].Offset == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for ordered commit: %#v", committed)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("consumer did not stop")
+	}
+}
+
 func TestConsumeSleepsAndSkipsCommitOnHandlerError(t *testing.T) {
 	event := workflow.WorkflowEvent{
 		ID:             "evt_3",

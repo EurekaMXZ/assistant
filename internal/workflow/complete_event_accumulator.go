@@ -112,11 +112,15 @@ func directSemanticEvent(event stream.Event, eventType string, status string) do
 	if identity == "" {
 		identity = event.ToolName
 	}
+	keyPrefix := "run:" + event.RunID
+	if event.RunID == "" {
+		keyPrefix = "turn:" + event.TurnID
+	}
 	return domain.ConversationEventInput{
 		ConversationID:  event.ConversationID,
 		TurnID:          event.TurnID,
 		TurnRunID:       event.RunID,
-		EventKey:        fmt.Sprintf("run:%s:%s:%s:%s", event.RunID, eventType, identity, status),
+		EventKey:        fmt.Sprintf("%s:%s:%s:%s", keyPrefix, eventType, identity, status),
 		SchemaVersion:   1,
 		EventType:       eventType,
 		Payload:         payload,
