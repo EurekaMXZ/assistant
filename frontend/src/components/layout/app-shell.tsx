@@ -148,6 +148,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return null;
   }
 
+  if (isConversationShareRoute) {
+    return (
+      <MobileHeaderContext.Provider
+        value={{
+          setAction: setMobileHeaderAction,
+          setStatus: setMobileHeaderStatus,
+          setTitle: setMobileHeaderTitle,
+          setTitleAction: setMobileHeaderTitleAction,
+        }}
+      >
+        <div className="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
+          <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b px-4 md:hidden">
+            <MobileHeaderTitle title={mobileHeaderTitle} />
+            {mobileHeaderStatus ? (
+              <span className="flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
+                {mobileHeaderStatus.icon}
+                {mobileHeaderStatus.label}
+              </span>
+            ) : null}
+          </header>
+          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+        </div>
+      </MobileHeaderContext.Provider>
+    );
+  }
+
   if (pathname.startsWith("/admin")) {
     return <main className="h-dvh min-h-0 overflow-hidden">{children}</main>;
   }
