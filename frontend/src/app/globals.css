@@ -152,6 +152,26 @@
   white-space: normal;
 }
 
+.chat-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+}
+
+.chat-markdown .katex-display > .katex {
+  width: max-content;
+  min-width: 100%;
+}
+
+.chat-markdown :not(.katex-display) > .katex {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+
 .chat-markdown [data-streamdown="code-block"] {
   border-color: var(--chat-rich-surface);
   border-radius: var(--radius-md);

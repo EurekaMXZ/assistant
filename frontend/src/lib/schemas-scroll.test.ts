@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { billingToolPriceSchema, conversationSchema, parseTurnStreamFrame } from "./api-schemas";
-import { isViewportNearBottom } from "./scroll-follow";
+import { isViewportNearBottom, shouldFollowAfterScroll } from "./scroll-follow";
 import { parseSseFrame, SseValidationError } from "./sse";
 
 describe("runtime schemas", () => {
@@ -53,5 +53,14 @@ describe("scroll following", () => {
     expect(isViewportNearBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 100 })).toBe(
       false,
     );
+  });
+
+  it("stops following as soon as the user scrolls upward near the bottom", () => {
+    expect(
+      shouldFollowAfterScroll({ scrollHeight: 1000, scrollTop: 850, clientHeight: 100 }, 900),
+    ).toBe(false);
+    expect(
+      shouldFollowAfterScroll({ scrollHeight: 1000, scrollTop: 900, clientHeight: 100 }, 850),
+    ).toBe(true);
   });
 });

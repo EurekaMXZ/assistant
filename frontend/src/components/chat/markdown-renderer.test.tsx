@@ -46,4 +46,18 @@ describe("markdown renderer", () => {
 
     expect(open).toHaveBeenCalledWith("https://example.com/weather", "_blank", "noreferrer");
   });
+
+  it("renders math markdown inside the bounded markdown surface", async () => {
+    await act(async () => {
+      root.render(
+        <MarkdownRenderer
+          content={String.raw`$$\sum_{i=1}^{100} x_i + \prod_{j=1}^{100} y_j = z$$`}
+        />,
+      );
+    });
+
+    const markdown = container.querySelector(".chat-markdown");
+    expect(markdown).not.toBeNull();
+    expect(markdown?.textContent).toContain("100");
+  });
 });

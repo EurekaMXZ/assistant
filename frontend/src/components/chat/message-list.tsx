@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { Message, Turn } from "@/lib/types";
-import { isViewportNearBottom } from "@/lib/scroll-follow";
+import { shouldFollowAfterScroll } from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
 
 interface MessageListProps {
@@ -91,6 +91,8 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const lastTouchYRef = useRef<number | null>(null);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -99,22 +101,65 @@ export function MessageList({
     );
     if (!viewport) return;
     const updateFollow = () => {
-      shouldFollowRef.current = isViewportNearBottom(viewport);
+      shouldFollowRef.current = shouldFollowAfterScroll(viewport, lastScrollTopRef.current);
+      lastScrollTopRef.current = viewport.scrollTop;
     };
+    const stopFollowing = () => {
+      shouldFollowRef.current = false;
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) stopFollowing();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (["ArrowUp", "Home", "PageUp"].includes(event.key)) stopFollowing();
+    };
+    const handleTouchStart = (event: TouchEvent) => {
+      lastTouchYRef.current = event.touches[0]?.clientY ?? null;
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY;
+      if (nextY === undefined) return;
+      if (lastTouchYRef.current !== null && nextY > lastTouchYRef.current) stopFollowing();
+      lastTouchYRef.current = nextY;
+    };
+    const handleTouchEnd = () => {
+      lastTouchYRef.current = null;
+    };
+
+    lastScrollTopRef.current = viewport.scrollTop;
     viewport.addEventListener("scroll", updateFollow, { passive: true });
-    return () => viewport.removeEventListener("scroll", updateFollow);
+    viewport.addEventListener("wheel", handleWheel, { passive: true });
+    viewport.addEventListener("keydown", handleKeyDown);
+    viewport.addEventListener("touchstart", handleTouchStart, { passive: true });
+    viewport.addEventListener("touchmove", handleTouchMove, { passive: true });
+    viewport.addEventListener("touchend", handleTouchEnd, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", updateFollow);
+      viewport.removeEventListener("wheel", handleWheel);
+      viewport.removeEventListener("keydown", handleKeyDown);
+      viewport.removeEventListener("touchstart", handleTouchStart);
+      viewport.removeEventListener("touchmove", handleTouchMove);
+      viewport.removeEventListener("touchend", handleTouchEnd);
+    };
   }, []);
 
   useEffect(() => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
     );
-    if (!viewport || !shouldFollowRef.current) return;
+    if (!viewport) return;
+    if (messages.length === 0) {
+      shouldFollowRef.current = true;
+      lastScrollTopRef.current = 0;
+      return;
+    }
+    if (!shouldFollowRef.current) return;
 
     viewport.scrollTo({
       top: viewport.scrollHeight,
-      behavior: "smooth",
+      behavior: "auto",
     });
+    lastScrollTopRef.current = viewport.scrollTop;
   }, [messages, streamingTurnId]);
 
   useEffect(() => {

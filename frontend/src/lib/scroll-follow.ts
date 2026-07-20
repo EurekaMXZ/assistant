@@ -6,3 +6,11 @@ export function isViewportNearBottom(
 ) {
   return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= threshold;
 }
+
+export function shouldFollowAfterScroll(
+  viewport: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
+  previousScrollTop: number,
+) {
+  if (viewport.scrollTop < previousScrollTop - 1) return false;
+  return isViewportNearBottom(viewport);
+}
