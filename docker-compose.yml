@@ -71,17 +71,7 @@ services:
       start_period: 5s
 
   migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: migrate
-        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
-        GOSUMDB: ${GOSUMDB:-sum.golang.org}
-        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
-        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
-        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
-        NO_PROXY: ${DOCKER_NO_PROXY:-}
+    image: ${ASSISTANT_IMAGE_PREFIX:-ghcr.io/eurekamxz/assistant}-migrate:${ASSISTANT_IMAGE_TAG:-latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,17 +81,7 @@ services:
     restart: "no"
 
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: api
-        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
-        GOSUMDB: ${GOSUMDB:-sum.golang.org}
-        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
-        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
-        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
-        NO_PROXY: ${DOCKER_NO_PROXY:-}
+    image: ${ASSISTANT_IMAGE_PREFIX:-ghcr.io/eurekamxz/assistant}-api:${ASSISTANT_IMAGE_TAG:-latest}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -137,7 +117,7 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.28-alpine
+    image: ${ASSISTANT_IMAGE_PREFIX:-ghcr.io/eurekamxz/assistant}-nginx:${ASSISTANT_IMAGE_TAG:-latest}
     depends_on:
       api:
         condition: service_started
@@ -145,8 +125,6 @@ services:
         condition: service_healthy
     ports:
       - "${NGINX_HOST_PORT:-8080}:8080"
-    volumes:
-      - ./deploy/nginx/api.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
       interval: 10s
@@ -156,15 +134,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_BASE_URL: /api/v1
-        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
-        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
-        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
-        NO_PROXY: ${DOCKER_NO_PROXY:-}
+    image: ${ASSISTANT_IMAGE_PREFIX:-ghcr.io/eurekamxz/assistant}-frontend:${ASSISTANT_IMAGE_TAG:-latest}
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 3000
@@ -183,17 +153,7 @@ services:
     restart: unless-stopped
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: worker
-        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
-        GOSUMDB: ${GOSUMDB:-sum.golang.org}
-        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
-        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
-        ALL_PROXY: ${DOCKER_ALL_PROXY:-}
-        NO_PROXY: ${DOCKER_NO_PROXY:-}
+    image: ${ASSISTANT_IMAGE_PREFIX:-ghcr.io/eurekamxz/assistant}-worker:${ASSISTANT_IMAGE_TAG:-latest}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -236,8 +196,6 @@ services:
       OUTBOX_BATCH_SIZE: 100
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - ./prompts:/app/prompts:ro
     restart: unless-stopped
 
 volumes:
