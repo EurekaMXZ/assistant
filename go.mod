@@ -3,7 +3,7 @@ module github.com/EurekaMXZ/assistant
 go 1.26.4
 
 require (
-	connectrpc.com/connect v1.18.1
+	connectrpc.com/connect v1.20.0
 	github.com/TencentCloudAgentRuntime/ags-go-sdk v0.1.5
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -64,6 +64,6 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 )
