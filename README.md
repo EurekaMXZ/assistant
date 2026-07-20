@@ -67,7 +67,7 @@ cp .env.example .env
 ### 本地开发
 
 ```bash
-# 启动基础设施；开发 override 仅将中间件端口绑定到本机回环地址
+# 启动基础设施；开发 override 仅将中间件端口绑定到本机回环地址，`minio` 服务使用 `pgsty/minio` 镜像
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis kafka minio
 
 # 配置浏览器直连的后端地址
@@ -91,7 +91,7 @@ cd frontend && pnpm install && pnpm dev
 
 附件不会经过 Go API 传输。浏览器先分块计算 SHA-256/MD5，再向 API 申请 presigned PUT 并直接上传到 S3；长度、类型和 `Content-MD5` 都包含在签名中。上传成功并完成元数据确认后附件才进入 `ready`，发送时只携带当下已完成的附件；下载时 API 只返回 presigned GET。每个用户默认拥有 `512 MiB` 存储配额，可在用户管理中调整；存储空间 workspace 可列出、下载和删除自己的附件。API/Worker 使用私网 `S3_ENDPOINT`，浏览器使用 `S3_PUBLIC_ENDPOINT`，两者可以不同。bucket 必须允许 `WEB_ORIGIN` 发起 `PUT`、`GET`、`HEAD`，并允许 `Content-Type` 与 `Content-MD5` 请求头。
 
-对象存储通过统一 `S3_*` 配置支持 AWS S3、阿里云 OSS 的 S3 兼容 endpoint、Cloudflare R2 和 MinIO：
+对象存储通过统一 `S3_*` 配置支持 AWS S3、阿里云 OSS 的 S3 兼容 endpoint、Cloudflare R2 和 MinIO-compatible 服务。本地 Compose 默认使用 `pgsty/minio` 社区维护镜像，`S3_PROVIDER` 仍填写 `minio`：
 
 | Provider | `S3_PROVIDER` | Endpoint 示例 | Region 示例 |
 | --- | --- | --- | --- |
@@ -100,7 +100,7 @@ cd frontend && pnpm install && pnpm dev
 | Cloudflare R2 | `r2` | `https://<account>.r2.cloudflarestorage.com` | `auto` |
 | MinIO | `minio` | `http://127.0.0.1:9000` | `us-east-1` |
 
-`S3_AUTO_CREATE_BUCKET=true` 时 worker 会创建 bucket；CORS 必须由对象存储部署侧配置。Compose 的 MinIO 使用 `MINIO_API_CORS_ALLOW_ORIGIN=${WEB_ORIGIN}`，AWS、阿里云 OSS 和 R2 应在各自控制台或基础设施代码中设置对应规则。自定义 endpoint 如果需要 path-style URL，设置 `S3_BUCKET_LOOKUP=path`。Compose 内部地址与宿主机地址不同时用 `S3_DOCKER_ENDPOINT` 覆盖容器内 endpoint。未完成的上传由 worker 按 `S3_PENDING_UPLOAD_TTL`（默认 `24h`）清理。
+`S3_AUTO_CREATE_BUCKET=true` 时 worker 会创建 bucket；CORS 必须由对象存储部署侧配置。Compose 默认对象存储服务使用 `pgsty/minio` 镜像，并通过 `MINIO_API_CORS_ALLOW_ORIGIN=${WEB_ORIGIN}` 配置 CORS；AWS、阿里云 OSS 和 R2 应在各自控制台或基础设施代码中设置对应规则。自定义 endpoint 如果需要 path-style URL，设置 `S3_BUCKET_LOOKUP=path`。Compose 内部地址与宿主机地址不同时用 `S3_DOCKER_ENDPOINT` 覆盖容器内 endpoint。未完成的上传由 worker 按 `S3_PENDING_UPLOAD_TTL`（默认 `24h`）清理。
 
 worker 从 S3 读取用户图片后仍在 Responses API 的 `input_image.image_url` 中使用 base64 data URL；`image_generation_call.result` 的 base64 结果仍由 worker 解码并写入 S3，不使用 OpenAI Files API。导入沙箱时对象从 S3 流式写入临时路径，边传输边校验大小和 SHA-256，校验成功后再原子重命名。
 
@@ -114,7 +114,7 @@ worker 从 S3 读取用户图片后仍在 Responses API 的 `input_image.image_u
 docker compose up -d --build
 ```
 
-默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`。Nginx 通过 `NGINX_HOST_PORT` 发布应用入口；本地 MinIO 通过回环地址的 `MINIO_HOST_PORT`（默认 `9000`）发布对象 API，供浏览器直传和直下。PostgreSQL、Redis、Kafka、Go API 和 Next.js 仅在 Compose 网络内可达。浏览器默认访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。
+默认启动 `postgres`、`redis`、`kafka`、`minio`、`migrate`、`api`、`nginx`、`frontend`、`worker`，其中 `minio` 服务使用 `pgsty/minio` 社区维护镜像。Nginx 通过 `NGINX_HOST_PORT` 发布应用入口；本地对象存储通过回环地址的 `MINIO_HOST_PORT`（默认 `9000`）发布对象 API，供浏览器直传和直下。PostgreSQL、Redis、Kafka、Go API 和 Next.js 仅在 Compose 网络内可达。浏览器默认访问 `http://localhost:8080`：Nginx 将 `/api/` 和 `/healthz` 转发给 Go API，其余路径转发给 Next.js。
 
 单机部署到其他域名时，将域名或 TLS 入口指向 `NGINX_HOST_PORT`（默认 `8080`），并在 `.env` 中把 `WEB_ORIGIN` 设置为完整公开地址，例如 `https://assistant.example.com`。`WEB_ORIGIN` 同时用于 CORS 和邮箱验证、密码重置链接。Compose 会固定构建同源 `/api/v1`；前后端分开部署时才需要另外设置 `NEXT_PUBLIC_API_BASE_URL`。Nginx 配置位于 `deploy/nginx/api.conf`。
 
