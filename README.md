@@ -89,11 +89,11 @@ cd frontend && pnpm install && pnpm dev
 
 开发环境的 Go API 和 Next.js 分别监听宿主机 `8080`、`3000`，`docker-compose.dev.yml` 中的 Nginx 通过 `host-gateway` 连接它们，并默认在 `8081` 提供高德代理。开发页面仍从 `http://localhost:3000` 访问，避免改变高德 Web Key 的域名白名单：在根 `.env` 设置 `DEV_NGINX_HOST_PORT=8081`、`WEB_ORIGIN=http://localhost:3000` 和与 Web Key 配对的 `AMAP_SECURITY_JS_CODE`；在 `frontend/.env.local` 设置 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8080/api/v1`、`NEXT_PUBLIC_AMAP_JS_KEY` 与 `NEXT_PUBLIC_AMAP_SERVICE_HOST=http://localhost:8081/_AMapService`。修改前端公开变量后需要重启 `pnpm dev`，修改安全码后执行 `docker compose -f docker-compose.dev.yml up -d --build nginx`。
 
-个性化设置中的地图使用高德 Web JS API 2.0，并且只有用户点击“加载高德地图”后才加载第三方脚本。`NEXT_PUBLIC_AMAP_JS_KEY` 是会进入浏览器 bundle 的 Web 端 key，必须在前端构建时设置；它不是容器运行时配置，修改根目录 `.env` 不会改变已经发布或拉取的前端镜像。未设置时地图、搜索和定位不可用，文本偏好和已保存位置的文本展示不受影响。安全密钥 `AMAP_SECURITY_JS_CODE` 只能保留在 Nginx。前端在加载高德脚本前固定将 `serviceHost` 指向当前公开 origin 的 `/_AMapService`，因此必须从启用了该代理的 Nginx 入口访问应用；直接访问 Next.js 开发端口不会提供地图代理。
+个性化设置中的地图使用高德 Web JS API 2.0。标准 Compose 部署从根目录 `.env` 读取 `AMAP_JS_KEY` 并传给 frontend 容器；Next.js 通过不缓存的 `/runtime-config.js` 在运行时把这个公开 Web Key 提供给浏览器，因此同一个 GHCR 前端镜像可用于不同部署。修改 Key 后重启 frontend 容器即可，不需要重建镜像。未设置时地图、搜索和定位不可用，文本偏好和已保存位置的文本展示不受影响。安全密钥 `AMAP_SECURITY_JS_CODE` 只能保留在 Nginx。前端在加载高德脚本前默认将 `serviceHost` 指向当前公开 origin 的 `/_AMapService`，因此必须从启用了该代理的 Nginx 入口访问应用；直接访问 Next.js 开发端口不会提供地图代理。
 
-标准镜像启用地图需要同时完成构建期 Web key 和 Nginx 代理配置：
+标准镜像启用地图需要同时完成运行时 Web Key 和 Nginx 代理配置：
 
-1. 发布仓库镜像前，在 GitHub Actions repository variable（不是 secret）中设置 `NEXT_PUBLIC_AMAP_JS_KEY`；`publish-images.yml` 仅把该公开 Web key 传给 frontend build。自行构建时使用 `docker build --build-arg NEXT_PUBLIC_AMAP_JS_KEY=... -t your-prefix-frontend:tag frontend`。构建完成后再修改 `.env` 不会生效，必须重建前端镜像。
+1. 在运行环境的根 `.env` 设置 `AMAP_JS_KEY`。Compose 在启动 frontend 容器时传入该公开 Web Key，GHCR 镜像本身不包含任何部署方的高德 Key。
 2. 在运行环境设置 `AMAP_SECURITY_JS_CODE`。Compose 只把它传给 Nginx；官方 Nginx entrypoint 启动时用 `deploy/nginx/amap-service.conf.example` 渲染 `/_AMapService` 配置，安全码不会进入前端或镜像层。
 3. 使用标准 `docker compose up -d` 启动。代理只放行地图当前需要的高德路径和 GET/POST，限制请求体与每 IP 速率，并将 JSONP 响应声明为 JavaScript。安全码未设置时代理返回 `503`。
 
@@ -114,7 +114,7 @@ worker 从 S3 读取用户图片后仍在 Responses API 的 `input_image.image_u
 
 ### 前后端分开部署
 
-前端镜像构建时通过 `NEXT_PUBLIC_API_BASE_URL` 指向浏览器可访问的后端地址，例如 `https://api.example.com/api/v1`；启用地图时同时传入 `NEXT_PUBLIC_AMAP_JS_KEY`。这些值会进入浏览器 bundle，修改后必须重新构建前端，运行容器时传入同名环境变量不会改写 bundle。`AMAP_SECURITY_JS_CODE` 不得作为镜像构建参数。后端通过 `WEB_ORIGIN` 只允许前端来源，例如 `https://app.example.com`。Next.js 不代理任何后端 API。
+前端镜像构建时仍通过 `NEXT_PUBLIC_API_BASE_URL` 指向浏览器可访问的后端地址，例如 `https://api.example.com/api/v1`；标准 GHCR 镜像固定使用同源 `/api/v1`。高德 Web Key 改为运行时变量：独立运行 frontend 容器时传入 `AMAP_JS_KEY`，需要覆盖代理地址时可额外传入 `AMAP_SERVICE_HOST`。这两个值由 `/runtime-config.js` 提供给浏览器。`AMAP_SECURITY_JS_CODE` 只能传给 Nginx，不得传给 frontend。后端通过 `WEB_ORIGIN` 只允许前端来源，例如 `https://app.example.com`。Next.js 不代理后端 API。
 
 ### Docker Compose 单机部署
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { AppShell } from "@/components/layout/app-shell";
 import { Providers } from "@/components/providers";
@@ -34,6 +35,7 @@ export default function RootLayout({
       className={`${inter.variable} ${geistMono.variable} fixed inset-0 h-full w-full overflow-hidden antialiased`}
     >
       <body className="fixed inset-0 flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
+        <Script src="/runtime-config.js" strategy="beforeInteractive" />
         <AuthProvider>
           <Providers>
             <AppShell>{children}</AppShell>

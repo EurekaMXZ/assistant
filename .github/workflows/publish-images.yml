@@ -42,7 +42,6 @@ jobs:
             file: ./frontend/Dockerfile
             build-args: |
               NEXT_PUBLIC_API_BASE_URL=/api/v1
-              NEXT_PUBLIC_AMAP_JS_KEY=${{ vars.NEXT_PUBLIC_AMAP_JS_KEY }}
           - name: nginx
             context: ./deploy/nginx
             file: ./deploy/nginx/Dockerfile

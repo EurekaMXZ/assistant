@@ -9,6 +9,10 @@ import type { UserLocationInput, UserLocationSource } from "@/lib/types";
 
 declare global {
   interface Window {
+    __ASSISTANT_RUNTIME_CONFIG__?: {
+      amapJsKey?: string;
+      amapServiceHost?: string;
+    };
     _AMapSecurityConfig?: { serviceHost: string };
   }
 }
@@ -108,9 +112,19 @@ interface AMapLocationPickerProps {
   onResolvingChange: (resolving: boolean) => void;
 }
 
-const amapKey = process.env.NEXT_PUBLIC_AMAP_JS_KEY?.trim() ?? "";
-const configuredAMapServiceHost = process.env.NEXT_PUBLIC_AMAP_SERVICE_HOST?.trim() ?? "";
 const defaultCenter: [number, number] = [116.397428, 39.90923];
+
+function amapConfig() {
+  const runtime =
+    typeof window === "undefined" ? undefined : window.__ASSISTANT_RUNTIME_CONFIG__;
+  return {
+    key: runtime?.amapJsKey?.trim() || process.env.NEXT_PUBLIC_AMAP_JS_KEY?.trim() || "",
+    serviceHost:
+      runtime?.amapServiceHost?.trim() ||
+      process.env.NEXT_PUBLIC_AMAP_SERVICE_HOST?.trim() ||
+      "",
+  };
+}
 
 function readCoordinates(value: unknown): { latitude: number; longitude: number } | null {
   if (Array.isArray(value) && value.length >= 2) {
@@ -141,6 +155,7 @@ export function AMapLocationPicker({
   onSelectionComplete,
   onResolvingChange,
 }: AMapLocationPickerProps) {
+  const { key: amapKey, serviceHost: configuredAMapServiceHost } = amapConfig();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<AMapMap | null>(null);
   const markerRef = useRef<AMapMarker | null>(null);
@@ -317,7 +332,7 @@ export function AMapLocationPicker({
       autocompleteRef.current = null;
       geolocationRef.current = null;
     };
-  }, []);
+  }, [amapKey, configuredAMapServiceHost]);
 
   useEffect(() => {
     disabledRef.current = disabled;
@@ -426,7 +441,7 @@ export function AMapLocationPicker({
         <MapPinned className="size-7 text-muted-foreground" />
         <p className="mt-3 text-sm font-medium">地图选点不可用</p>
         <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-          当前前端构建未配置 NEXT_PUBLIC_AMAP_JS_KEY。偏好设置仍可正常保存。
+          未配置高德地图 Web Key。偏好设置仍可正常保存。
         </p>
       </div>
     );

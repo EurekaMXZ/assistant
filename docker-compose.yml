@@ -140,6 +140,8 @@ services:
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 3000
+      AMAP_JS_KEY: ${AMAP_JS_KEY:-${NEXT_PUBLIC_AMAP_JS_KEY:-}}
+      AMAP_SERVICE_HOST: ${AMAP_SERVICE_HOST:-${NEXT_PUBLIC_AMAP_SERVICE_HOST:-}}
     healthcheck:
       test:
         [
