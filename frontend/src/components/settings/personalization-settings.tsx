@@ -246,7 +246,8 @@ export function PersonalizationSettings() {
           <span>
             <span className="block text-sm font-medium">允许模型使用已保存的位置</span>
             <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-              向模型提供已保存的地址、地点名称、GCJ-02 经纬度及省市区信息，用于理解当前位置并查找附近地点。关闭后位置仍保存在账户中。
+              向模型提供已保存的地址、地点名称、GCJ-02
+              经纬度及省市区信息，用于理解当前位置并查找附近地点。关闭后位置仍保存在账户中。
             </span>
           </span>
         </label>
@@ -281,11 +282,7 @@ export function PersonalizationSettings() {
             onClick={clearLocation}
             disabled={!savedLocation || locationMutation !== "idle"}
           >
-            {locationMutation === "clearing" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Trash2 />
-            )}
+            {locationMutation === "clearing" ? <Loader2 className="animate-spin" /> : <Trash2 />}
           </Button>
         </div>
 
@@ -306,7 +303,6 @@ export function PersonalizationSettings() {
             });
           }}
         />
-
       </section>
     </div>
   );

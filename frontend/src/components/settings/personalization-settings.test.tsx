@@ -162,7 +162,9 @@ describe("personalization location settings", () => {
     expect(candidate).toBeDefined();
     const resultList = container.querySelector('[aria-label="地址搜索结果"]');
     expect(resultList?.className).toContain("absolute");
-    expect(resultList?.parentElement?.querySelector('input[placeholder="搜索地址或地点"]')).not.toBeNull();
+    expect(
+      resultList?.parentElement?.querySelector('input[placeholder="搜索地址或地点"]'),
+    ).not.toBeNull();
     await act(async () => {
       candidate?.click();
       await vi.waitFor(() => expect(mocks.updateProfileLocation).toHaveBeenCalledTimes(1));
@@ -173,9 +175,7 @@ describe("personalization location settings", () => {
     });
     expect(container.textContent).toContain("浙江省杭州市上城区杭州东站");
 
-    const deleteButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="删除我的位置"]',
-    );
+    const deleteButton = container.querySelector<HTMLButtonElement>('[aria-label="删除我的位置"]');
     await act(async () => {
       deleteButton?.click();
       await vi.waitFor(() => expect(mocks.deleteProfileLocation).toHaveBeenCalledTimes(1));

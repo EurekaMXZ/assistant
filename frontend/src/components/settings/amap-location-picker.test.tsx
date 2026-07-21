@@ -89,9 +89,7 @@ describe("AMap location picker", () => {
       await Promise.resolve();
     });
     expect(clickHandler).not.toBeNull();
-    expect(window._AMapSecurityConfig?.serviceHost).toBe(
-      "http://localhost:8081/_AMapService",
-    );
+    expect(window._AMapSecurityConfig?.serviceHost).toBe("http://localhost:8081/_AMapService");
 
     await act(async () => {
       clickHandler?.({ lnglat: { getLat: () => 31.1, getLng: () => 121.1 } });

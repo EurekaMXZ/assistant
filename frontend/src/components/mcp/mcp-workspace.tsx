@@ -583,9 +583,7 @@ export function MCPWorkspace() {
               onReset={resetChanges}
               onSave={() => void save()}
               onTest={() => void testConnection()}
-              onEnabledChange={(enabled) =>
-                setForm((current) => ({ ...current, enabled }))
-              }
+              onEnabledChange={(enabled) => setForm((current) => ({ ...current, enabled }))}
             />
 
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -960,9 +958,7 @@ function SecretEditor({
                       maxLength={8192}
                       disabled={disabled}
                       autoComplete="new-password"
-                      placeholder={
-                        row.configured && !renamed ? "留空以保留当前值" : "输入凭据值"
-                      }
+                      placeholder={row.configured && !renamed ? "留空以保留当前值" : "输入凭据值"}
                       onChange={(event) => updateRow(row.id, { value: event.target.value })}
                     />
                     {row.configured ? (

@@ -115,14 +115,11 @@ interface AMapLocationPickerProps {
 const defaultCenter: [number, number] = [116.397428, 39.90923];
 
 function amapConfig() {
-  const runtime =
-    typeof window === "undefined" ? undefined : window.__ASSISTANT_RUNTIME_CONFIG__;
+  const runtime = typeof window === "undefined" ? undefined : window.__ASSISTANT_RUNTIME_CONFIG__;
   return {
     key: runtime?.amapJsKey?.trim() || process.env.NEXT_PUBLIC_AMAP_JS_KEY?.trim() || "",
     serviceHost:
-      runtime?.amapServiceHost?.trim() ||
-      process.env.NEXT_PUBLIC_AMAP_SERVICE_HOST?.trim() ||
-      "",
+      runtime?.amapServiceHost?.trim() || process.env.NEXT_PUBLIC_AMAP_SERVICE_HOST?.trim() || "",
   };
 }
 
