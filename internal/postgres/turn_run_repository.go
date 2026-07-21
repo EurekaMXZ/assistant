@@ -27,6 +27,8 @@ const turnRunColumns = `
 	COALESCE(tr.tool_results_blob_key, ''),
 	COALESCE(tr.presentation_events_blob_key, ''),
 	COALESCE(tr.checkpoint_blob_key, ''),
+	COALESCE(tr.failure_blob_key, ''),
+	tr.artifact_metadata,
 	COALESCE(tr.request_checksum, ''),
 	COALESCE(tr.response_checksum, ''),
 	COALESCE(tr.request_size_bytes, 0),
@@ -80,10 +82,10 @@ func (r *TurnRunRepository) StartTurnRun(ctx context.Context, turnID string, pro
 	var runID string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO turn_runs (
-			turn_id, step_index, provider, model, status,
+			turn_id, step_index, attempt, provider, model, status,
 			request_blob_key, state_blob_key
 		)
-		VALUES ($1::uuid, 1, $2, $3, $4, $5, $6)
+		VALUES ($1::uuid, 1, 1, $2, $3, $4, $5, $6)
 		RETURNING id::text
 	`, turnID, provider, model, domain.TurnRunStatusQueued, requestBlobKey, stateBlobKey).Scan(&runID); err != nil {
 		return "", fmt.Errorf("insert first turn run: %w", err)
@@ -112,7 +114,43 @@ func (r *TurnRunRepository) StartTurnRun(ctx context.Context, turnID string, pro
 	return runID, nil
 }
 
-func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runID string, requestKey string, responseKey string, outputItemsKey string, toolResultsKey string, presentationEventsKey string, checkpointKey string, requestChecksum string, responseChecksum string, requestSizeBytes int64, responseSizeBytes int64, requestSchemaVersion int, responseSchemaVersion int) error {
+func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runID string, artifacts []workflow.RunArtifactMetadata) error {
+	if len(artifacts) == 0 {
+		return nil
+	}
+
+	metadata := make(map[string]workflow.RunArtifactMetadata, len(artifacts))
+	var request, response, outputItems, toolResults, presentation, checkpoint, failure workflow.RunArtifactMetadata
+	for _, artifact := range artifacts {
+		if artifact.Name == "" || artifact.ObjectKey == "" {
+			continue
+		}
+		metadata[artifact.Name] = artifact
+		switch artifact.Name {
+		case "request.json.zst":
+			request = artifact
+		case "response.json.zst":
+			response = artifact
+		case "output-items.json.zst":
+			outputItems = artifact
+		case "tool-results.json.zst":
+			toolResults = artifact
+		case "presentation-events.json.zst":
+			presentation = artifact
+		case "context-checkpoint.json.zst":
+			checkpoint = artifact
+		case "failure.json.zst":
+			failure = artifact
+		}
+	}
+	if len(metadata) == 0 {
+		return nil
+	}
+	encodedMetadata, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal turn run artifact metadata: %w", err)
+	}
+
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin turn run artifact metadata: %w", err)
@@ -127,18 +165,21 @@ func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runI
 			tool_results_blob_key = COALESCE(NULLIF($5, ''), tool_results_blob_key),
 			presentation_events_blob_key = COALESCE(NULLIF($6, ''), presentation_events_blob_key),
 			checkpoint_blob_key = COALESCE(NULLIF($7, ''), checkpoint_blob_key),
-			request_checksum = COALESCE(NULLIF($8, ''), request_checksum),
-			response_checksum = COALESCE(NULLIF($9, ''), response_checksum),
-			request_size_bytes = CASE WHEN $10 > 0 THEN $10 ELSE request_size_bytes END,
-			response_size_bytes = CASE WHEN $11 > 0 THEN $11 ELSE response_size_bytes END,
-			request_schema_version = CASE WHEN $12 > 0 THEN $12 ELSE request_schema_version END,
-			response_schema_version = CASE WHEN $13 > 0 THEN $13 ELSE response_schema_version END
+			failure_blob_key = COALESCE(NULLIF($8, ''), failure_blob_key),
+			request_checksum = COALESCE(NULLIF($9, ''), request_checksum),
+			response_checksum = COALESCE(NULLIF($10, ''), response_checksum),
+			request_size_bytes = CASE WHEN $11 > 0 THEN $11 ELSE request_size_bytes END,
+			response_size_bytes = CASE WHEN $12 > 0 THEN $12 ELSE response_size_bytes END,
+			request_schema_version = CASE WHEN $13 > 0 THEN $13 ELSE request_schema_version END,
+			response_schema_version = CASE WHEN $14 > 0 THEN $14 ELSE response_schema_version END,
+			artifact_metadata = artifact_metadata || $15::jsonb
 		WHERE id = $1::uuid
-	`, runID, requestKey, responseKey, outputItemsKey, toolResultsKey, presentationEventsKey, checkpointKey,
-		requestChecksum, responseChecksum, requestSizeBytes, responseSizeBytes, requestSchemaVersion, responseSchemaVersion); err != nil {
+	`, runID, request.ObjectKey, response.ObjectKey, outputItems.ObjectKey, toolResults.ObjectKey, presentation.ObjectKey,
+		checkpoint.ObjectKey, failure.ObjectKey, request.SHA256, response.SHA256, request.UncompressedSize,
+		response.UncompressedSize, request.SchemaVersion, response.SchemaVersion, encodedMetadata); err != nil {
 		return fmt.Errorf("update turn run artifact metadata: %w", err)
 	}
-	if requestKey != "" {
+	if request.ObjectKey != "" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE context_heads ch
 			SET latest_request_run_id = $1::uuid
@@ -165,6 +206,7 @@ func (r *TurnRunRepository) ListReferencedRunArtifactKeys(ctx context.Context) (
 			UNION ALL SELECT tool_results_blob_key FROM turn_runs
 			UNION ALL SELECT presentation_events_blob_key FROM turn_runs
 			UNION ALL SELECT checkpoint_blob_key FROM turn_runs
+			UNION ALL SELECT failure_blob_key FROM turn_runs
 			UNION ALL SELECT state_blob_key FROM turn_runs
 			UNION ALL SELECT result_blob_key FROM turn_runs
 			UNION ALL SELECT request_blob_key FROM turns
@@ -223,10 +265,10 @@ func (r *TurnRunRepository) ScheduleNextTurnRun(ctx context.Context, turnID stri
 	var runID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO turn_runs (
-			turn_id, step_index, provider, model, status,
+			turn_id, step_index, attempt, provider, model, status,
 			request_blob_key, state_blob_key
 		)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+		VALUES ($1::uuid, $2, 1, $3, $4, $5, $6, $7)
 		ON CONFLICT (turn_id, step_index, attempt) DO NOTHING
 		RETURNING id::text
 	`, turnID, stepIndex, provider, model, domain.TurnRunStatusQueued, requestBlobKey, stateBlobKey).Scan(&runID)
@@ -234,7 +276,7 @@ func (r *TurnRunRepository) ScheduleNextTurnRun(ctx context.Context, turnID stri
 		if err := tx.QueryRow(ctx, `
 			SELECT id::text
 			FROM turn_runs
-			WHERE turn_id = $1::uuid AND step_index = $2 AND attempt = 0
+			WHERE turn_id = $1::uuid AND step_index = $2 AND attempt = 1
 		`, turnID, stepIndex).Scan(&runID); err != nil {
 			return "", fmt.Errorf("load existing next turn run: %w", err)
 		}
@@ -289,7 +331,6 @@ func (r *TurnRunRepository) ClaimTurnRun(ctx context.Context, runID string) (*do
 		UPDATE turn_runs tr
 		SET
 			status = $2,
-			attempt = attempt + 1,
 			lease_token = $3::uuid,
 			heartbeat_at = now(),
 			started_at = now(),
@@ -415,6 +456,18 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 		}
 		return nil, fmt.Errorf("complete turn run: %w", err)
 	}
+	var durableCompletion bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM conversation_events
+			WHERE turn_run_id = $1::uuid AND event_type = $2
+		)
+	`, run.ID, domain.ConversationEventRunCompleted).Scan(&durableCompletion); err != nil {
+		return nil, fmt.Errorf("check durable run completion event: %w", err)
+	}
+	if !durableCompletion {
+		return nil, fmt.Errorf("complete turn run: durable run completion event is missing")
+	}
 
 	var modelID, modelPriceID, ownerUserID, conversationID string
 	var modelRevision int64
@@ -432,10 +485,11 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 		UPDATE context_heads
 		SET latest_successful_run_id = $2::uuid,
 			latest_checkpoint_key = COALESCE(NULLIF($3, ''), latest_checkpoint_key),
+			latest_checkpoint_checksum = CASE WHEN $3 <> '' THEN NULLIF($4, '') ELSE latest_checkpoint_checksum END,
 			checkpoint_covered_event_seq = CASE WHEN $3 <> '' THEN last_context_event_seq ELSE checkpoint_covered_event_seq END,
 			version = CASE WHEN $3 <> '' THEN version + 1 ELSE version END
 		WHERE conversation_id = $1::uuid
-	`, conversationID, run.ID, run.CheckpointBlobKey); err != nil {
+	`, conversationID, run.ID, run.CheckpointBlobKey, turnRunArtifactChecksum(run.ArtifactMetadata, "context-checkpoint.json.zst")); err != nil {
 		return nil, fmt.Errorf("advance successful run context head: %w", err)
 	}
 	var execution domain.ModelExecutionSnapshot
@@ -484,6 +538,17 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 		return nil, fmt.Errorf("commit turn run completion: %w", err)
 	}
 	return run, nil
+}
+
+func turnRunArtifactChecksum(raw json.RawMessage, name string) string {
+	if len(raw) == 0 || name == "" {
+		return ""
+	}
+	var metadata map[string]workflow.RunArtifactMetadata
+	if json.Unmarshal(raw, &metadata) != nil {
+		return ""
+	}
+	return metadata[name].SHA256
 }
 
 func (r *TurnRunRepository) failBillingSettlement(

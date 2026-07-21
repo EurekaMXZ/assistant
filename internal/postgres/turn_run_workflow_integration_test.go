@@ -150,6 +150,12 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err != nil || acquired || ambiguous.Status != domain.ToolCallStatusAmbiguous {
 		t.Fatalf("recover ambiguous call = %#v acquired=%t err=%v", ambiguous, acquired, err)
 	}
+	if _, err := NewConversationEventRepository(pool).AppendCompleteEvent(t.Context(), domain.ConversationEventInput{
+		ConversationID: conversationID, TurnID: turnID, TurnRunID: runID,
+		EventKey: "run:" + runID + ":completed", EventType: domain.ConversationEventRunCompleted,
+	}); err != nil {
+		t.Fatalf("persist first run completion event: %v", err)
+	}
 	completed, err := runs.CompleteScheduledTurnRun(t.Context(), firstLease, "resp-1", "response-1", "result-1", llm.ModelUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}, 1, 100_000)
 	if err != nil {
 		t.Fatalf("complete first run: %v", err)
@@ -208,14 +214,20 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err != nil || requeued != 1 {
 		t.Fatalf("requeue stale run count=%d err=%v", requeued, err)
 	}
-	replacement, replacementLease, err := runs.ClaimTurnRun(t.Context(), nextRunID)
+	var replacementRunID string
+	if err := pool.QueryRow(t.Context(), `
+		SELECT id::text FROM turn_runs WHERE turn_id = $1::uuid AND step_index = 2 AND attempt = 2
+	`, turnID).Scan(&replacementRunID); err != nil {
+		t.Fatalf("load replacement run: %v", err)
+	}
+	replacement, replacementLease, err := runs.ClaimTurnRun(t.Context(), replacementRunID)
 	if err != nil {
 		t.Fatalf("claim replacement attempt: %v", err)
 	}
 	if replacementLease.Token == staleLease.Token {
 		t.Fatal("replacement attempt reused stale lease token")
 	}
-	if replacement.ResultBlobKey != "result-2" || replacement.ResponseBlobKey != "response-2" {
+	if replacement.ID == nextRunID || replacement.Attempt != 2 || replacement.ResultBlobKey != "result-2" || replacement.ResponseBlobKey != "response-2" {
 		t.Fatalf("replacement lost checkpoint: %#v", replacement)
 	}
 	if _, err := runs.CompleteScheduledTurnRun(t.Context(), staleLease, "stale", "", "", llm.ModelUsage{}, 0, 100_000); !errors.Is(err, domain.ErrConflict) {
@@ -263,6 +275,12 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	}
 	if _, err := calls.CompleteToolCall(t.Context(), insufficientCall.ID, "output-insufficient"); err != nil {
 		t.Fatalf("complete insufficient tool call: %v", err)
+	}
+	if _, err := NewConversationEventRepository(pool).AppendCompleteEvent(t.Context(), domain.ConversationEventInput{
+		ConversationID: insufficientConversationID, TurnID: insufficientTurnID, TurnRunID: insufficientRunID,
+		EventKey: "run:" + insufficientRunID + ":completed", EventType: domain.ConversationEventRunCompleted,
+	}); err != nil {
+		t.Fatalf("persist insufficient run completion event: %v", err)
 	}
 	settled, err := runs.CompleteScheduledTurnRun(t.Context(), insufficientLease, "resp-insufficient", "response-insufficient", "result-insufficient", llm.ModelUsage{InputTokens: 1000, TotalTokens: 1000}, 0, 100_000)
 	if err != nil || settled.Status != domain.TurnRunStatusFailed {

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/stream"
+	"github.com/klauspost/compress/zstd"
 )
 
 const (
@@ -28,17 +31,22 @@ type turnTimelineEventLister interface {
 	ListTurnStreamEventsByTurn(ctx context.Context, turnID string) ([]domain.TurnStreamEvent, error)
 }
 
+type turnTimelineConversationEventLister interface {
+	ListConversationEventsByTurn(ctx context.Context, turnID string) ([]domain.ConversationEvent, error)
+}
+
 type turnTimelineMessageLister interface {
 	ListAssistantMessagesByTurn(ctx context.Context, turnID string) ([]domain.Message, error)
 }
 
 type GetTurnTimeline struct {
-	Turns     executionTraceTurnGetter
-	Events    turnTimelineEventLister
-	Runs      turnRunLister
-	ToolCalls toolCallLister
-	Messages  turnTimelineMessageLister
-	Artifacts turnRunArtifactReader
+	Turns          executionTraceTurnGetter
+	Events         turnTimelineEventLister
+	CompleteEvents turnTimelineConversationEventLister
+	Runs           turnRunLister
+	ToolCalls      toolCallLister
+	Messages       turnTimelineMessageLister
+	Artifacts      turnRunArtifactReader
 }
 
 type reasoningTimelineItem struct {
@@ -120,15 +128,38 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 		return nil, err
 	}
 
-	reasoningItems, err := uc.loadReasoningItems(ctx, turn, runs)
-	if err != nil {
-		return nil, err
-	}
-
 	timeline := &TurnTimeline{
 		TurnID:         turn.ID,
 		ConversationID: turn.ConversationID,
 		Status:         turn.Status,
+	}
+
+	assistantMessages, err := uc.loadAssistantMessages(ctx, turnID)
+	if err != nil {
+		return nil, err
+	}
+
+	if uc.CompleteEvents != nil {
+		completeEvents, err := uc.CompleteEvents.ListConversationEventsByTurn(ctx, turn.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(completeEvents) > 0 {
+			timeline.LastEventIndex = completeEvents[len(completeEvents)-1].EventSeq
+		}
+		items, err := buildTimelineFromConversationEvents(completeEvents, turn.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) > 0 {
+			items = appendMissingTerminalStatus(items, turn)
+			items, err = uc.reconcileDurableToolCalls(ctx, turn.ID, items)
+			if err != nil {
+				return nil, err
+			}
+			timeline.Items = appendMissingAssistantMessages(items, turn, assistantMessages)
+			return timeline, nil
+		}
 	}
 
 	var events []domain.TurnStreamEvent
@@ -140,14 +171,10 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 	}
 	if len(events) > 0 {
 		timeline.LastEventIndex = events[len(events)-1].EventIndex
-	}
-
-	assistantMessages, err := uc.loadAssistantMessages(ctx, turnID)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(events) > 0 {
+		reasoningItems, err := uc.loadReasoningItems(ctx, turn, runs)
+		if err != nil {
+			return nil, err
+		}
 		if containsReasoningSummaryStreamEvents(events) {
 			reasoningItems = nil
 		}
@@ -155,13 +182,18 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 		if err != nil {
 			return nil, err
 		}
+		items = appendMissingTerminalStatus(items, turn)
 		items, err = uc.reconcileDurableToolCalls(ctx, turn.ID, items)
 		if err != nil {
 			return nil, err
 		}
-		items = appendMissingAssistantMessages(items, turn, assistantMessages)
-		timeline.Items = items
+		timeline.Items = appendMissingAssistantMessages(items, turn, assistantMessages)
 		return timeline, nil
+	}
+
+	reasoningItems, err := uc.loadReasoningItems(ctx, turn, runs)
+	if err != nil {
+		return nil, err
 	}
 
 	items, err := uc.buildFallbackTimeline(ctx, turn, runs, reasoningItems, assistantMessages)
@@ -179,10 +211,20 @@ func (uc GetTurnTimeline) loadReasoningItems(ctx context.Context, turn *domain.T
 
 	items := make([]reasoningTimelineItem, 0, len(runs))
 	for _, run := range runs {
-		key := uc.Artifacts.TurnRunOutputItemsKey(turn.ConversationID, turn.ID, run.StepIndex)
+		key := strings.TrimSpace(run.OutputItemsBlobKey)
+		immutable := key != ""
+		if key == "" {
+			key = uc.Artifacts.TurnRunOutputItemsKey(turn.ConversationID, turn.ID, run.StepIndex)
+		}
 		data, err := uc.Artifacts.GetBytes(ctx, key)
 		switch {
 		case err == nil:
+			if immutable {
+				data, err = decodeTimelineRunArtifact(data, run.ArtifactMetadata, "output-items.json.zst")
+				if err != nil {
+					return nil, fmt.Errorf("decode turn run output items %q: %w", key, err)
+				}
+			}
 			parts, rawErr := extractReasoningParts(data)
 			if rawErr != nil {
 				return nil, fmt.Errorf("extract reasoning items from %q: %w", key, rawErr)
@@ -230,6 +272,30 @@ func (uc GetTurnTimeline) loadReasoningItems(ctx context.Context, turn *domain.T
 	})
 
 	return items, nil
+}
+
+func decodeTimelineRunArtifact(compressed []byte, rawMetadata json.RawMessage, artifactName string) ([]byte, error) {
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := decoder.DecodeAll(compressed, nil)
+	decoder.Close()
+	if err != nil {
+		return nil, err
+	}
+	var metadata map[string]struct {
+		SHA256 string `json:"sha256"`
+	}
+	if len(rawMetadata) > 0 && json.Unmarshal(rawMetadata, &metadata) == nil {
+		if expected := strings.TrimSpace(metadata[artifactName].SHA256); expected != "" {
+			digest := sha256.Sum256(payload)
+			if !strings.EqualFold(expected, hex.EncodeToString(digest[:])) {
+				return nil, fmt.Errorf("checksum mismatch")
+			}
+		}
+	}
+	return payload, nil
 }
 
 func (uc GetTurnTimeline) loadAssistantMessages(ctx context.Context, turnID string) ([]domain.Message, error) {
@@ -397,6 +463,19 @@ func insertTimelineItemByCreatedAt(items []TurnTimelineItem, item TurnTimelineIt
 	return items
 }
 
+func appendMissingTerminalStatus(items []TurnTimelineItem, turn *domain.Turn) []TurnTimelineItem {
+	item := fallbackStatusItem(turn)
+	if item == nil {
+		return items
+	}
+	for _, existing := range items {
+		if existing.Type == turnTimelineItemStatus && existing.Status == item.Status {
+			return items
+		}
+	}
+	return insertTimelineItemByCreatedAt(items, *item)
+}
+
 func buildTimelineFromEvents(events []domain.TurnStreamEvent, reasoningItems []reasoningTimelineItem) ([]TurnTimelineItem, bool, error) {
 	reducer := newTimelineReducer(nil, nil, reasoningItems)
 	for _, stored := range events {
@@ -409,6 +488,50 @@ func buildTimelineFromEvents(events []domain.TurnStreamEvent, reasoningItems []r
 		}
 	}
 	return reducer.FinalItems(), reducer.HasAssistantText(), nil
+}
+
+func buildTimelineFromConversationEvents(events []domain.ConversationEvent, turnID string) ([]TurnTimelineItem, error) {
+	reducer := newTimelineReducer(nil, nil, nil)
+	for _, stored := range events {
+		if stored.TurnID != turnID {
+			continue
+		}
+		event, ok := timelineEventFromConversationEvent(stored)
+		if !ok {
+			continue
+		}
+		if _, err := reducer.Apply(normalizedTimelineEvent{Event: event, CreatedAt: stored.CreatedAt}); err != nil {
+			return nil, fmt.Errorf("reduce conversation event %q: %w", stored.ID, err)
+		}
+	}
+	return reducer.FinalItems(), nil
+}
+
+func timelineEventFromConversationEvent(stored domain.ConversationEvent) (stream.Event, bool) {
+	event := stream.Event{
+		ConversationID: stored.ConversationID,
+		TurnID:         stored.TurnID,
+		RunID:          stored.TurnRunID,
+		Payload:        string(stored.Payload),
+		EventIndex:     stored.EventSeq,
+	}
+	switch stored.EventType {
+	case domain.ConversationEventReasoningSummaryDone:
+		event.Type = stream.EventReasoningSummary
+	case domain.ConversationEventToolCallStarted:
+		event.Type = stream.EventToolStarted
+	case domain.ConversationEventToolCallCompleted:
+		event.Type = stream.EventToolCompleted
+	case domain.ConversationEventToolCallFailed:
+		event.Type = stream.EventToolFailed
+	case domain.ConversationEventOutputTextCompleted, domain.ConversationEventOutputTextInterrupted:
+		event.Type = responseEventOutputTextDone
+	case domain.ConversationEventTurnCompleted:
+		event.Type = stream.EventTurnDone
+	default:
+		return stream.Event{}, false
+	}
+	return event, true
 }
 
 func splitReasoningTimelineItems(items []TurnTimelineItem) []TurnTimelineItem {

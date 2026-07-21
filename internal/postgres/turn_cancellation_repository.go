@@ -22,11 +22,18 @@ func (r *TurnRepository) RequestTurnCancellation(ctx context.Context, turnID str
 		UPDATE turns
 		SET status = $2, cancel_requested_at = now()
 		WHERE id = $1::uuid AND status IN ($3, $4, $5)
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM turn_runs tr
+			JOIN conversation_events ce ON ce.turn_run_id = tr.id AND ce.event_type = $6
+			WHERE tr.turn_id = turns.id AND tr.status = $7
+		  )
 		RETURNING id::text, conversation_id::text, seq, COALESCE(retry_of_turn_id::text, ''), variant_index,
 			status, COALESCE(request_blob_key, ''), COALESCE(response_blob_key, ''), COALESCE(stream_blob_key, ''),
 			COALESCE(openai_response_id, ''), COALESCE(error_code, ''), COALESCE(error_message, ''), metadata,
 			started_at, completed_at, failed_at, created_at, updated_at
-	`, turnID, domain.TurnStatusCancelRequested, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing))
+	`, turnID, domain.TurnStatusCancelRequested, domain.TurnStatusAccepted, domain.TurnStatusContextReady,
+		domain.TurnStatusProcessing, domain.ConversationEventRunCompleted, domain.TurnRunStatusRunning))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrConflict
@@ -96,21 +103,23 @@ func (r *TurnRunRepository) FinalizeTurnCancellation(ctx context.Context, conver
 		return err
 	}
 	var successfulRunID, checkpointKey string
+	var artifactMetadata json.RawMessage
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text, COALESCE(checkpoint_blob_key, '')
+		SELECT id::text, COALESCE(checkpoint_blob_key, ''), artifact_metadata
 		FROM turn_runs
 		WHERE turn_id = $1::uuid AND status = $2
 		ORDER BY step_index DESC, attempt DESC LIMIT 1
-	`, turnID, domain.TurnRunStatusCompleted).Scan(&successfulRunID, &checkpointKey); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	`, turnID, domain.TurnRunStatusCompleted).Scan(&successfulRunID, &checkpointKey, &artifactMetadata); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("load latest successful run during cancellation: %w", err)
 	}
 	if successfulRunID != "" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE context_heads
 			SET latest_successful_run_id = $2::uuid,
-				latest_checkpoint_key = COALESCE(NULLIF($3, ''), latest_checkpoint_key)
+				latest_checkpoint_key = COALESCE(NULLIF($3, ''), latest_checkpoint_key),
+				latest_checkpoint_checksum = CASE WHEN $3 <> '' THEN NULLIF($4, '') ELSE latest_checkpoint_checksum END
 			WHERE conversation_id = $1::uuid
-		`, conversationID, successfulRunID, checkpointKey); err != nil {
+		`, conversationID, successfulRunID, checkpointKey, turnRunArtifactChecksum(artifactMetadata, "context-checkpoint.json.zst")); err != nil {
 			return err
 		}
 	}

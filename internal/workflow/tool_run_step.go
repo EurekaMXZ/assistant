@@ -26,6 +26,7 @@ type ScheduledRunOutcome struct {
 	ContextWindowTokens  int                            `json:"context_window_tokens,omitempty"`
 	Tools                []llm.ModelTool                `json:"tools,omitempty"`
 	ContextItems         []llm.ModelItem                `json:"context_items,omitempty"`
+	ToolResults          []llm.ModelItem                `json:"tool_results,omitempty"`
 	NextState            *ScheduledRunState             `json:"next_state,omitempty"`
 	NextRequest          json.RawMessage                `json:"next_request,omitempty"`
 	Postprocessed        bool                           `json:"postprocessed"`
@@ -133,10 +134,12 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
 	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
 	toolOutputBudget := remainingToolOutputTokens(state.Request, nextInput, result.Usage.TotalTokens)
+	toolOutputStart := len(nextInput)
 	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, modelItemsToToolCalls(functionCalls), toolOutputBudget)
 	if err != nil {
 		return err
 	}
+	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])
 	nextState, nextRequest, err := o.PrepareScheduledRun(ctx, ToolRunInput{
 		Scope: nextScope, Model: state.Request.Model, ContextWindowTokens: state.Request.ContextWindowTokens,
 		Instructions:   state.Request.Instructions,

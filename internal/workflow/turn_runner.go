@@ -30,6 +30,7 @@ type TurnRunner struct {
 	generatedAttachments GeneratedAttachmentStore
 	sandboxes            tool.ConversationSandboxReader
 	runs                 TurnRunWorkflowStore
+	completeEvents       CompleteEventRunStore
 	models               ModelCatalogResolver
 	activeMu             sync.Mutex
 	activeRuns           map[string]activeTurnRun
@@ -418,6 +419,9 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		}
 		return err
 	}
+	if err := r.ensureImmutableRunRequest(ctx, event.ConversationID, claimed); err != nil {
+		return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+	}
 	runCtx, stop := startTurnRunLeaseHeartbeat(executionParent, r.runs, lease, r.settings.WorkerLeaseTimeout)
 	stopLease = stop
 	if runCtx.Err() != nil {
@@ -504,7 +508,13 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	if err := r.externalizeGeneratedImages(ctx, &domain.Turn{ID: claimed.TurnID, ConversationID: event.ConversationID}, outcome); err != nil {
 		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
 	}
-	immutableResponseKey, checkpointKey, err := r.persistImmutableRunSuccess(ctx, event.ConversationID, claimed.TurnID, claimed, outcome)
+	if state == nil && outcome.NextState == nil {
+		state, err = r.tools.LoadScheduledRunState(runCtx, claimed.StateBlobKey)
+		if err != nil {
+			return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+		}
+	}
+	immutableResponseKey, checkpointKey, err := r.persistImmutableRunSuccess(ctx, event.ConversationID, claimed.TurnID, claimed, state, outcome)
 	if err != nil {
 		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
 	}
@@ -529,10 +539,34 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		return r.publishTurnFailure(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID},
 			domain.TurnErrorBillingSettlementFailed, domain.TurnPublicErrorBillingRequired, domain.ErrPaymentRequired)
 	}
-	claimed.Status = domain.TurnRunStatusCompleted
-	claimed.ResponseBlobKey = responseKey
-	claimed.ResultBlobKey = resultKey
-	return r.finishScheduledTurnRun(ctx, event, claimed, outcome)
+	completedRun := claimed
+	if settled != nil {
+		completedRun = settled
+	}
+	completedRun.Status = domain.TurnRunStatusCompleted
+	completedRun.ResponseBlobKey = responseKey
+	completedRun.ResultBlobKey = resultKey
+	return r.finishScheduledTurnRun(ctx, event, completedRun, outcome)
+}
+
+func (r *TurnRunner) ensureImmutableRunRequest(ctx context.Context, conversationID string, run *domain.TurnRun) error {
+	if r == nil || run == nil || strings.TrimSpace(run.RequestBlobKey) == "" {
+		return nil
+	}
+	if _, ok := r.blobs.(ImmutableRunArtifactStore); !ok {
+		return nil
+	}
+	payload, err := r.blobs.GetBytes(ctx, run.RequestBlobKey)
+	if err != nil {
+		return fmt.Errorf("load run request artifact: %w", err)
+	}
+	if strings.HasSuffix(run.RequestBlobKey, ".zst") {
+		payload, err = decompressImmutableRunPayload(payload)
+		if err != nil {
+			return err
+		}
+	}
+	return r.persistImmutableRunRequest(ctx, conversationID, run.TurnID, run.StepIndex, run.ID, payload)
 }
 
 func (r *TurnRunner) continueCompletedTurnRun(ctx context.Context, event WorkflowEvent, run *domain.TurnRun) error {
@@ -584,7 +618,8 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 	}
 	summary := domain.TurnRunSummary{
 		RunID: run.ID, CheckpointBlobKey: run.CheckpointBlobKey,
-		RequestBlobKey: r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), ResponseBlobKey: responseKey,
+		CheckpointChecksum: immutableRunArtifactChecksum(run.ArtifactMetadata, immutableRunCheckpointArtifact),
+		RequestBlobKey:     r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), ResponseBlobKey: responseKey,
 		StreamBlobKey: r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), ResponseID: outcome.Model.ResponseID,
 		InputTokens: outcome.Model.Usage.InputTokens, OutputTokens: outcome.Model.Usage.OutputTokens,
 		TotalTokens: outcome.Model.Usage.TotalTokens, ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,

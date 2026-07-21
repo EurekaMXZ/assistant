@@ -44,6 +44,16 @@ type ImmutableRunArtifactStore interface {
 	ImmutableRunArtifactKey(conversationID, turnID string, stepIndex int, runID string, artifact string) string
 }
 
+type RunArtifactMetadata struct {
+	Name             string `json:"name"`
+	ObjectKey        string `json:"object_key"`
+	ContentType      string `json:"content_type"`
+	UncompressedSize int64  `json:"uncompressed_size"`
+	CompressedSize   int64  `json:"compressed_size"`
+	SHA256           string `json:"sha256"`
+	SchemaVersion    int    `json:"schema_version"`
+}
+
 type RunArtifactObject struct {
 	Key          string
 	LastModified time.Time

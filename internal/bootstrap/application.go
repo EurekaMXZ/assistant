@@ -82,12 +82,13 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Artifacts: toolArtifacts,
 	}
 	getTurnTimeline := server.GetTurnTimeline{
-		Turns:     turnRepository,
-		Events:    turnStreamEventRepository,
-		Runs:      turnRunRepository,
-		ToolCalls: toolCallRepository,
-		Messages:  messageRepository,
-		Artifacts: toolArtifacts,
+		Turns:          turnRepository,
+		Events:         turnStreamEventRepository,
+		CompleteEvents: conversationEventRepository,
+		Runs:           turnRunRepository,
+		ToolCalls:      toolCallRepository,
+		Messages:       messageRepository,
+		Artifacts:      toolArtifacts,
 	}
 	createSandbox := tool.CreateSandbox{
 		Sandboxes: conversationSandboxRepository,

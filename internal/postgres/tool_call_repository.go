@@ -18,6 +18,49 @@ func (r *ToolCallRepository) AcquireToolCall(ctx context.Context, turnID string,
 	}
 	defer tx.Rollback(ctx)
 
+	prior, err := scanToolCall(tx.QueryRow(ctx, `
+		SELECT
+			tc.id::text, tc.turn_id::text, tc.turn_run_id::text, tc.call_id, tc.tool_type,
+			tc.namespace, tc.tool_name, tc.status, tc.execution_attempt, tc.arguments_blob_key,
+			COALESCE(tc.output_blob_key, ''), COALESCE(tc.error_message, ''), tc.started_at,
+			tc.completed_at, tc.failed_at, tc.created_at, tc.updated_at
+		FROM tool_calls tc
+		JOIN turn_runs prior_run ON prior_run.id = tc.turn_run_id
+		JOIN turn_runs current_run ON current_run.id = $2::uuid
+		WHERE tc.turn_id = $1::uuid
+		  AND tc.call_id = $3
+		  AND tc.turn_run_id <> $2::uuid
+		  AND prior_run.step_index = current_run.step_index
+		ORDER BY prior_run.attempt DESC
+		LIMIT 1
+		FOR UPDATE OF tc
+	`, turnID, turnRunID, call.CallID))
+	if err == nil {
+		if prior.Status == domain.ToolCallStatusRunning {
+			prior, err = scanToolCall(tx.QueryRow(ctx, `
+				UPDATE tool_calls
+				SET status = $2, error_message = $3, failed_at = now(), completed_at = NULL
+				WHERE id = $1::uuid AND status = $4
+				RETURNING
+					id::text, turn_id::text, turn_run_id::text, call_id, tool_type, namespace,
+					tool_name, status, execution_attempt, arguments_blob_key,
+					COALESCE(output_blob_key, ''), COALESCE(error_message, ''), started_at,
+					completed_at, failed_at, created_at, updated_at
+			`, prior.ID, domain.ToolCallStatusAmbiguous,
+				"previous run attempt ended without a durable tool result", domain.ToolCallStatusRunning))
+			if err != nil {
+				return nil, false, fmt.Errorf("mark prior tool call ambiguous: %w", err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("commit prior tool call recovery: %w", err)
+		}
+		return prior, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, fmt.Errorf("load prior tool call attempt: %w", err)
+	}
+
 	var insertedID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tool_calls (

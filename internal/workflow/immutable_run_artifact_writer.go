@@ -23,73 +23,99 @@ func (r *TurnRunner) persistImmutableRunRequest(ctx context.Context, conversatio
 		return fmt.Errorf("persist immutable run request: %w", err)
 	}
 	if indexer, ok := r.runs.(TurnRunArtifactIndexer); ok {
-		if err := indexer.SetTurnRunArtifactMetadata(ctx, runID, key, "", "", "", "", "", checksum, "", int64(len(payload)), 0, immutableRunArtifactSchemaVersion, 0); err != nil {
+		if err := indexer.SetTurnRunArtifactMetadata(ctx, runID, []RunArtifactMetadata{{
+			Name: immutableRunRequestArtifact, ObjectKey: key, ContentType: immutableRunArtifactContentType,
+			UncompressedSize: int64(len(payload)), CompressedSize: int64(len(compressed)), SHA256: checksum,
+			SchemaVersion: immutableRunArtifactSchemaVersion,
+		}}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *TurnRunner) persistImmutableRunSuccess(ctx context.Context, conversationID string, turnID string, run *domain.TurnRun, outcome *ScheduledRunOutcome) (string, string, error) {
+func (r *TurnRunner) persistImmutableRunSuccess(ctx context.Context, conversationID string, turnID string, run *domain.TurnRun, state *ScheduledRunState, outcome *ScheduledRunOutcome) (string, string, error) {
 	writer, ok := r.blobs.(ImmutableRunArtifactStore)
 	if !ok || writer == nil || run == nil || outcome == nil || outcome.Model == nil {
 		return "", "", nil
 	}
-	write := func(artifact string, payload []byte) (string, string, error) {
+	write := func(artifact string, payload []byte) (RunArtifactMetadata, error) {
 		if len(payload) == 0 {
-			return "", "", nil
+			return RunArtifactMetadata{}, nil
 		}
 		compressed, checksum, err := compressImmutableRunPayload(payload)
 		if err != nil {
-			return "", "", err
+			return RunArtifactMetadata{}, err
 		}
 		key := writer.ImmutableRunArtifactKey(conversationID, turnID, run.StepIndex, run.ID, artifact)
 		if err := writer.PutImmutableBytes(ctx, key, compressed, immutableRunArtifactContentType); err != nil {
-			return "", "", err
+			return RunArtifactMetadata{}, err
 		}
-		return key, checksum, nil
+		return RunArtifactMetadata{
+			Name: artifact, ObjectKey: key, ContentType: immutableRunArtifactContentType,
+			UncompressedSize: int64(len(payload)), CompressedSize: int64(len(compressed)), SHA256: checksum,
+			SchemaVersion: immutableRunArtifactSchemaVersion,
+		}, nil
 	}
 
-	responseKey, responseChecksum, err := write(immutableRunResponseArtifact, outcome.Model.RawResponse)
+	artifacts := make([]RunArtifactMetadata, 0, 5)
+	response, err := write(immutableRunResponseArtifact, outcome.Model.RawResponse)
 	if err != nil {
 		return "", "", fmt.Errorf("persist immutable run response: %w", err)
+	}
+	if response.ObjectKey != "" {
+		artifacts = append(artifacts, response)
 	}
 	outputItems, err := json.Marshal(outcome.Model.OutputItems)
 	if err != nil {
 		return "", "", fmt.Errorf("marshal immutable run output items: %w", err)
 	}
-	outputKey, _, err := write(immutableRunOutputItemsArtifact, outputItems)
+	output, err := write(immutableRunOutputItemsArtifact, outputItems)
 	if err != nil {
 		return "", "", fmt.Errorf("persist immutable run output items: %w", err)
 	}
-	toolResults := make([]llm.ModelItem, 0)
-	for _, item := range outcome.ContextItems {
-		if item.Type == "function_call_output" {
-			toolResults = append(toolResults, item)
-		}
+	if output.ObjectKey != "" {
+		artifacts = append(artifacts, output)
 	}
 	var toolResultsPayload []byte
-	if len(toolResults) > 0 {
-		toolResultsPayload, err = json.Marshal(toolResults)
+	if len(outcome.ToolResults) > 0 {
+		toolResultsPayload, err = json.Marshal(outcome.ToolResults)
 		if err != nil {
 			return "", "", fmt.Errorf("marshal immutable run tool results: %w", err)
 		}
 	}
-	toolResultsKey, _, err := write(immutableRunToolResultsArtifact, toolResultsPayload)
+	toolResults, err := write(immutableRunToolResultsArtifact, toolResultsPayload)
 	if err != nil {
 		return "", "", fmt.Errorf("persist immutable run tool results: %w", err)
+	}
+	if toolResults.ObjectKey != "" {
+		artifacts = append(artifacts, toolResults)
+	}
+	presentationEvents := []domain.ConversationEvent{}
+	if r.completeEvents != nil {
+		presentationEvents, err = r.completeEvents.ListConversationEventsByRun(ctx, run.ID)
+		if err != nil {
+			return "", "", fmt.Errorf("list immutable run presentation events: %w", err)
+		}
 	}
 	presentationPayload, err := json.Marshal(map[string]any{
 		"schema_version": immutableRunArtifactSchemaVersion,
 		"run_id":         run.ID,
-		"output_items":   outcome.Model.OutputItems,
+		"events":         presentationEvents,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("marshal immutable run presentation events: %w", err)
 	}
-	presentationKey, _, err := write(immutableRunPresentationArtifact, presentationPayload)
+	presentation, err := write(immutableRunPresentationArtifact, presentationPayload)
 	if err != nil {
 		return "", "", fmt.Errorf("persist immutable run presentation events: %w", err)
+	}
+	if presentation.ObjectKey != "" {
+		artifacts = append(artifacts, presentation)
+	}
+	modelItems, err := completeRunCheckpointItems(state, outcome)
+	if err != nil {
+		return "", "", err
 	}
 	checkpointPayload, err := json.Marshal(map[string]any{
 		"schema_version":        immutableRunArtifactSchemaVersion,
@@ -97,22 +123,25 @@ func (r *TurnRunner) persistImmutableRunSuccess(ctx context.Context, conversatio
 		"turn_id":               turnID,
 		"run_id":                run.ID,
 		"step_index":            run.StepIndex,
-		"model_items":           outcome.ContextItems,
+		"model_items":           modelItems,
 		"context_window_tokens": outcome.ContextWindowTokens,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("marshal immutable run checkpoint: %w", err)
 	}
-	checkpointKey, _, err := write(immutableRunCheckpointArtifact, checkpointPayload)
+	checkpoint, err := write(immutableRunCheckpointArtifact, checkpointPayload)
 	if err != nil {
 		return "", "", fmt.Errorf("persist immutable run checkpoint: %w", err)
 	}
+	if checkpoint.ObjectKey != "" {
+		artifacts = append(artifacts, checkpoint)
+	}
 	if indexer, ok := r.runs.(TurnRunArtifactIndexer); ok {
-		if err := indexer.SetTurnRunArtifactMetadata(ctx, run.ID, "", responseKey, outputKey, toolResultsKey, presentationKey, checkpointKey, "", responseChecksum, 0, int64(len(outcome.Model.RawResponse)), 0, immutableRunArtifactSchemaVersion); err != nil {
+		if err := indexer.SetTurnRunArtifactMetadata(ctx, run.ID, artifacts); err != nil {
 			return "", "", err
 		}
 	}
-	return responseKey, checkpointKey, nil
+	return response.ObjectKey, checkpoint.ObjectKey, nil
 }
 
 func (r *TurnRunner) persistImmutableRunFailure(ctx context.Context, conversationID string, turnID string, run *domain.TurnRun, cause error) error {
@@ -131,7 +160,7 @@ func (r *TurnRunner) persistImmutableRunFailure(ctx context.Context, conversatio
 	if err != nil {
 		return fmt.Errorf("marshal immutable run failure: %w", err)
 	}
-	compressed, _, err := compressImmutableRunPayload(payload)
+	compressed, checksum, err := compressImmutableRunPayload(payload)
 	if err != nil {
 		return err
 	}
@@ -139,5 +168,29 @@ func (r *TurnRunner) persistImmutableRunFailure(ctx context.Context, conversatio
 	if err := writer.PutImmutableBytes(ctx, key, compressed, immutableRunArtifactContentType); err != nil {
 		return fmt.Errorf("persist immutable run failure: %w", err)
 	}
+	if indexer, ok := r.runs.(TurnRunArtifactIndexer); ok {
+		if err := indexer.SetTurnRunArtifactMetadata(ctx, run.ID, []RunArtifactMetadata{{
+			Name: immutableRunFailureArtifact, ObjectKey: key, ContentType: immutableRunArtifactContentType,
+			UncompressedSize: int64(len(payload)), CompressedSize: int64(len(compressed)), SHA256: checksum,
+			SchemaVersion: immutableRunArtifactSchemaVersion,
+		}}); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func completeRunCheckpointItems(state *ScheduledRunState, outcome *ScheduledRunOutcome) ([]llm.ModelItem, error) {
+	if outcome == nil {
+		return nil, fmt.Errorf("build run checkpoint: outcome is required")
+	}
+	if outcome.NextState != nil {
+		return cloneModelItems(outcome.NextState.Request.Input), nil
+	}
+	if state == nil {
+		return nil, fmt.Errorf("build run checkpoint: scheduled run state is required")
+	}
+	items := cloneModelItems(state.Request.Input)
+	items = append(items, cloneModelItems(outcome.ContextItems)...)
+	return items, nil
 }

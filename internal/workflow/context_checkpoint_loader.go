@@ -42,6 +42,9 @@ func (l *ContextLoader) loadCheckpointSnapshot(ctx context.Context, conversation
 	if err != nil {
 		return nil, false, fmt.Errorf("decode context checkpoint: %w", err)
 	}
+	if !immutableRunPayloadMatchesChecksum(payload, head.LatestCheckpointChecksum) {
+		return nil, false, fmt.Errorf("context checkpoint checksum mismatch")
+	}
 	var checkpoint immutableContextCheckpoint
 	if err := json.Unmarshal(payload, &checkpoint); err != nil {
 		return nil, false, fmt.Errorf("unmarshal context checkpoint: %w", err)
@@ -60,28 +63,30 @@ func (l *ContextLoader) loadCheckpointSnapshot(ctx context.Context, conversation
 	}
 	now := time.Now().UTC()
 	return &cache.ContextSnapshot{
-		ConversationID:        conversationID,
-		Version:               head.Version,
-		SchemaVersion:         head.ContextSchemaVersion,
-		CoveredEventSeq:       head.LastContextEventSeq,
-		LatestCheckpointKey:   head.LatestCheckpointKey,
-		LatestSuccessfulRunID: head.LatestSuccessfulRunID,
-		CreatedAt:             now,
-		AnchorGeneration:      head.AnchorGeneration,
-		CoveredUntilSeq:       head.CoveredUntilSeq,
-		RawTailStartSeq:       head.RawTailStartSeq,
-		LastSeq:               head.LastSeq,
-		ActiveTokens:          head.ActiveContextTokens,
-		TailCacheStartSeq:     head.RawTailStartSeq,
-		TailCacheEndSeq:       head.LastSeq,
-		ModelInput:            items,
-		ModelInputReady:       true,
-		UpdatedAt:             now,
+		ConversationID:           conversationID,
+		Version:                  head.Version,
+		SchemaVersion:            head.ContextSchemaVersion,
+		CoveredEventSeq:          head.LastContextEventSeq,
+		LatestCheckpointKey:      head.LatestCheckpointKey,
+		LatestCheckpointChecksum: head.LatestCheckpointChecksum,
+		LatestSuccessfulRunID:    head.LatestSuccessfulRunID,
+		CreatedAt:                now,
+		AnchorGeneration:         head.AnchorGeneration,
+		CoveredUntilSeq:          head.CoveredUntilSeq,
+		RawTailStartSeq:          head.RawTailStartSeq,
+		LastSeq:                  head.LastSeq,
+		ActiveTokens:             head.ActiveContextTokens,
+		TailCacheStartSeq:        head.RawTailStartSeq,
+		TailCacheEndSeq:          head.LastSeq,
+		ModelInput:               items,
+		ModelInputReady:          true,
+		UpdatedAt:                now,
 	}, true, nil
 }
 
 func (l *ContextLoader) reduceContextEvents(ctx context.Context, conversationID string, base []llm.ModelItem, events []domain.ConversationEvent) ([]llm.ModelItem, error) {
 	items := cloneModelItems(base)
+	coveredAssistantTurns := make(map[string]struct{})
 	for _, event := range events {
 		if !event.ContextIncluded {
 			continue
@@ -94,11 +99,21 @@ func (l *ContextLoader) reduceContextEvents(ctx context.Context, conversationID 
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return nil, fmt.Errorf("decode context event %s: %w", event.EventKey, err)
 			}
-			if payload.Message.Role == domain.RoleAssistant {
-				if payload.Message.ContentText != "" {
-					items = append(items, llm.ModelItem{Type: llm.ModelItemMessage, Role: domain.RoleAssistant, Content: payload.Message.ContentText})
+			if payload.Message.Role == domain.RoleAssistant && payload.Message.TurnID != "" {
+				if _, covered := coveredAssistantTurns[payload.Message.TurnID]; covered {
+					continue
 				}
-				continue
+				if l != nil && l.modelContexts != nil {
+					modelItems, found, err := l.loadTurnModelContextItems(ctx, conversationID, payload.Message.TurnID)
+					if err != nil {
+						return nil, err
+					}
+					if found {
+						items = append(items, modelItems...)
+						coveredAssistantTurns[payload.Message.TurnID] = struct{}{}
+						continue
+					}
+				}
 			}
 			messageItems, err := l.modelInputItemsForMessage(ctx, conversationID, payload.Message)
 			if err != nil {

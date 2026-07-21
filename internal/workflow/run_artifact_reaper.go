@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -76,7 +77,7 @@ func (r *RunArtifactReaper) Reap(ctx context.Context) error {
 	cutoff := r.now().UTC().Add(-safetyInterval)
 	deleted := 0
 	for _, object := range objects {
-		if object.Key == "" || object.LastModified.IsZero() || object.LastModified.After(cutoff) {
+		if object.Key == "" || !strings.Contains(object.Key, "/turns/") || object.LastModified.IsZero() || object.LastModified.After(cutoff) {
 			continue
 		}
 		if _, ok := referenced[object.Key]; ok {

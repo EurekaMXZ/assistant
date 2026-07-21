@@ -135,11 +135,12 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 			active_context_tokens = $6,
 			version = version + 1,
 			latest_checkpoint_key = COALESCE(NULLIF($7, ''), latest_checkpoint_key),
+			latest_checkpoint_checksum = CASE WHEN $7 <> '' THEN NULLIF($8, '') ELSE latest_checkpoint_checksum END,
 			checkpoint_covered_event_seq = CASE WHEN $7 <> '' THEN last_context_event_seq ELSE checkpoint_covered_event_seq END
 		WHERE conversation_id = $1::uuid
 		RETURNING
 			`+contextHeadColumns+`
-	`, conversationID, anchor.Generation, anchor.ObjectKey, anchor.CoveredUntilSeq, anchor.CoveredUntilSeq+1, max(0, activeContextTokens), anchor.CheckpointKey)
+	`, conversationID, anchor.Generation, anchor.ObjectKey, anchor.CoveredUntilSeq, anchor.CoveredUntilSeq+1, max(0, activeContextTokens), anchor.CheckpointKey, anchor.CheckpointChecksum)
 
 	head, err = scanContextHead(row)
 	if err != nil {

@@ -33,10 +33,15 @@ func TestRunArtifactReaperDeletesOnlyOldUnreferencedObjects(t *testing.T) {
 	objects := &artifactObjectStub{objects: []RunArtifactObject{
 		{Key: "conversations/c1/turns/t1/runs/000001-r1/request.json.zst", LastModified: now.Add(-48 * time.Hour)},
 		{Key: "conversations/c1/turns/t1/runs/000001-r1/response.json.zst", LastModified: now.Add(-48 * time.Hour)},
+		{Key: "conversations/c1/turns/t1/runs/000001-r1/failure.json.zst", LastModified: now.Add(-48 * time.Hour)},
+		{Key: "conversations/c1/context-checkpoints/000001.json.zst", LastModified: now.Add(-48 * time.Hour)},
 		{Key: "conversations/c1/turns/t1/runs/000002-r2/request.json.zst", LastModified: now.Add(-time.Hour)},
 	}}
 	reaper := NewRunArtifactReaper(RunArtifactReaperSettings{SafetyInterval: 24 * time.Hour, BatchSize: 10}, artifactReferenceStub{
-		keys: []string{"conversations/c1/turns/t1/runs/000001-r1/response.json.zst"},
+		keys: []string{
+			"conversations/c1/turns/t1/runs/000001-r1/response.json.zst",
+			"conversations/c1/turns/t1/runs/000001-r1/failure.json.zst",
+		},
 	}, objects, nil)
 	reaper.now = func() time.Time { return now }
 

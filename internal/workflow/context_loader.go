@@ -66,6 +66,15 @@ func (l *ContextLoader) EnsureHotContext(ctx context.Context, conversationID str
 		}
 		return checkpointSnapshot, head, nil
 	}
+	if eventSnapshot, found, eventErr := l.loadEventSnapshot(ctx, conversationID, head); eventErr != nil {
+		return nil, nil, eventErr
+	} else if found {
+		l.putLocalSnapshot(conversationID, head.Version, eventSnapshot)
+		if l.sharedCache != nil {
+			_ = l.sharedCache.PutContextSnapshot(ctx, eventSnapshot)
+		}
+		return eventSnapshot, head, nil
+	}
 
 	var anchor *cache.ContextAnchor
 	if head.AnchorKey != "" {
@@ -93,23 +102,24 @@ func (l *ContextLoader) EnsureHotContext(ctx context.Context, conversationID str
 	}
 
 	entry := &cache.ContextSnapshot{
-		ConversationID:        conversationID,
-		Version:               head.Version,
-		SchemaVersion:         head.ContextSchemaVersion,
-		CoveredEventSeq:       head.LastContextEventSeq,
-		LatestCheckpointKey:   head.LatestCheckpointKey,
-		LatestSuccessfulRunID: head.LatestSuccessfulRunID,
-		CreatedAt:             time.Now().UTC(),
-		Anchor:                anchor,
-		AnchorGeneration:      head.AnchorGeneration,
-		CoveredUntilSeq:       head.CoveredUntilSeq,
-		RawTailStartSeq:       head.RawTailStartSeq,
-		LastSeq:               head.LastSeq,
-		ActiveTokens:          head.ActiveContextTokens,
-		TailCacheStartSeq:     tailCacheStartSeq(head, tail),
-		TailCacheEndSeq:       tailCacheEndSeq(head, tail),
-		Tail:                  tail,
-		UpdatedAt:             time.Now(),
+		ConversationID:           conversationID,
+		Version:                  head.Version,
+		SchemaVersion:            head.ContextSchemaVersion,
+		CoveredEventSeq:          head.LastContextEventSeq,
+		LatestCheckpointKey:      head.LatestCheckpointKey,
+		LatestCheckpointChecksum: head.LatestCheckpointChecksum,
+		LatestSuccessfulRunID:    head.LatestSuccessfulRunID,
+		CreatedAt:                time.Now().UTC(),
+		Anchor:                   anchor,
+		AnchorGeneration:         head.AnchorGeneration,
+		CoveredUntilSeq:          head.CoveredUntilSeq,
+		RawTailStartSeq:          head.RawTailStartSeq,
+		LastSeq:                  head.LastSeq,
+		ActiveTokens:             head.ActiveContextTokens,
+		TailCacheStartSeq:        tailCacheStartSeq(head, tail),
+		TailCacheEndSeq:          tailCacheEndSeq(head, tail),
+		Tail:                     tail,
+		UpdatedAt:                time.Now(),
 	}
 	if err := l.loadConversationModelInput(ctx, conversationID, entry); err != nil {
 		return nil, nil, err
@@ -257,8 +267,47 @@ func contextSnapshotMatchesHead(snapshot *cache.ContextSnapshot, head *domain.Co
 		snapshot.Version == head.Version &&
 		snapshot.CoveredEventSeq == head.LastContextEventSeq &&
 		snapshot.LatestCheckpointKey == head.LatestCheckpointKey &&
+		snapshot.LatestCheckpointChecksum == head.LatestCheckpointChecksum &&
 		snapshot.LatestSuccessfulRunID == head.LatestSuccessfulRunID &&
 		(snapshot.SchemaVersion == head.ContextSchemaVersion || head.ContextSchemaVersion == 0)
+}
+
+func (l *ContextLoader) loadEventSnapshot(ctx context.Context, conversationID string, head *domain.ContextHead) (*cache.ContextSnapshot, bool, error) {
+	if l == nil || head == nil || l.completeEvents == nil || head.AnchorKey != "" || head.LastContextEventSeq <= 0 {
+		return nil, false, nil
+	}
+	events, err := l.completeEvents.ListContextEvents(ctx, conversationID, 0, head.LastContextEventSeq)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(events) == 0 {
+		return nil, false, nil
+	}
+	items, err := l.reduceContextEvents(ctx, conversationID, nil, events)
+	if err != nil {
+		return nil, false, err
+	}
+	now := time.Now().UTC()
+	return &cache.ContextSnapshot{
+		ConversationID:           conversationID,
+		Version:                  head.Version,
+		SchemaVersion:            head.ContextSchemaVersion,
+		CoveredEventSeq:          head.LastContextEventSeq,
+		LatestCheckpointKey:      head.LatestCheckpointKey,
+		LatestCheckpointChecksum: head.LatestCheckpointChecksum,
+		LatestSuccessfulRunID:    head.LatestSuccessfulRunID,
+		CreatedAt:                now,
+		AnchorGeneration:         head.AnchorGeneration,
+		CoveredUntilSeq:          head.CoveredUntilSeq,
+		RawTailStartSeq:          head.RawTailStartSeq,
+		LastSeq:                  head.LastSeq,
+		ActiveTokens:             head.ActiveContextTokens,
+		TailCacheStartSeq:        head.RawTailStartSeq,
+		TailCacheEndSeq:          head.LastSeq,
+		ModelInput:               items,
+		ModelInputReady:          true,
+		UpdatedAt:                now,
+	}, true, nil
 }
 
 func (l *ContextLoader) modelInputItemsForMessage(ctx context.Context, conversationID string, message domain.Message) ([]llm.ModelItem, error) {

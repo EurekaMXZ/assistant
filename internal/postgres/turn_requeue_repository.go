@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,7 +97,9 @@ func (r *StaleTurnRepository) RequeueStaleTurnRuns(ctx context.Context, leaseTim
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx, `
-		SELECT tr.id::text, tr.turn_id::text, t.conversation_id::text, tr.step_index
+		SELECT tr.id::text, tr.turn_id::text, t.conversation_id::text, tr.step_index, tr.attempt,
+			tr.provider, tr.model, tr.request_blob_key, tr.state_blob_key,
+			COALESCE(tr.response_blob_key, ''), COALESCE(tr.result_blob_key, ''), COALESCE(tr.response_id, '')
 		FROM turn_runs tr
 		JOIN turns t ON t.id = tr.turn_id
 		WHERE tr.status = $1
@@ -113,15 +116,27 @@ func (r *StaleTurnRepository) RequeueStaleTurnRuns(ctx context.Context, leaseTim
 	defer rows.Close()
 
 	type staleRun struct {
-		ID             string
-		TurnID         string
-		ConversationID string
-		StepIndex      int
+		ID              string
+		TurnID          string
+		ConversationID  string
+		StepIndex       int
+		Attempt         int
+		Provider        string
+		Model           string
+		RequestBlobKey  string
+		StateBlobKey    string
+		ResponseBlobKey string
+		ResultBlobKey   string
+		ResponseID      string
 	}
 	var stale []staleRun
 	for rows.Next() {
 		var item staleRun
-		if err := rows.Scan(&item.ID, &item.TurnID, &item.ConversationID, &item.StepIndex); err != nil {
+		if err := rows.Scan(
+			&item.ID, &item.TurnID, &item.ConversationID, &item.StepIndex, &item.Attempt,
+			&item.Provider, &item.Model, &item.RequestBlobKey, &item.StateBlobKey,
+			&item.ResponseBlobKey, &item.ResultBlobKey, &item.ResponseID,
+		); err != nil {
 			return 0, fmt.Errorf("scan stale turn run: %w", err)
 		}
 		stale = append(stale, item)
@@ -134,12 +149,33 @@ func (r *StaleTurnRepository) RequeueStaleTurnRuns(ctx context.Context, leaseTim
 		if _, err := tx.Exec(ctx, `
 			UPDATE turn_runs
 			SET status = $2, lease_token = NULL, heartbeat_at = NULL,
-				error_message = NULL, completed_at = NULL, failed_at = NULL
+				error_message = $3, completed_at = NULL, failed_at = now()
 			WHERE id = $1::uuid
-		`, item.ID, domain.TurnRunStatusQueued); err != nil {
+		`, item.ID, domain.TurnRunStatusFailed, "worker lease expired; superseded by a new attempt"); err != nil {
 			return 0, fmt.Errorf("requeue stale turn run: %w", err)
 		}
-		if err := insertTurnRunRequestedEvent(ctx, tx, item.ConversationID, item.TurnID, item.ID, item.StepIndex); err != nil {
+		var retryRunID string
+		err := tx.QueryRow(ctx, `
+			INSERT INTO turn_runs (
+				turn_id, step_index, attempt, provider, model, status, request_blob_key,
+				state_blob_key, response_blob_key, result_blob_key, response_id
+			)
+			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''))
+			ON CONFLICT (turn_id, step_index, attempt) DO NOTHING
+			RETURNING id::text
+		`, item.TurnID, item.StepIndex, item.Attempt+1, item.Provider, item.Model, domain.TurnRunStatusQueued,
+			item.RequestBlobKey, item.StateBlobKey, item.ResponseBlobKey, item.ResultBlobKey, item.ResponseID).Scan(&retryRunID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if err := tx.QueryRow(ctx, `
+				SELECT id::text FROM turn_runs
+				WHERE turn_id = $1::uuid AND step_index = $2 AND attempt = $3
+			`, item.TurnID, item.StepIndex, item.Attempt+1).Scan(&retryRunID); err != nil {
+				return 0, fmt.Errorf("load stale turn run retry: %w", err)
+			}
+		} else if err != nil {
+			return 0, fmt.Errorf("insert stale turn run retry: %w", err)
+		}
+		if err := insertTurnRunRequestedEvent(ctx, tx, item.ConversationID, item.TurnID, retryRunID, item.StepIndex); err != nil {
 			return 0, err
 		}
 	}

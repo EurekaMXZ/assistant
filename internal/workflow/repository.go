@@ -40,6 +40,10 @@ type CompleteEventStore interface {
 	ListConversationEvents(ctx context.Context, conversationID string, limit int, beforeSeq int64, afterSeq int64) ([]domain.ConversationEvent, error)
 }
 
+type CompleteEventRunStore interface {
+	ListConversationEventsByRun(ctx context.Context, runID string) ([]domain.ConversationEvent, error)
+}
+
 type AttachmentStore interface {
 	ListAttachmentsByIDs(ctx context.Context, conversationID string, ids []string) ([]domain.Attachment, error)
 }
@@ -88,7 +92,7 @@ type TurnRunWorkflowStore interface {
 }
 
 type TurnRunArtifactIndexer interface {
-	SetTurnRunArtifactMetadata(ctx context.Context, runID string, requestKey string, responseKey string, outputItemsKey string, toolResultsKey string, presentationEventsKey string, checkpointKey string, requestChecksum string, responseChecksum string, requestSizeBytes int64, responseSizeBytes int64, requestSchemaVersion int, responseSchemaVersion int) error
+	SetTurnRunArtifactMetadata(ctx context.Context, runID string, artifacts []RunArtifactMetadata) error
 }
 
 type RunArtifactReferenceStore interface {

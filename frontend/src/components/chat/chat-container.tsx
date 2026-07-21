@@ -10,7 +10,6 @@ import {
   getTurn,
   isSessionUnauthorizedError,
   listConversationEvents,
-  listMessages,
   patchConversation,
   retryTurn,
   uploadConversationAttachment,
@@ -91,11 +90,11 @@ async function inspectUnresolvedTurns(
   const turns = await Promise.all(
     turnIds.map(async (turnId) => {
       const known = knownTurns.get(turnId);
-      if (known) return known;
+      if (known && ["completed", "failed", "cancelled"].includes(known.status)) return known;
       try {
         return await getTurn(turnId);
       } catch {
-        return null;
+        return known || null;
       }
     }),
   );
@@ -163,14 +162,10 @@ function mergeMessages(...groups: Message[][]) {
 }
 
 async function loadConversationMessages(conversationId: string) {
-  const [eventPage, legacyMessages] = await Promise.all([
-    listConversationEvents(conversationId),
-    listMessages(conversationId),
-  ]);
-  const eventMessages = messagesFromConversationEvents(eventPage.events);
+  const eventPage = await listConversationEvents(conversationId);
   return {
     eventPage,
-    messages: mergeMessages(legacyMessages, eventMessages),
+    messages: messagesFromConversationEvents(eventPage.events),
     turns: turnsFromConversationEvents(eventPage.events),
   };
 }
@@ -276,20 +271,28 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     return () => setMobileTitleAction(null);
   }, [conversationId, setMobileTitleAction]);
 
-  const refreshMessages = useCallback(async () => {
-    const requestedConversationId = conversationId;
-    try {
-      const nextMessages = await loadConversationMessages(conversationId);
-      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
-        return;
+  const refreshMessages = useCallback(
+    async (completedTurnId: string) => {
+      const requestedConversationId = conversationId;
+      try {
+        const nextMessages = await loadConversationMessages(conversationId);
+        if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
+          return;
+        }
+        setMessages((previous) =>
+          mergeMessages(
+            previous.filter((message) => message.turn_id !== completedTurnId),
+            nextMessages.messages,
+          ),
+        );
+      } catch (error) {
+        if (!isSessionUnauthorizedError(error)) {
+          toast.error(error instanceof Error ? error.message : "刷新消息失败");
+        }
       }
-      setMessages((previous) => mergeMessages(previous, nextMessages.messages));
-    } catch (error) {
-      if (!isSessionUnauthorizedError(error)) {
-        toast.error(error instanceof Error ? error.message : "刷新消息失败");
-      }
-    }
-  }, [conversationId]);
+    },
+    [conversationId],
+  );
 
   const { isStreaming, streamingTurnId, streamConnectionState, streamTurn } = useTurnStream({
     conversationId,

@@ -142,6 +142,70 @@ func (r *ConversationEventRepository) ListConversationEvents(ctx context.Context
 	return r.list(ctx, conversationID, beforeSeq, afterSeq, false, limit)
 }
 
+func (r *ConversationEventRepository) ListConversationEventsByTurn(ctx context.Context, turnID string) ([]domain.ConversationEvent, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, conversation_id::text, turn_id::text, turn_run_id::text,
+		event_seq, event_key, schema_version, event_type, payload, context_included, created_at
+		FROM conversation_events WHERE turn_id = $1::uuid ORDER BY event_seq ASC`, turnID)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation events by turn: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]domain.ConversationEvent, 0)
+	for rows.Next() {
+		var event domain.ConversationEvent
+		var turnID, runID *string
+		if err := rows.Scan(&event.ID, &event.ConversationID, &turnID, &runID, &event.EventSeq,
+			&event.EventKey, &event.SchemaVersion, &event.EventType, &event.Payload,
+			&event.ContextIncluded, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan conversation event by turn: %w", err)
+		}
+		if turnID != nil {
+			event.TurnID = *turnID
+		}
+		if runID != nil {
+			event.TurnRunID = *runID
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation events by turn: %w", err)
+	}
+	return events, nil
+}
+
+func (r *ConversationEventRepository) ListConversationEventsByRun(ctx context.Context, runID string) ([]domain.ConversationEvent, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, conversation_id::text, turn_id::text, turn_run_id::text,
+		event_seq, event_key, schema_version, event_type, payload, context_included, created_at
+		FROM conversation_events WHERE turn_run_id = $1::uuid ORDER BY event_seq ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation events by run: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]domain.ConversationEvent, 0)
+	for rows.Next() {
+		var event domain.ConversationEvent
+		var turnID, eventRunID *string
+		if err := rows.Scan(&event.ID, &event.ConversationID, &turnID, &eventRunID, &event.EventSeq,
+			&event.EventKey, &event.SchemaVersion, &event.EventType, &event.Payload,
+			&event.ContextIncluded, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan conversation event by run: %w", err)
+		}
+		if turnID != nil {
+			event.TurnID = *turnID
+		}
+		if eventRunID != nil {
+			event.TurnRunID = *eventRunID
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation events by run: %w", err)
+	}
+	return events, nil
+}
+
 func (r *ConversationEventRepository) list(ctx context.Context, conversationID string, firstSeq int64, secondSeq int64, contextOnly bool, limit int) ([]domain.ConversationEvent, error) {
 	conditions := []string{"conversation_id = $1::uuid"}
 	args := []any{conversationID}

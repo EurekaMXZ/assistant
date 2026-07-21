@@ -53,6 +53,7 @@ type EnqueuedRetryTurn struct {
 type TurnRunSummary struct {
 	RunID               string
 	CheckpointBlobKey   string
+	CheckpointChecksum  string
 	RequestBlobKey      string
 	ResponseBlobKey     string
 	StreamBlobKey       string

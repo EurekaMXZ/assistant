@@ -54,6 +54,7 @@ type Engine struct {
 
 func New(deps Dependencies) *Engine {
 	checkpointStore, _ := deps.ContextAnchors.(ContextCheckpointStore)
+	runEvents, _ := deps.CompleteEvents.(CompleteEventRunStore)
 	loader := &ContextLoader{
 		store:           deps.Contexts,
 		completeEvents:  deps.CompleteEvents,
@@ -84,6 +85,7 @@ func New(deps Dependencies) *Engine {
 			generatedAttachments: deps.GeneratedAttachments,
 			sandboxes:            deps.ConversationSandboxes,
 			runs:                 deps.TurnRuns,
+			completeEvents:       runEvents,
 			models:               deps.Models,
 		},
 		compactor: &ContextCompactor{

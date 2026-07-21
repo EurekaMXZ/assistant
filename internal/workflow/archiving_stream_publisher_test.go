@@ -65,8 +65,9 @@ func (s *stubArchiveStreamPublisher) Publish(_ context.Context, event stream.Eve
 }
 
 type stubCompleteEventStore struct {
-	inputs []domain.ConversationEventInput
-	err    error
+	inputs        []domain.ConversationEventInput
+	contextEvents []domain.ConversationEvent
+	err           error
 }
 
 func (s *stubCompleteEventStore) AppendCompleteEvent(_ context.Context, input domain.ConversationEventInput) (*domain.ConversationEvent, error) {
@@ -78,7 +79,7 @@ func (s *stubCompleteEventStore) AppendCompleteEvent(_ context.Context, input do
 }
 
 func (s *stubCompleteEventStore) ListContextEvents(context.Context, string, int64, int64) ([]domain.ConversationEvent, error) {
-	return nil, nil
+	return append([]domain.ConversationEvent(nil), s.contextEvents...), s.err
 }
 
 func (s *stubCompleteEventStore) ListConversationEvents(context.Context, string, int, int64, int64) ([]domain.ConversationEvent, error) {

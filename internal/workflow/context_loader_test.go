@@ -228,3 +228,79 @@ func TestContextLoaderRejectsCorruptedImageAttachment(t *testing.T) {
 		t.Fatalf("error = %v, want checksum mismatch", err)
 	}
 }
+
+func TestContextLoaderRejectsOversizedImageAttachment(t *testing.T) {
+	loader := &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{data: map[string][]byte{"image": []byte("data")}}}
+	_, err := loader.hydrateImageReference(t.Context(), modelImageReference{
+		AttachmentID: "attachment-1", ContentType: "image/png", SizeBytes: maxProviderImageBytes + 1,
+		ObjectKey: "image",
+	})
+	if err == nil || !strings.Contains(err.Error(), "image exceeds") {
+		t.Fatalf("error = %v, want image limit", err)
+	}
+}
+
+func TestContextLoaderBuildsNoCheckpointSnapshotFromCompleteEvents(t *testing.T) {
+	messageEvent := func(seq int64, message domain.Message) domain.ConversationEvent {
+		payload, err := json.Marshal(map[string]any{"message": message})
+		if err != nil {
+			t.Fatalf("marshal message event: %v", err)
+		}
+		return domain.ConversationEvent{
+			EventSeq: seq, EventKey: fmt.Sprintf("message-%d", seq), EventType: "message.completed",
+			Payload: payload, ContextIncluded: true,
+		}
+	}
+	loader := &ContextLoader{completeEvents: &stubCompleteEventStore{contextEvents: []domain.ConversationEvent{
+		messageEvent(1, domain.Message{Role: domain.RoleUser, ContentText: "question"}),
+		messageEvent(2, domain.Message{Role: domain.RoleAssistant, ContentText: "answer"}),
+	}}}
+	head := &domain.ContextHead{
+		ConversationID: "conv-1", Version: 3, ContextSchemaVersion: 1,
+		LastContextEventSeq: 2, LastSeq: 2,
+	}
+
+	snapshot, found, err := loader.loadEventSnapshot(t.Context(), "conv-1", head)
+	if err != nil || !found {
+		t.Fatalf("load event snapshot: found=%t err=%v", found, err)
+	}
+	if len(snapshot.ModelInput) != 2 || snapshot.ModelInput[0].Content != "question" || snapshot.ModelInput[1].Content != "answer" {
+		t.Fatalf("event snapshot model input = %#v", snapshot.ModelInput)
+	}
+}
+
+func TestContextLoaderKeepsLegacyAnchorFallbackWithoutCheckpoint(t *testing.T) {
+	loader := &ContextLoader{completeEvents: &stubCompleteEventStore{contextEvents: []domain.ConversationEvent{{
+		EventSeq: 1, EventType: "message.completed", ContextIncluded: true,
+	}}}}
+	_, found, err := loader.loadEventSnapshot(t.Context(), "conv-1", &domain.ContextHead{
+		AnchorKey: "legacy-anchor", LastContextEventSeq: 1,
+	})
+	if err != nil || found {
+		t.Fatalf("legacy anchor event fallback: found=%t err=%v", found, err)
+	}
+}
+
+func TestContextLoaderRejectsCheckpointChecksumMismatch(t *testing.T) {
+	payload, err := json.Marshal(immutableContextCheckpoint{
+		SchemaVersion: immutableRunArtifactSchemaVersion, ConversationID: "conv-1",
+		ModelItems: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "history"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal checkpoint: %v", err)
+	}
+	compressed, _, err := compressImmutableRunPayload(payload)
+	if err != nil {
+		t.Fatalf("compress checkpoint: %v", err)
+	}
+	loader := &ContextLoader{
+		modelContexts:  &stubContextLoaderArtifactStore{data: map[string][]byte{"checkpoint": compressed}},
+		completeEvents: &stubCompleteEventStore{},
+	}
+	_, _, err = loader.loadCheckpointSnapshot(t.Context(), "conv-1", &domain.ContextHead{
+		LatestCheckpointKey: "checkpoint", LatestCheckpointChecksum: strings.Repeat("0", 64),
+	})
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("checkpoint error = %v", err)
+	}
+}

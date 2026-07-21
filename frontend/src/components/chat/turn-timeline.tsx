@@ -67,6 +67,42 @@ function splitLeadingReasoningTitle(summary: string) {
   };
 }
 
+function reasoningSectionStarts(summary: string) {
+  const starts: number[] = [];
+  const titlePattern = /\*\*([^*\r\n]+)\*\*/g;
+  for (let match = titlePattern.exec(summary); match; match = titlePattern.exec(summary)) {
+    const prefix = summary.slice(0, match.index);
+    const startsAtLineStart = /(?:^|\r?\n)[ \t]*$/.test(prefix);
+    if (match.index === 0 || startsAtLineStart || prefix.endsWith("**")) {
+      starts.push(match.index);
+    }
+  }
+  return starts;
+}
+
+function splitReasoningTimelineItem(item: TimelineItem) {
+  if (item.type !== "reasoning" && item.type !== "reasoning_summary") return [item];
+  const content = item.content_text?.trim();
+  if (!content) return [item];
+
+  const titleStarts = reasoningSectionStarts(content);
+  if (titleStarts.length < 2) return [item];
+
+  const starts = content.slice(0, titleStarts[0]).trim() ? [0, ...titleStarts] : titleStarts;
+  return starts.flatMap((start, index) => {
+    const section = content.slice(start, starts[index + 1]).trim();
+    if (!section) return [];
+    return [
+      {
+        ...item,
+        id: `${item.id}:section:${index}`,
+        content_text: section,
+        metadata: { ...item.metadata, section_index: index },
+      },
+    ];
+  });
+}
+
 function clipText(value: string, limit = 72) {
   if (value.length <= limit) return value;
   return `${value.slice(0, limit).trimEnd()}...`;
@@ -401,7 +437,10 @@ export function TurnTimelinePanel({
   turn = null,
   variant = "panel",
 }: TurnTimelinePanelProps) {
-  const steps = useMemo(() => timeline?.items ?? [], [timeline]);
+  const steps = useMemo(
+    () => (timeline?.items ?? []).flatMap(splitReasoningTimelineItem),
+    [timeline],
+  );
   const isCompleted = turn?.status === "completed";
   const panelActivityLabel = steps.length ? getTimelineTitle(steps[steps.length - 1]) : null;
   const durationLabel = useThoughtTimer(turn, isStreaming);

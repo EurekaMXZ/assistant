@@ -182,10 +182,11 @@ func updateContextHeadAfterAssistant(ctx context.Context, tx pgx.Tx, conversatio
 			latest_request_run_id = COALESCE(NULLIF($4, '')::uuid, latest_request_run_id),
 			latest_successful_run_id = COALESCE(NULLIF($4, '')::uuid, latest_successful_run_id),
 			latest_checkpoint_key = COALESCE(NULLIF($5, ''), latest_checkpoint_key),
+			latest_checkpoint_checksum = CASE WHEN $5 <> '' THEN NULLIF($6, '') ELSE latest_checkpoint_checksum END,
 			checkpoint_covered_event_seq = CASE WHEN $5 <> '' THEN last_context_event_seq ELSE checkpoint_covered_event_seq END
 		WHERE conversation_id = $1::uuid
 		RETURNING `+contextHeadColumns+`
-	`, conversationID, assistantSeq, activeTokens, summary.RunID, summary.CheckpointBlobKey)
+	`, conversationID, assistantSeq, activeTokens, summary.RunID, summary.CheckpointBlobKey, summary.CheckpointChecksum)
 
 	head, err := scanContextHead(row)
 	if err != nil {

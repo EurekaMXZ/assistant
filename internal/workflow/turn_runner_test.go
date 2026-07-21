@@ -80,6 +80,7 @@ type stubScheduledRunStore struct {
 	failed       int
 	parentFailed int
 	cancelled    int
+	artifacts    []RunArtifactMetadata
 }
 
 type blockingCancellationModel struct {
@@ -282,6 +283,11 @@ func (s *stubScheduledRunStore) FailScheduledTurnRun(context.Context, TurnRunLea
 
 func (s *stubScheduledRunStore) FinalizeTurnCancellation(context.Context, string, string) error {
 	s.cancelled++
+	return nil
+}
+
+func (s *stubScheduledRunStore) SetTurnRunArtifactMetadata(_ context.Context, _ string, artifacts []RunArtifactMetadata) error {
+	s.artifacts = append(s.artifacts, artifacts...)
 	return nil
 }
 

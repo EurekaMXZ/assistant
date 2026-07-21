@@ -388,17 +388,36 @@ func (r *AttachmentRepository) ListStorageAttachments(ctx context.Context, userI
 
 func (r *AttachmentRepository) ClaimAttachmentDeletion(ctx context.Context, userID string, attachmentID string) (*domain.Attachment, error) {
 	item, err := scanAttachment(r.pool.QueryRow(ctx, `
-		UPDATE attachments
+		UPDATE attachments AS a
 		SET status = 'deleting', updated_at = now()
-		WHERE id = $1::uuid
-		  AND uploaded_by_user_id = $2::uuid
-		  AND status IN ('pending', 'ready')
+		WHERE a.id = $1::uuid
+		  AND a.uploaded_by_user_id = $2::uuid
+		  AND a.status IN ('pending', 'ready')
+		  AND NOT EXISTS (
+			SELECT 1 FROM messages m
+			WHERE m.conversation_id = a.conversation_id
+			  AND COALESCE(m.metadata->'attachment_ids', '[]'::jsonb) ? a.id::text
+		  )
 		RETURNING id::text, conversation_id::text, uploaded_by_user_id::text, filename, content_type,
 			category, size_bytes, sha256, content_md5, status, object_key, metadata, upload_completed_at,
 			created_at, updated_at
 	`, attachmentID, userID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			var referenced bool
+			if queryErr := r.pool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM attachments a
+					JOIN messages m ON m.conversation_id = a.conversation_id
+					WHERE a.id = $1::uuid AND a.uploaded_by_user_id = $2::uuid
+					  AND COALESCE(m.metadata->'attachment_ids', '[]'::jsonb) ? a.id::text
+				)
+			`, attachmentID, userID).Scan(&referenced); queryErr != nil {
+				return nil, fmt.Errorf("check attachment references: %w", queryErr)
+			}
+			if referenced {
+				return nil, domain.ErrConflict
+			}
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("claim attachment deletion: %w", err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/cache"
@@ -63,7 +64,11 @@ func (h *Hub) PutContextSnapshot(ctx context.Context, snapshot *cache.ContextSna
 	if err != nil {
 		return err
 	}
-	if err := h.client.Set(ctx, h.contextKey(snapshot.ConversationID, snapshot.Version), payload, h.contextTTL).Err(); err != nil {
+	ttl := h.contextTTL
+	if jitter := ttl / 10; jitter > 0 {
+		ttl = ttl - jitter + time.Duration(rand.Int64N(int64(2*jitter)+1))
+	}
+	if err := h.client.Set(ctx, h.contextKey(snapshot.ConversationID, snapshot.Version), payload, ttl).Err(); err != nil {
 		return fmt.Errorf("put shared context snapshot: %w", err)
 	}
 	return nil

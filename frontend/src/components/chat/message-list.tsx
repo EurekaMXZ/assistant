@@ -177,7 +177,7 @@ export function MessageList({
   }, [streamingTurnId, turnsById]);
 
   const entries = groupMessageEntries(messages, turnsById);
-  const retryableRootTurnId = entries.findLast((entry) => entry.kind === "turn")?.rootTurnId;
+  const editableRootTurnId = entries.findLast((entry) => entry.kind === "turn")?.rootTurnId;
   const loadOlderMessages = async () => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -239,10 +239,12 @@ export function MessageList({
                 );
                 const variant = entry.variants[selectedIndex];
                 if (!variant) return null;
-                const canChangePrompt =
-                  entry.rootTurnId === retryableRootTurnId &&
-                  !streamingTurnId &&
-                  ["completed", "failed"].includes(turnsById[variant.turnId]?.status || "");
+                const terminal = ["completed", "failed"].includes(
+                  turnsById[variant.turnId]?.status || "",
+                );
+                const canEdit =
+                  entry.rootTurnId === editableRootTurnId && !streamingTurnId && terminal;
+                const canRetry = !streamingTurnId && terminal;
                 return (
                   <Fragment key={`turn-${entry.rootTurnId}`}>
                     {variant.userMessage ? (
@@ -250,7 +252,7 @@ export function MessageList({
                         key={variant.userMessage.id}
                         message={variant.userMessage}
                         onEdit={onEditMessage}
-                        canEdit={canChangePrompt}
+                        canEdit={canEdit}
                       />
                     ) : null}
                     {variant.assistantMessages.length > 0 ? (
@@ -259,7 +261,7 @@ export function MessageList({
                         messages={variant.assistantMessages}
                         onOpenTimeline={onOpenTimeline}
                         onRetry={onRetryMessage}
-                        canRetry={canChangePrompt}
+                        canRetry={canRetry}
                         isStreaming={streamingTurnId === variant.turnId}
                         turn={turnsById[variant.turnId] || null}
                         turnId={variant.turnId}

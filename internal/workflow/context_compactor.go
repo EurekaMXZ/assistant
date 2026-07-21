@@ -248,11 +248,12 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		if marshalErr != nil {
 			return fmt.Errorf("marshal compacted context checkpoint: %w", marshalErr)
 		}
-		compressed, _, compressErr := compressImmutableRunPayload(checkpointPayload)
+		compressed, checksum, compressErr := compressImmutableRunPayload(checkpointPayload)
 		if compressErr != nil {
 			return compressErr
 		}
 		anchor.CheckpointKey = c.checkpoints.ContextCheckpointKey(event.ConversationID, head.Version+1)
+		anchor.CheckpointChecksum = checksum
 		if err := c.checkpoints.PutImmutableBytes(ctx, anchor.CheckpointKey, compressed, immutableRunArtifactContentType); err != nil {
 			return fmt.Errorf("persist compacted context checkpoint: %w", err)
 		}

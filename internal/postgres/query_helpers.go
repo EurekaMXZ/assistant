@@ -39,6 +39,7 @@ const contextHeadColumns = `
 	COALESCE(latest_request_run_id::text, ''),
 	COALESCE(latest_successful_run_id::text, ''),
 	COALESCE(latest_checkpoint_key, ''),
+	COALESCE(latest_checkpoint_checksum, ''),
 	checkpoint_covered_event_seq,
 	last_context_event_seq,
 	context_schema_version,

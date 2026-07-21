@@ -12,7 +12,7 @@ import { toast } from "sonner";
 
 interface UseTurnStreamOptions {
   conversationId: string;
-  onCompleted: () => Promise<void>;
+  onCompleted: (turnId: string) => Promise<void>;
   onEvent: (frame: TurnStreamFrame, turnId: string) => void;
   onFinished: (turnId: string) => void;
 }
@@ -68,7 +68,7 @@ export function useTurnStream({
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      let settled = false;
+      let completed = false;
 
       try {
         const result = await runTurnStreamController({
@@ -82,7 +82,7 @@ export function useTurnStream({
           shouldReconnect: (error) => !isSessionUnauthorizedError(error),
         });
         if (result.kind === "terminal") {
-          settled = true;
+          completed = result.done.status === "completed";
         } else {
           toast.error(result.error.message);
         }
@@ -92,8 +92,8 @@ export function useTurnStream({
         }
       } finally {
         if (abortRef.current !== controller) return;
-        if (settled && activeConversationIdRef.current === requestedConversationId) {
-          await onCompleted();
+        if (completed && activeConversationIdRef.current === requestedConversationId) {
+          await onCompleted(turnId);
         }
         if (
           abortRef.current !== controller ||

@@ -116,22 +116,23 @@ func contextVersionKey(conversationID string, version int64) string {
 
 func (s *Store) ReplaceWithCompacted(conversationID string, anchor *ContextAnchor, head domain.ContextHead, tail []domain.Message) {
 	s.Put(conversationID, &ContextSnapshot{
-		ConversationID:        conversationID,
-		Version:               head.Version,
-		SchemaVersion:         head.ContextSchemaVersion,
-		CoveredEventSeq:       head.LastContextEventSeq,
-		LatestCheckpointKey:   head.LatestCheckpointKey,
-		LatestSuccessfulRunID: head.LatestSuccessfulRunID,
-		Anchor:                anchor,
-		AnchorGeneration:      head.AnchorGeneration,
-		CoveredUntilSeq:       head.CoveredUntilSeq,
-		RawTailStartSeq:       head.RawTailStartSeq,
-		LastSeq:               head.LastSeq,
-		ActiveTokens:          head.ActiveContextTokens,
-		TailCacheStartSeq:     tailCacheStart(head, tail),
-		TailCacheEndSeq:       tailCacheEnd(head, tail),
-		Tail:                  append([]domain.Message(nil), tail...),
-		UpdatedAt:             time.Now(),
+		ConversationID:           conversationID,
+		Version:                  head.Version,
+		SchemaVersion:            head.ContextSchemaVersion,
+		CoveredEventSeq:          head.LastContextEventSeq,
+		LatestCheckpointKey:      head.LatestCheckpointKey,
+		LatestCheckpointChecksum: head.LatestCheckpointChecksum,
+		LatestSuccessfulRunID:    head.LatestSuccessfulRunID,
+		Anchor:                   anchor,
+		AnchorGeneration:         head.AnchorGeneration,
+		CoveredUntilSeq:          head.CoveredUntilSeq,
+		RawTailStartSeq:          head.RawTailStartSeq,
+		LastSeq:                  head.LastSeq,
+		ActiveTokens:             head.ActiveContextTokens,
+		TailCacheStartSeq:        tailCacheStart(head, tail),
+		TailCacheEndSeq:          tailCacheEnd(head, tail),
+		Tail:                     append([]domain.Message(nil), tail...),
+		UpdatedAt:                time.Now(),
 	})
 }
 
@@ -167,6 +168,7 @@ func (s *Store) AppendTailMessage(conversationID string, head domain.ContextHead
 	entry.SchemaVersion = head.ContextSchemaVersion
 	entry.CoveredEventSeq = head.LastContextEventSeq
 	entry.LatestCheckpointKey = head.LatestCheckpointKey
+	entry.LatestCheckpointChecksum = head.LatestCheckpointChecksum
 	entry.LatestSuccessfulRunID = head.LatestSuccessfulRunID
 	entry.RawTailStartSeq = head.RawTailStartSeq
 	entry.LastSeq = head.LastSeq
