@@ -244,7 +244,8 @@ export function MessageList({
                 );
                 const canEdit =
                   entry.rootTurnId === editableRootTurnId && !streamingTurnId && terminal;
-                const canRetry = !streamingTurnId && terminal;
+                const canRetry =
+                  entry.rootTurnId === editableRootTurnId && !streamingTurnId && terminal;
                 return (
                   <Fragment key={`turn-${entry.rootTurnId}`}>
                     {variant.userMessage ? (

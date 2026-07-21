@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message, Turn } from "@/lib/types";
 import { MessageBubble } from "./message-bubble";
 import { Composer } from "./composer";
-import { groupMessageEntries } from "./message-list";
+import { groupMessageEntries, MessageList } from "./message-list";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -71,6 +71,28 @@ describe("message turn variants", () => {
         },
       ],
     });
+  });
+
+  it("only shows retry on the latest logical turn", () => {
+    const markup = renderToStaticMarkup(
+      <MessageList
+        messages={[
+          message("user-1", "user", 1, "turn-1"),
+          message("answer-1", "assistant", 2, "turn-1"),
+          message("user-2", "user", 3, "turn-2"),
+          message("answer-2", "assistant", 4, "turn-2"),
+        ]}
+        turnsById={{
+          "turn-1": turn("turn-1", 1),
+          "turn-2": turn("turn-2", 1),
+        }}
+        onEditMessage={() => undefined}
+        onOpenTimeline={() => undefined}
+        onRetryMessage={() => undefined}
+      />,
+    );
+
+    expect(markup.match(/<span class="sr-only">重试<\/span>/g)).toHaveLength(1);
   });
 });
 
