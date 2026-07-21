@@ -10,6 +10,7 @@ const (
 	conversationNamespace = "conversation"
 	sandboxNamespace      = "sandbox"
 	internetNamespace     = "internet"
+	askUserName           = "ask_user"
 
 	conversationRenameTitleName = "rename_title"
 	sandboxCreateName           = "create"
@@ -28,13 +29,54 @@ const (
 	SandboxImportAttachment = sandboxNamespace + "." + sandboxImportAttachmentName
 	WebSearch               = internetNamespace + "." + internetSearchName
 	WebExtract              = internetNamespace + "." + internetExtractName
+	AskUser                 = askUserName
 )
 
 func DefaultTools() []llm.ModelTool {
 	return []llm.ModelTool{
 		conversationNamespaceDefinition(),
 		sandboxNamespaceDefinition(),
+		askUserDefinition(),
 		imageGenerationDefinition(),
+	}
+}
+
+func askUserDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        askUserName,
+		Description: "Pause the current turn for a user decision. Use this tool primarily for binary yes-or-no confirmation. For a simple everyday task such as ordering, first select the single best complete option yourself from context, distance, availability, price, and coupons; then call ask_user once with exactly two options to confirm or reject it. If rejected, select one materially different next-best option and confirm once more instead of interviewing the user. Avoid multi-option questionnaires; use more than two options only when a fixed non-binary choice is genuinely necessary. For ordinary confirmation use single_choice with action null. The tool may accompany independent tool calls and completes only after the user chooses an option.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"prompt":{"type":"string","description":"The concise question shown to the user. For confirmation, include the relevant impact or order summary."},
+				"kind":{"type":"string","enum":["single_choice","external_action"]},
+				"options":{
+					"type":"array","minItems":2,"maxItems":6,
+					"description":"Normally exactly two options representing yes and no. Use additional options only for an exceptional fixed non-binary choice.",
+					"items":{
+						"type":"object",
+						"properties":{
+							"id":{"type":"string"},
+							"label":{"type":"string"},
+							"tone":{"type":"string","enum":["primary","neutral","danger"]}
+						},
+						"required":["id","label","tone"],
+						"additionalProperties":false
+					}
+				},
+				"action":{
+					"type":["object","null"],
+					"description":"Required for external_action; use null for single_choice.",
+					"properties":{"label":{"type":"string"},"url":{"type":"string"}},
+					"required":["label","url"],
+					"additionalProperties":false
+				}
+			},
+			"required":["prompt","kind","options","action"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
 	}
 }
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { billingToolPriceSchema, conversationSchema, parseTurnStreamFrame } from "./api-schemas";
+import {
+  askUserInteractionSchema,
+  billingToolPriceSchema,
+  conversationSchema,
+  parseTurnStreamFrame,
+} from "./api-schemas";
 import { isViewportNearBottom, shouldFollowAfterScroll } from "./scroll-follow";
 import { parseSseFrame, SseValidationError } from "./sse";
 
@@ -24,6 +29,76 @@ describe("runtime schemas", () => {
     expect(() => parseSseFrame('event: turn.done\ndata: {"status":"completed"}\n\n')).toThrow(
       SseValidationError,
     );
+  });
+
+  it("strictly validates interaction snapshots and awaiting turn status", () => {
+    const interaction = {
+      id: "ask-user:tool-1",
+      type: "interaction",
+      status: "awaiting_input",
+      tool_call_id: "tool-1",
+      prompt: "Continue?",
+      kind: "single_choice",
+      options: [
+        { id: "yes", label: "Yes", tone: "primary" },
+        { id: "cancel", label: "Cancel", tone: "neutral" },
+      ],
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    const snapshot = {
+      turn_id: "turn-1",
+      conversation_id: "conversation-1",
+      status: "awaiting_input",
+      items: [interaction],
+    };
+
+    expect(parseTurnStreamFrame("turn.snapshot", snapshot)).not.toBeNull();
+    expect(
+      parseTurnStreamFrame("turn.snapshot", {
+        ...snapshot,
+        items: [{ ...interaction, arbitrary_class: "bg-red-500" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts cancelled interactions with answers and rejects unsafe action targets", () => {
+    const base = {
+      id: "ask-user:tool-1",
+      tool_call_id: "tool-1",
+      prompt: "Continue?",
+      kind: "external_action" as const,
+      options: [
+        { id: "yes", label: "Yes", tone: "primary" },
+        { id: "cancel", label: "Cancel", tone: "neutral" },
+      ],
+      status: "cancelled" as const,
+      answer: {
+        status: "cancelled" as const,
+        option_id: "cancelled",
+        label: "已取消",
+        user_reported: false,
+      },
+    };
+    expect(
+      askUserInteractionSchema.safeParse({
+        ...base,
+        action: { label: "Pay", url: "weixin://wap/pay?prepayid=example" },
+      }).success,
+    ).toBe(true);
+    for (const url of [
+      "https://localhost/pay",
+      "https://10.0.0.1/pay",
+      "https://2130706433/pay",
+      "https://169.254.169.254/latest/meta-data",
+      "weixin://dl/business/?ticket=example",
+    ]) {
+      expect(
+        askUserInteractionSchema.safeParse({
+          ...base,
+          action: { label: "Pay", url },
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("validates supported billing tool keys", () => {

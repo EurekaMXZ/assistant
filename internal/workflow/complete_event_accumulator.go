@@ -77,6 +77,12 @@ func (a *CompleteEventAccumulator) Apply(event stream.Event) ([]domain.Conversat
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventToolCallCompleted, "completed")}, nil
 	case stream.EventToolFailed:
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventToolCallFailed, "failed")}, nil
+	case stream.EventInteractionAwaiting:
+		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventInteractionAwaiting, domain.TurnStatusAwaitingInput)}, nil
+	case stream.EventInteractionDone:
+		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventInteractionCompleted, "completed")}, nil
+	case stream.EventInteractionCancelled:
+		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventInteractionCancelled, "cancelled")}, nil
 	default:
 		return nil, nil
 	}
@@ -97,11 +103,14 @@ func directSemanticEvent(event stream.Event, eventType string, status string) do
 	identity := event.ItemID
 	var toolIdentity struct {
 		ToolCallRecordID string `json:"tool_call_record_id"`
+		ToolCallID       string `json:"tool_call_id"`
 		CallID           string `json:"call_id"`
 	}
 	if json.Unmarshal(payload, &toolIdentity) == nil {
 		if toolIdentity.ToolCallRecordID != "" {
 			identity = toolIdentity.ToolCallRecordID
+		} else if toolIdentity.ToolCallID != "" {
+			identity = toolIdentity.ToolCallID
 		} else if toolIdentity.CallID != "" {
 			identity = toolIdentity.CallID
 		}

@@ -21,17 +21,18 @@ const (
 )
 
 type ContextCompactor struct {
-	settings    WorkflowSettings
-	store       WorkflowContextRepository
-	model       llm.ModelClient
-	blobs       ContextAnchorStore
-	checkpoints ContextCheckpointStore
-	cache       cache.ContextCompactionCache
-	loader      *ContextLoader
-	tools       *ToolOrchestrator
-	sandboxes   tool.ConversationSandboxReader
-	models      ModelCatalogResolver
-	billing     CompactionUsageRecorder
+	settings      WorkflowSettings
+	store         WorkflowContextRepository
+	model         llm.ModelClient
+	blobs         ContextAnchorStore
+	checkpoints   ContextCheckpointStore
+	cache         cache.ContextCompactionCache
+	loader        *ContextLoader
+	tools         *ToolOrchestrator
+	sandboxes     tool.ConversationSandboxReader
+	models        ModelCatalogResolver
+	billing       CompactionUsageRecorder
+	conversations ConversationReader
 }
 
 func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEvent) error {
@@ -81,7 +82,17 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	if compactTriggerTokens <= 0 || head.ActiveContextTokens < compactTriggerTokens || head.RawTailStartSeq > head.LastSeq {
 		return nil
 	}
-
+	instructions := c.settings.AgentSystemPrompt
+	ownerUserID := ""
+	if c.conversations != nil {
+		conversation, conversationErr := c.conversations.GetConversation(ctx, event.ConversationID)
+		if conversationErr != nil {
+			return conversationErr
+		}
+		if conversation != nil {
+			ownerUserID = conversation.OwnerUserID
+		}
+	}
 	compactedMessages, retainedMessages := splitCompactionMessagesForEvent(contextMessages(hot.Tail), event.EventType)
 	if len(compactedMessages) == 0 {
 		return nil
@@ -97,7 +108,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		tools = nil
 		if execution.SupportsTools {
 			var toolErr error
-			tools, toolErr = c.compactionTools(ctx, event.ConversationID)
+			tools, toolErr = c.compactionTools(ctx, event.ConversationID, ownerUserID)
 			if toolErr != nil {
 				return toolErr
 			}
@@ -127,7 +138,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		input = append(input, llm.ModelItem{
 			Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: compactPrompt,
 		})
-		if estimateModelContextTokens(c.settings.AgentSystemPrompt, input, tools) <= inputLimit {
+		if estimateModelContextTokens(instructions, input, tools) <= inputLimit {
 			break
 		}
 		boundary := previousCompactionTurnBoundary(compactedMessages)
@@ -140,8 +151,8 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 				}
 				continue
 			}
-			input = emergencyCompactionInput(hot.Anchor, compactedMessages, compactPrompt, inputLimit, c.settings.AgentSystemPrompt, tools)
-			if len(input) > 0 && estimateModelContextTokens(c.settings.AgentSystemPrompt, input, tools) <= inputLimit {
+			input = emergencyCompactionInput(hot.Anchor, compactedMessages, compactPrompt, inputLimit, instructions, tools)
+			if len(input) > 0 && estimateModelContextTokens(instructions, input, tools) <= inputLimit {
 				break
 			}
 			return errors.New("oldest conversation turn exceeds compaction model context window")
@@ -162,7 +173,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		ReasoningEffort:     reasoningEffort,
 		ReasoningSummary:    reasoningSummary,
 		TextVerbosity:       textVerbosity,
-		Instructions:        c.settings.AgentSystemPrompt,
+		Instructions:        instructions,
 		Input:               input,
 		Tools:               tools,
 		PromptCacheKey:      conversationPromptCacheKey(event.ConversationID),
@@ -232,12 +243,12 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	if turnExecution != nil && !turnExecution.SupportsTools {
 		contextTools = nil
 	} else if turnExecution != nil && turnExecution.SupportsTools && len(contextTools) == 0 {
-		contextTools, err = c.compactionTools(ctx, event.ConversationID)
+		contextTools, err = c.compactionTools(ctx, event.ConversationID, ownerUserID)
 		if err != nil {
 			return err
 		}
 	}
-	activeContextTokens := estimateModelContextTokens(c.settings.AgentSystemPrompt, postCompactionInput, contextTools)
+	activeContextTokens := estimateModelContextTokens(instructions, postCompactionInput, contextTools)
 	if c.checkpoints != nil {
 		checkpointPayload, marshalErr := json.Marshal(immutableContextCheckpoint{
 			SchemaVersion:  immutableRunArtifactSchemaVersion,
@@ -397,12 +408,13 @@ func formatConversationCheckpoint(summary string) string {
 		"</conversation-checkpoint>"
 }
 
-func (c *ContextCompactor) compactionTools(ctx context.Context, conversationID string) ([]llm.ModelTool, error) {
+func (c *ContextCompactor) compactionTools(ctx context.Context, conversationID string, ownerUserID string) ([]llm.ModelTool, error) {
 	if c == nil || c.tools == nil {
 		return nil, nil
 	}
 	scope := tool.ToolScope{
 		ConversationID: conversationID,
+		OwnerUserID:    ownerUserID,
 	}
 	if c.sandboxes != nil {
 		sandbox, err := c.sandboxes.GetUsableConversationSandbox(ctx, conversationID)

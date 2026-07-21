@@ -69,6 +69,7 @@ export function useTurnStream({
       const controller = new AbortController();
       abortRef.current = controller;
       let completed = false;
+      let keepActive = false;
 
       try {
         const result = await runTurnStreamController({
@@ -84,6 +85,7 @@ export function useTurnStream({
         if (result.kind === "terminal") {
           completed = result.done.status === "completed";
         } else {
+          keepActive = true;
           toast.error(result.error.message);
         }
       } catch (error) {
@@ -100,6 +102,11 @@ export function useTurnStream({
           !mountedRef.current ||
           activeConversationIdRef.current !== requestedConversationId
         ) {
+          return;
+        }
+        if (keepActive) {
+          setStreamConnectionState("disconnected");
+          abortRef.current = null;
           return;
         }
         setIsStreaming(false);

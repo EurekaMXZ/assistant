@@ -17,6 +17,7 @@ import {
   assistantTextMessageId,
   assistantTimelineThinkingState,
   moveThinkingAfter,
+  upsertAssistantInteraction,
   upsertAssistantTextContent,
   upsertTurnFailureMessage,
 } from "@/lib/chat-state";
@@ -29,6 +30,7 @@ import {
 import { runTurnStreamController } from "@/lib/turn-stream-controller";
 import {
   dispatchTurnStreamEvent,
+  isAssistantInteractionItem,
   isAssistantOutputItem,
   isTimelineItem,
   type ConversationPresentationUpdate,
@@ -125,7 +127,9 @@ export function useTurnTimelineController({
         return;
       }
       const hasContinuation = snapshot.items.slice(pendingIndex + 1).some((item) => {
-        return isAssistantOutputItem(item) || isTimelineItem(item);
+        return (
+          isAssistantOutputItem(item) || isAssistantInteractionItem(item) || isTimelineItem(item)
+        );
       });
       if (!hasContinuation) return;
       pendingDoneTextMessageIdRef.current = null;
@@ -137,7 +141,11 @@ export function useTurnTimelineController({
   const settlePendingThinkingForItem = useCallback(
     (item: TimelineItem, turnId: string) => {
       const pendingMessageId = pendingDoneTextMessageIdRef.current;
-      if (!pendingMessageId || (!isTimelineItem(item) && !isAssistantOutputItem(item))) return;
+      if (
+        !pendingMessageId ||
+        (!isTimelineItem(item) && !isAssistantOutputItem(item) && !isAssistantInteractionItem(item))
+      )
+        return;
 
       if (pendingMessageId === assistantTextMessageId(turnId, item.id)) {
         const phase = assistantOutputPhase(item);
@@ -205,6 +213,11 @@ export function useTurnTimelineController({
               ),
             );
           }
+          if (mirrorMessages && isAssistantInteractionItem(item)) {
+            setMessages((previous) =>
+              upsertAssistantInteraction(previous, turnId, conversationId, item),
+            );
+          }
         },
         onItemDelta(delta) {
           if (mirrorMessages) settlePendingThinkingForOtherEvent(turnId, true);
@@ -257,6 +270,11 @@ export function useTurnTimelineController({
                 setMessages((previous) => moveThinkingAfter(previous, turnId, messageId));
               }
             }
+          }
+          if (mirrorMessages && isAssistantInteractionItem(item)) {
+            setMessages((previous) =>
+              upsertAssistantInteraction(previous, turnId, conversationId, item),
+            );
           }
         },
         onTurnDone(done) {
@@ -327,7 +345,7 @@ export function useTurnTimelineController({
           },
           shouldReconnect: (error) => !isSessionUnauthorizedError(error),
         });
-        if (result.kind === "retryable") throw result.error;
+        if (result.kind === "active") throw result.error;
       } catch (error) {
         if ((error as Error).name !== "AbortError" && !isSessionUnauthorizedError(error)) {
           applyAction({

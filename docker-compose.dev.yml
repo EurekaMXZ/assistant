@@ -76,6 +76,18 @@ services:
       retries: 12
       start_period: 5s
 
+  nginx:
+    build:
+      context: ./deploy/nginx
+    environment:
+      AMAP_SECURITY_JS_CODE: ${AMAP_SECURITY_JS_CODE:-}
+    extra_hosts:
+      - "api:host-gateway"
+      - "frontend:host-gateway"
+    ports:
+      - "${DEV_NGINX_HOST_PORT:-8081}:8080"
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   minio-data:

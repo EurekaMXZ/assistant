@@ -1,6 +1,7 @@
 import type {
   Attachment,
   AdminOverview,
+  AnswerToolCallResult,
   BillingAccount,
   BillingRedemptionCode,
   BillingRedemptionCodeIssue,
@@ -12,6 +13,7 @@ import type {
   ConversationEventPage,
   ConversationShareResult,
   ConversationShareSnapshot,
+  CreateMCPServerPayload,
   CursorPageResponse,
   Message,
   Model,
@@ -26,11 +28,18 @@ import type {
   StorageUsage,
   Turn,
   User,
+  UserLocation,
+  UserLocationInput,
+  UserMCPServer,
+  UserPersonalization,
+  UpdateMCPServerPayload,
 } from "./types";
 import { z } from "zod";
 import { createMD5, createSHA256, sha256 as hashSHA256 } from "hash-wasm";
 import {
   attachmentSchema,
+  answerToolCallInputSchema,
+  answerToolCallResultSchema,
   auditEventSchema,
   billingAccountSchema,
   billingRedemptionCodeSchema,
@@ -42,6 +51,7 @@ import {
   conversationShareSnapshotSchema,
   conversationSchema,
   conversationEventPageSchema,
+  createMCPServerInputSchema,
   cursorPageSchema,
   initialTurnResultSchema,
   messageSchema,
@@ -56,6 +66,12 @@ import {
   storageUsageSchema,
   turnSchema,
   userSchema,
+  userLocationInputSchema,
+  userLocationSchema,
+  userMCPServerSchema,
+  personalizationUpdateInputSchema,
+  userPersonalizationSchema,
+  updateMCPServerInputSchema,
   presignedObjectUrlSchema,
 } from "./api-schemas";
 import { normalizeTurnRequest, requestMetadata, type TurnRequestDescriptor } from "./turn-request";
@@ -278,6 +294,49 @@ export async function me() {
   return apiFetch<{ user: User }>("/auth/me", {}, z.object({ user: userSchema })).then(
     (r) => r.user,
   );
+}
+
+export async function getPersonalization() {
+  return apiFetch<{ personalization: UserPersonalization }>(
+    "/profile/personalization",
+    {},
+    z.object({ personalization: userPersonalizationSchema }),
+  ).then((response) => response.personalization);
+}
+
+export async function updatePersonalization(payload: {
+  preferences_text: string;
+  location_enabled_for_model: boolean;
+  expected_version: number;
+}) {
+  const input = personalizationUpdateInputSchema.parse(payload);
+  return apiFetch<{ personalization: UserPersonalization }>(
+    "/profile/personalization",
+    { method: "PUT", body: JSON.stringify(input) },
+    z.object({ personalization: userPersonalizationSchema }),
+  ).then((response) => response.personalization);
+}
+
+export async function getProfileLocation(): Promise<UserLocation | null> {
+  const response = await apiFetch<{ location: UserLocation }>(
+    "/profile/location",
+    {},
+    z.object({ location: userLocationSchema }),
+  );
+  return response?.location ?? null;
+}
+
+export async function updateProfileLocation(payload: UserLocationInput) {
+  const input = userLocationInputSchema.parse(payload);
+  return apiFetch<{ location: UserLocation }>(
+    "/profile/location",
+    { method: "PUT", body: JSON.stringify(input) },
+    z.object({ location: userLocationSchema }),
+  ).then((response) => response.location);
+}
+
+export async function deleteProfileLocation() {
+  return apiFetch<void>("/profile/location", { method: "DELETE" });
 }
 
 export async function changePassword(currentPassword: string, newPassword: string) {
@@ -812,6 +871,52 @@ export async function deleteStorageAttachment(attachmentId: string) {
   await apiFetch<void>(`/storage/attachments/${attachmentId}`, { method: "DELETE" });
 }
 
+export async function listMCPServers(signal?: AbortSignal) {
+  return apiFetch<{ servers: UserMCPServer[] }>(
+    "/mcp-servers",
+    { signal },
+    z.object({ servers: z.array(userMCPServerSchema) }),
+  ).then((response) => response.servers);
+}
+
+export async function createMCPServer(payload: CreateMCPServerPayload) {
+  const input = createMCPServerInputSchema.parse(payload);
+  return apiFetch<{ server: UserMCPServer }>(
+    "/mcp-servers",
+    { method: "POST", body: JSON.stringify(input) },
+    z.object({ server: userMCPServerSchema }),
+  ).then((response) => response.server);
+}
+
+export async function getMCPServer(serverID: string, signal?: AbortSignal) {
+  return apiFetch<{ server: UserMCPServer }>(
+    `/mcp-servers/${encodeURIComponent(serverID)}`,
+    { signal },
+    z.object({ server: userMCPServerSchema }),
+  ).then((response) => response.server);
+}
+
+export async function updateMCPServer(serverID: string, payload: UpdateMCPServerPayload) {
+  const input = updateMCPServerInputSchema.parse(payload);
+  return apiFetch<{ server: UserMCPServer }>(
+    `/mcp-servers/${encodeURIComponent(serverID)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+    z.object({ server: userMCPServerSchema }),
+  ).then((response) => response.server);
+}
+
+export async function deleteMCPServer(serverID: string) {
+  await apiFetch<void>(`/mcp-servers/${encodeURIComponent(serverID)}`, { method: "DELETE" });
+}
+
+export async function testMCPServer(serverID: string) {
+  return apiFetch<{ server: UserMCPServer }>(
+    `/mcp-servers/${encodeURIComponent(serverID)}/test`,
+    { method: "POST" },
+    z.object({ server: userMCPServerSchema }),
+  ).then((response) => response.server);
+}
+
 // Attachments
 export async function hashFile(file: File) {
   const [md5, sha256] = await Promise.all([createMD5(), createSHA256()]);
@@ -1039,6 +1144,24 @@ export async function cancelTurn(id: string) {
     { method: "POST" },
     z.object({ turn: turnSchema }),
   ).then((result) => result.turn);
+}
+
+export async function answerToolCall(
+  turnId: string,
+  toolCallId: string,
+  optionId: string,
+  idempotencyKey: string,
+) {
+  const input = answerToolCallInputSchema.parse({ option_id: optionId });
+  return apiFetch<AnswerToolCallResult>(
+    `/turns/${encodeURIComponent(turnId)}/tool-calls/${encodeURIComponent(toolCallId)}/answer`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(input),
+    },
+    answerToolCallResultSchema,
+  );
 }
 
 export function getStreamUrl(streamPath: string): string {

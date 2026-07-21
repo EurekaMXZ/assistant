@@ -16,6 +16,36 @@ export interface User {
   deleted_at?: string;
 }
 
+export interface UserPersonalization {
+  user_id: string;
+  preferences_text: string;
+  location_enabled_for_model: boolean;
+  version: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type UserLocationSource = "map" | "search" | "geolocation";
+
+export interface UserLocation {
+  user_id: string;
+  latitude: number;
+  longitude: number;
+  coordinate_system: "gcj02";
+  formatted_address: string;
+  province: string;
+  city: string;
+  district: string;
+  adcode: string;
+  poi_id: string;
+  poi_name: string;
+  source: UserLocationSource;
+  created_at: string;
+  updated_at: string;
+}
+
+export type UserLocationInput = Omit<UserLocation, "user_id" | "created_at" | "updated_at">;
+
 export interface Session {
   access_token: string;
   token_type: string;
@@ -296,6 +326,69 @@ export interface StorageAttachment extends Attachment {
   conversation_title?: string;
 }
 
+export type MCPValidationStatus = "untested" | "valid" | "invalid";
+
+export interface MCPSecret {
+  name: string;
+  configured: boolean;
+  key_hint?: string;
+}
+
+export interface UserMCPTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserMCPServer {
+  id: string;
+  name: string;
+  slug: string;
+  endpoint_url: string;
+  enabled: boolean;
+  revision: number;
+  parameters: MCPSecret[];
+  headers: MCPSecret[];
+  tools: UserMCPTool[];
+  last_validation_status: MCPValidationStatus;
+  last_validation_error?: string;
+  last_validated_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateMCPSecretInput {
+  name: string;
+  value: string;
+}
+
+export interface UpdateMCPSecretInput {
+  name: string;
+  value?: string | null;
+}
+
+export interface CreateMCPServerPayload {
+  name: string;
+  slug: string;
+  endpoint_url: string;
+  enabled?: boolean;
+  parameters?: CreateMCPSecretInput[];
+  headers?: CreateMCPSecretInput[];
+}
+
+export interface UpdateMCPServerPayload {
+  name?: string;
+  slug?: string;
+  endpoint_url?: string;
+  enabled?: boolean;
+  parameters?: UpdateMCPSecretInput[];
+  headers?: UpdateMCPSecretInput[];
+  enabled_tools?: string[];
+}
+
 type MessageRole = "system" | "developer" | "user" | "assistant" | "tool";
 
 export interface Message {
@@ -336,6 +429,7 @@ export type TurnStatus =
   | "accepted"
   | "context_ready"
   | "processing"
+  | "awaiting_input"
   | "cancel_requested"
   | "completed"
   | "failed"
@@ -362,6 +456,48 @@ export interface Turn {
   updated_at: string;
 }
 
+export type AskUserInteractionKind = "single_choice" | "external_action";
+export type AskUserOptionTone = "primary" | "neutral" | "danger";
+
+export interface AskUserOption {
+  id: string;
+  label: string;
+  tone: AskUserOptionTone;
+}
+
+export interface AskUserAction {
+  label: string;
+  url: string;
+}
+
+export interface AskUserAnswer {
+  status: "answered" | "cancelled";
+  option_id: string;
+  label: string;
+  user_reported: boolean;
+}
+
+export interface AskUserInteraction {
+  id: string;
+  tool_call_id: string;
+  prompt: string;
+  kind: AskUserInteractionKind;
+  options: AskUserOption[];
+  action?: AskUserAction;
+  answer?: AskUserAnswer;
+  status: "awaiting_input" | "completed" | "cancelled";
+}
+
+export interface InteractionTimelineItem extends AskUserInteraction {
+  type: "interaction";
+  created_at: string;
+}
+
+export interface AnswerToolCallResult {
+  interaction: AskUserInteraction;
+  stream_path: string;
+}
+
 export interface TimelineItem {
   id: string;
   type: string;
@@ -378,6 +514,12 @@ export interface TimelineItem {
   command_output?: string;
   exit_code?: number;
   timed_out?: boolean;
+  tool_call_id?: string;
+  prompt?: string;
+  kind?: AskUserInteractionKind;
+  options?: AskUserOption[];
+  action?: AskUserAction;
+  answer?: AskUserAnswer;
   metadata?: Record<string, unknown>;
   created_at: string;
 }

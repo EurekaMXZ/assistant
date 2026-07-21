@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  ApiResponseValidationError,
+  answerToolCall,
   applyAdminBillingAdjustment,
   createConversationShare,
   deleteAdminModel,
@@ -94,6 +96,52 @@ describe("backend API routing", () => {
   it("routes backend stream paths directly to the public API", () => {
     expect(getStreamUrl("/api/v1/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
     expect(getStreamUrl("/turns/turn-1/stream")).toBe("/api/v1/turns/turn-1/stream");
+  });
+});
+
+describe("ask user answers", () => {
+  const response = {
+    interaction: {
+      id: "ask-user:tool-1",
+      tool_call_id: "tool-1",
+      prompt: "Continue?",
+      kind: "single_choice",
+      options: [
+        { id: "yes", label: "Yes", tone: "primary" },
+        { id: "cancel", label: "Cancel", tone: "neutral" },
+      ],
+      status: "completed",
+      answer: {
+        status: "answered",
+        option_id: "yes",
+        label: "Yes",
+        user_reported: true,
+      },
+    },
+    stream_path: "/api/v1/turns/turn-1/stream",
+  };
+
+  it("posts the option with the supplied idempotency key", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(response));
+
+    const result = await answerToolCall("turn/1", "tool/1", "yes", "answer-operation-1");
+
+    expect(result.interaction.answer?.label).toBe("Yes");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/turns/turn%2F1/tool-calls/tool%2F1/answer");
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ option_id: "yes" }));
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe(
+      "answer-operation-1",
+    );
+  });
+
+  it("rejects response fields outside the interaction contract", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ ...response, interaction: { ...response.interaction, unexpected: true } }),
+    );
+
+    await expect(
+      answerToolCall("turn-1", "tool-1", "yes", "answer-operation-1"),
+    ).rejects.toBeInstanceOf(ApiResponseValidationError);
   });
 });
 

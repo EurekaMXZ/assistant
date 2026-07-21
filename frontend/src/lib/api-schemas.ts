@@ -1,13 +1,19 @@
 import { z } from "zod";
+import { parseSafeAskUserActionURL } from "./ask-user-action";
 
 const dateTime = z.string().min(1);
 const metadata = z.record(z.string(), z.unknown());
+const textWithMaximumCharacters = (maximum: number) =>
+  z.string().refine((value) => Array.from(value).length <= maximum, {
+    message: `Must contain at most ${maximum} characters`,
+  });
 
 export const reasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 export const turnStatusSchema = z.enum([
   "accepted",
   "context_ready",
   "processing",
+  "awaiting_input",
   "cancel_requested",
   "completed",
   "failed",
@@ -31,6 +37,42 @@ export const userSchema = z.object({
     .default(512 * 1024 * 1024),
   storage_used_bytes: z.number().int().nonnegative().default(0),
   deleted_at: dateTime.optional(),
+});
+
+export const personalizationInputSchema = z.object({
+  preferences_text: textWithMaximumCharacters(8000),
+  location_enabled_for_model: z.boolean(),
+});
+
+export const personalizationUpdateInputSchema = personalizationInputSchema.extend({
+  expected_version: z.number().int().nonnegative(),
+});
+
+export const userPersonalizationSchema = personalizationInputSchema.extend({
+  user_id: z.string(),
+  version: z.number().int().nonnegative(),
+  created_at: dateTime.optional(),
+  updated_at: dateTime.optional(),
+});
+
+export const userLocationInputSchema = z.object({
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  coordinate_system: z.literal("gcj02"),
+  formatted_address: textWithMaximumCharacters(500),
+  province: textWithMaximumCharacters(100),
+  city: textWithMaximumCharacters(100),
+  district: textWithMaximumCharacters(100),
+  adcode: z.union([z.literal(""), z.string().regex(/^\d{6}$/)]),
+  poi_id: textWithMaximumCharacters(128),
+  poi_name: textWithMaximumCharacters(200),
+  source: z.enum(["map", "search", "geolocation"]),
+});
+
+export const userLocationSchema = userLocationInputSchema.extend({
+  user_id: z.string(),
+  created_at: dateTime,
+  updated_at: dateTime,
 });
 
 export const sessionSchema = z.object({
@@ -97,6 +139,100 @@ export const storageUsageSchema = z.object({
 
 export const storageAttachmentSchema = attachmentSchema.extend({
   conversation_title: z.string().optional(),
+});
+
+const mcpServerNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => Array.from(value).length <= 100);
+const mcpServerSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const mcpEndpointURLSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        (url.protocol === "http:" || url.protocol === "https:") &&
+        url.username === "" &&
+        url.password === "" &&
+        url.search === "" &&
+        url.hash === ""
+      );
+    } catch {
+      return false;
+    }
+  });
+const mcpSecretNameSchema = z.string().trim().min(1).max(128);
+const mcpSecretValueSchema = z.string().max(8192);
+
+export const mcpSecretSchema = z.object({
+  name: z.string(),
+  configured: z.boolean(),
+  key_hint: z.string().optional(),
+});
+
+export const userMCPToolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  input_schema: z.record(z.string(), z.unknown()),
+  enabled: z.boolean(),
+  created_at: dateTime,
+  updated_at: dateTime,
+});
+
+export const userMCPServerSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  endpoint_url: z.string(),
+  enabled: z.boolean(),
+  revision: z.number().int().positive(),
+  parameters: z.array(mcpSecretSchema),
+  headers: z.array(mcpSecretSchema),
+  tools: z.array(userMCPToolSchema),
+  last_validation_status: z.enum(["untested", "valid", "invalid"]),
+  last_validation_error: z.string().optional(),
+  last_validated_at: dateTime.optional(),
+  created_at: dateTime,
+  updated_at: dateTime,
+});
+
+export const createMCPSecretInputSchema = z.object({
+  name: mcpSecretNameSchema,
+  value: mcpSecretValueSchema,
+});
+
+export const updateMCPSecretInputSchema = z.object({
+  name: mcpSecretNameSchema,
+  value: mcpSecretValueSchema.nullable().optional(),
+});
+
+export const createMCPServerInputSchema = z.object({
+  name: mcpServerNameSchema,
+  slug: mcpServerSlugSchema,
+  endpoint_url: mcpEndpointURLSchema,
+  enabled: z.boolean().optional(),
+  parameters: z.array(createMCPSecretInputSchema).max(32).optional(),
+  headers: z.array(createMCPSecretInputSchema).max(32).optional(),
+});
+
+export const updateMCPServerInputSchema = z.object({
+  name: mcpServerNameSchema.optional(),
+  slug: mcpServerSlugSchema.optional(),
+  endpoint_url: mcpEndpointURLSchema.optional(),
+  enabled: z.boolean().optional(),
+  parameters: z.array(updateMCPSecretInputSchema).max(32).optional(),
+  headers: z.array(updateMCPSecretInputSchema).max(32).optional(),
+  enabled_tools: z.array(z.string().min(1).max(255)).optional(),
 });
 
 export const messageSchema = z.object({
@@ -362,25 +498,145 @@ export const committedInitialTurnSchema = z.object({
   stream_path: z.string(),
 });
 
-export const timelineItemSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  title: z.string().optional(),
-  status: z.string().optional(),
-  content_text: z.string().optional(),
-  summary: z.string().optional(),
-  details: z.array(z.string()).optional(),
-  input_label: z.string().optional(),
-  input_text: z.string().optional(),
-  links: z.array(z.object({ url: z.string(), label: z.string() })).optional(),
-  command: z.string().optional(),
-  working_directory: z.string().optional(),
-  command_output: z.string().optional(),
-  exit_code: z.number().int().optional(),
-  timed_out: z.boolean().optional(),
-  metadata: metadata.optional(),
-  created_at: dateTime,
-});
+export const askUserOptionSchema = z
+  .object({
+    id: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    label: textWithMaximumCharacters(80).pipe(z.string().min(1)),
+    tone: z.enum(["primary", "neutral", "danger"]),
+  })
+  .strict();
+
+export const askUserActionSchema = z
+  .object({
+    label: textWithMaximumCharacters(80).pipe(z.string().min(1)),
+    url: z
+      .string()
+      .min(1)
+      .max(2048)
+      .refine((value) => parseSafeAskUserActionURL(value) !== null),
+  })
+  .strict();
+
+export const askUserAnswerSchema = z
+  .object({
+    status: z.enum(["answered", "cancelled"]),
+    option_id: z.string().min(1).max(64),
+    label: textWithMaximumCharacters(80).pipe(z.string().min(1)),
+    user_reported: z.boolean(),
+  })
+  .strict();
+
+export const askUserInteractionSchema = z
+  .object({
+    id: z.string().min(1),
+    tool_call_id: z.string().min(1),
+    prompt: textWithMaximumCharacters(500).pipe(z.string().min(1)),
+    kind: z.enum(["single_choice", "external_action"]),
+    options: z.array(askUserOptionSchema).min(2).max(6),
+    action: askUserActionSchema.optional(),
+    answer: askUserAnswerSchema.optional(),
+    status: z.enum(["awaiting_input", "completed", "cancelled"]),
+  })
+  .strict()
+  .superRefine((interaction, context) => {
+    if (interaction.kind === "single_choice" && interaction.action) {
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "single_choice interaction must not include an action",
+      });
+    }
+    if (interaction.kind === "external_action" && !interaction.action) {
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "external_action interaction requires an action",
+      });
+    }
+    if (interaction.status === "awaiting_input" && interaction.answer) {
+      context.addIssue({
+        code: "custom",
+        path: ["answer"],
+        message: "awaiting_input interaction must not include an answer",
+      });
+    }
+    if (
+      (interaction.status === "completed" || interaction.status === "cancelled") &&
+      !interaction.answer
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["answer"],
+        message: "completed interaction requires an answer",
+      });
+    }
+  });
+
+export const answerToolCallInputSchema = z
+  .object({
+    option_id: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/),
+  })
+  .strict();
+
+export const answerToolCallResultSchema = z
+  .object({
+    interaction: askUserInteractionSchema,
+    stream_path: z.string().min(1),
+  })
+  .strict();
+
+export const timelineItemSchema = z
+  .object({
+    id: z.string(),
+    type: z.string(),
+    title: z.string().optional(),
+    status: z.string().optional(),
+    content_text: z.string().optional(),
+    summary: z.string().optional(),
+    details: z.array(z.string()).optional(),
+    input_label: z.string().optional(),
+    input_text: z.string().optional(),
+    links: z.array(z.object({ url: z.string(), label: z.string() }).strict()).optional(),
+    command: z.string().optional(),
+    working_directory: z.string().optional(),
+    command_output: z.string().optional(),
+    exit_code: z.number().int().optional(),
+    timed_out: z.boolean().optional(),
+    tool_call_id: z.string().optional(),
+    prompt: z.string().optional(),
+    kind: z.enum(["single_choice", "external_action"]).optional(),
+    options: z.array(askUserOptionSchema).optional(),
+    action: askUserActionSchema.optional(),
+    answer: askUserAnswerSchema.optional(),
+    metadata: metadata.optional(),
+    created_at: dateTime,
+  })
+  .strict()
+  .superRefine((item, context) => {
+    if (item.type !== "interaction") return;
+    const parsed = askUserInteractionSchema.safeParse({
+      id: item.id,
+      tool_call_id: item.tool_call_id,
+      prompt: item.prompt,
+      kind: item.kind,
+      options: item.options,
+      action: item.action,
+      answer: item.answer,
+      status: item.status,
+    });
+    if (parsed.success) return;
+    for (const issue of parsed.error.issues) {
+      context.addIssue({ ...issue, path: issue.path });
+    }
+  });
 
 export const turnStreamEventSchemas = {
   "turn.snapshot": z.object({

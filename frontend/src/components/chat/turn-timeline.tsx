@@ -188,7 +188,8 @@ function isTurnActive(turn: Turn | null, isStreaming?: boolean) {
     isStreaming ||
     turn?.status === "accepted" ||
     turn?.status === "context_ready" ||
-    turn?.status === "processing",
+    turn?.status === "processing" ||
+    turn?.status === "awaiting_input",
   );
 }
 

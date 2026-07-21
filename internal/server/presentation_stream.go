@@ -108,6 +108,7 @@ func newPresentationItemRegistry() *presentationItemRegistry {
 	registry.Register(turnTimelineItemToolCall, filterToolPresentationItem)
 	registry.Register(turnTimelineItemImageGeneration, filterImagePresentationItem)
 	registry.Register(turnTimelineItemStatus, filterStatusPresentationItem)
+	registry.Register(turnTimelineItemInteraction, filterInteractionPresentationItem)
 	return registry
 }
 
@@ -245,6 +246,15 @@ func filterStatusPresentationItem(item TurnTimelineItem) TurnTimelineItem {
 		Status:      item.Status,
 		ContentText: item.ContentText,
 		CreatedAt:   item.CreatedAt,
+	}
+}
+
+func filterInteractionPresentationItem(item TurnTimelineItem) TurnTimelineItem {
+	return TurnTimelineItem{
+		ID: item.ID, Type: turnTimelineItemInteraction, Status: item.Status,
+		ToolCallID: item.ToolCallID, Prompt: item.Prompt, Kind: item.Kind,
+		Options: append([]tool.AskUserOption(nil), item.Options...), Action: item.Action, Answer: item.Answer,
+		CreatedAt: item.CreatedAt,
 	}
 }
 

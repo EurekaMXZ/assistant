@@ -10,6 +10,7 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/credential"
 	assistantkafka "github.com/EurekaMXZ/assistant/internal/kafka"
+	"github.com/EurekaMXZ/assistant/internal/mcpconfig"
 	"github.com/EurekaMXZ/assistant/internal/objectstore"
 	"github.com/EurekaMXZ/assistant/internal/openai"
 	assistantsandbox "github.com/EurekaMXZ/assistant/internal/sandbox"
@@ -50,6 +51,7 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	}
 	tavilyEnabled := strings.TrimSpace(settings.Tavily.APIKey) != ""
 	toolHandlers := []tool.LocalToolHandler{
+		tool.AskUserHandler{},
 		tool.RenameConversationTitleHandler{
 			UseCase: tool.RenameConversationTitle{
 				Conversations: workflows.Conversations,
@@ -105,22 +107,31 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	if tavilyEnabled {
 		toolDefinitions = tool.DefaultToolsWithTavily()
 	}
+	staticCatalog := tool.StaticCatalog{
+		Tools:             toolDefinitions,
+		EnableSandboxExec: settings.SandboxExecEnabled,
+	}
+	mcpRuntime := &mcpconfig.CompositeRuntime{
+		StaticCatalog: staticCatalog,
+		LocalExecutor: toolExecutor,
+		Repository:    workflows.MCP,
+		Cipher:        workflows.CredentialCipher,
+		Client:        &mcpconfig.SDKToolLister{},
+	}
 	workflowEngine := workflow.New(workflow.Dependencies{
-		Logger:         logger,
-		Settings:       settings.Workflow,
-		Outbox:         workflows.Outbox,
-		Turns:          workflows.Turns,
-		Contexts:       workflows.Contexts,
-		CompleteEvents: workflows.CompleteEvents,
-		Attachments:    workflows.Attachments,
-		StaleTurns:     workflows.StaleTurns,
-		Model:          openaiClient,
-		ToolCatalog: tool.StaticCatalog{
-			Tools:             toolDefinitions,
-			EnableSandboxExec: settings.SandboxExecEnabled,
-		},
-		ToolExecutor:          toolExecutor,
+		Logger:                logger,
+		Settings:              settings.Workflow,
+		Outbox:                workflows.Outbox,
+		Turns:                 workflows.Turns,
+		Contexts:              workflows.Contexts,
+		CompleteEvents:        workflows.CompleteEvents,
+		Attachments:           workflows.Attachments,
+		StaleTurns:            workflows.StaleTurns,
+		Model:                 openaiClient,
+		ToolCatalog:           mcpRuntime,
+		ToolExecutor:          mcpRuntime,
 		Conversations:         workflows.ConversationReader,
+		Profiles:              workflows.Profiles,
 		Models:                workflows.Models,
 		BillingUsage:          workflows.BillingUsage,
 		ConversationSandboxes: workflows.Sandboxes,

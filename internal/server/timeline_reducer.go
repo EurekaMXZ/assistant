@@ -8,6 +8,7 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/stream"
+	"github.com/EurekaMXZ/assistant/internal/tool"
 )
 
 const (
@@ -422,6 +423,38 @@ func (r *timelineReducer) reduceTool(event stream.Event, createdAt time.Time) ([
 	}
 	r.store(incoming)
 	return []timelineMutation{{Kind: timelineMutationUpsert, Item: incoming}}, nil
+}
+
+func (r *timelineReducer) reduceInteraction(event stream.Event, createdAt time.Time) ([]timelineMutation, error) {
+	var interaction tool.AskUserInteraction
+	if err := json.Unmarshal([]byte(event.Payload), &interaction); err != nil {
+		return nil, fmt.Errorf("decode interaction event: %w", err)
+	}
+	interaction.ToolCallID = strings.TrimSpace(interaction.ToolCallID)
+	if interaction.ToolCallID == "" {
+		return nil, nil
+	}
+	item := TurnTimelineItem{
+		ID: "ask-user:" + interaction.ToolCallID, Type: turnTimelineItemInteraction,
+		Status: interaction.Status, ToolCallID: interaction.ToolCallID, Prompt: interaction.Prompt,
+		Kind: interaction.Kind, Options: append([]tool.AskUserOption(nil), interaction.Options...),
+		Action: interaction.Action, Answer: interaction.Answer, CreatedAt: createdAt,
+		Metadata: compactMetadata(map[string]any{"tool_call_record_id": interaction.ToolCallID, "tool_name": tool.AskUser}),
+	}
+	if existing, ok := r.item(item.ID); ok {
+		if (existing.Status == "completed" || existing.Status == "cancelled") && event.Type == stream.EventInteractionAwaiting {
+			return nil, nil
+		}
+		if !existing.CreatedAt.IsZero() {
+			item.CreatedAt = existing.CreatedAt
+		}
+	}
+	r.store(item)
+	kind := timelineMutationUpsert
+	if event.Type == stream.EventInteractionDone || event.Type == stream.EventInteractionCancelled || interaction.Status == "completed" || interaction.Status == "cancelled" {
+		kind = timelineMutationDone
+	}
+	return []timelineMutation{{Kind: kind, Item: item}}, nil
 }
 
 func (r *timelineReducer) reduceResponseCompleted(event stream.Event, createdAt time.Time) ([]timelineMutation, error) {

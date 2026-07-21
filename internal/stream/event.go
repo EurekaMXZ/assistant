@@ -6,17 +6,20 @@ import (
 )
 
 const (
-	EventResponseStarted     = "response.started"
-	EventResponseCreated     = "response.created"
-	EventResponseCompleted   = "response.completed"
-	EventResponseFailed      = "response.failed"
-	EventReasoningSummary    = "reasoning.summary"
-	EventToolStarted         = "tool.started"
-	EventToolCompleted       = "tool.completed"
-	EventToolFailed          = "tool.failed"
-	EventTurnDone            = "turn.done"
-	EventConversationUpdated = "conversation.updated"
-	EventSandboxUpdated      = "sandbox.updated"
+	EventResponseStarted      = "response.started"
+	EventResponseCreated      = "response.created"
+	EventResponseCompleted    = "response.completed"
+	EventResponseFailed       = "response.failed"
+	EventReasoningSummary     = "reasoning.summary"
+	EventToolStarted          = "tool.started"
+	EventToolCompleted        = "tool.completed"
+	EventToolFailed           = "tool.failed"
+	EventInteractionAwaiting  = "interaction.awaiting_input"
+	EventInteractionDone      = "interaction.completed"
+	EventInteractionCancelled = "interaction.cancelled"
+	EventTurnDone             = "turn.done"
+	EventConversationUpdated  = "conversation.updated"
+	EventSandboxUpdated       = "sandbox.updated"
 )
 
 const (

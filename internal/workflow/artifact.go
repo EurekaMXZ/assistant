@@ -16,6 +16,7 @@ type TurnArtifactStore interface {
 
 type ToolArtifactStore interface {
 	PutBytes(ctx context.Context, key string, data []byte, contentType string) error
+	PutImmutableBytes(ctx context.Context, key string, data []byte, contentType string) error
 	GetBytes(ctx context.Context, key string) ([]byte, error)
 	TurnRunRequestKey(conversationID, turnID string, stepIndex int) string
 	TurnRunStateKey(conversationID, turnID string, stepIndex int) string

@@ -73,16 +73,19 @@ describe("turn stream reconnect", () => {
     expect(events.at(-1)?.event).toBe("turn.done");
   });
 
-  it("returns a retryable result when the turn remains nonterminal", async () => {
+  it("keeps the turn active when reconnects are exhausted but the turn is nonterminal", async () => {
+    const states: string[] = [];
     const result = await runTurnStreamController({
       turnId: "turn-1",
       signal: new AbortController().signal,
       openStream: () => frames([]),
       getTurn: async () => processingTurn,
       onEvent: () => undefined,
+      onStateChange: (state) => states.push(state),
       wait: async () => undefined,
       maxReconnects: 0,
     });
-    expect(result.kind).toBe("retryable");
+    expect(result.kind).toBe("active");
+    expect(states.at(-1)).toBe("disconnected");
   });
 });

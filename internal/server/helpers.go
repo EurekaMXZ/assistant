@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,7 +106,7 @@ func auditRequiredRole(path string) string {
 }
 
 func firstPathID(c *gin.Context) string {
-	for _, name := range []string{"transactionID", "usageEventID", "auditEventID", "credentialID", "priceID", "modelID", "attachmentID", "turnID", "conversationID", "codeID", "userID"} {
+	for _, name := range []string{"transactionID", "usageEventID", "auditEventID", "credentialID", "serverID", "priceID", "modelID", "attachmentID", "turnID", "conversationID", "codeID", "userID"} {
 		if value := strings.TrimSpace(c.Param(name)); value != "" {
 			return value
 		}
@@ -240,6 +241,31 @@ func bindJSON(c *gin.Context, target any) error {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
+		return domain.NewValidationError("invalid request body")
+	}
+	return nil
+}
+
+func bindStrictJSON(c *gin.Context, target any) error {
+	if c.Request.Body == nil {
+		return domain.NewValidationError("invalid request body")
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	decoder := json.NewDecoder(c.Request.Body)
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return domain.NewValidationError("invalid request body")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return domain.NewValidationError("invalid request body")
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return domain.NewValidationError("invalid request body")
+	}
+	payloadDecoder := json.NewDecoder(bytes.NewReader(trimmed))
+	payloadDecoder.DisallowUnknownFields()
+	if err := payloadDecoder.Decode(target); err != nil {
 		return domain.NewValidationError("invalid request body")
 	}
 	return nil

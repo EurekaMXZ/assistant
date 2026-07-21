@@ -9,6 +9,7 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/billing"
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
+	"github.com/EurekaMXZ/assistant/internal/tool"
 	"github.com/EurekaMXZ/assistant/internal/workflow"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -44,6 +45,7 @@ const turnRunColumns = `
 	tr.total_tokens,
 	COALESCE(tr.billing_currency, ''),
 	tr.billing_amount_nanos,
+	tr.billing_settled_at,
 	COALESCE(tr.error_message, ''),
 	tr.started_at,
 	tr.completed_at,
@@ -333,7 +335,7 @@ func (r *TurnRunRepository) ClaimTurnRun(ctx context.Context, runID string) (*do
 			status = $2,
 			lease_token = $3::uuid,
 			heartbeat_at = now(),
-			started_at = now(),
+			started_at = COALESCE(tr.started_at, now()),
 			error_message = NULL,
 			completed_at = NULL,
 			failed_at = NULL
@@ -393,6 +395,182 @@ func (r *TurnRunRepository) CheckpointScheduledTurnRun(ctx context.Context, leas
 	return nil
 }
 
+func (r *TurnRunRepository) AwaitScheduledTurnRunInput(ctx context.Context, input workflow.AwaitScheduledTurnRunInput) (*domain.TurnRun, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin await turn run input: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	lease := input.Lease
+	var conversationID, turnStatus, modelID, modelPriceID, ownerUserID string
+	var modelRevision int64
+	var modelSnapshot json.RawMessage
+	err = tx.QueryRow(ctx, `
+		SELECT t.conversation_id::text, t.status, COALESCE(t.model_id::text, ''),
+			COALESCE(t.model_revision, 0), COALESCE(t.model_price_id::text, ''),
+			t.model_snapshot, COALESCE(c.owner_user_id::text, '')
+		FROM turns t
+		JOIN conversations c ON c.id = t.conversation_id
+		WHERE t.id = $1::uuid
+		FOR UPDATE OF t
+	`, lease.TurnID).Scan(
+		&conversationID, &turnStatus, &modelID, &modelRevision, &modelPriceID, &modelSnapshot, &ownerUserID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("lock turn for awaiting input: %w", err)
+	}
+	if turnStatus != domain.TurnStatusProcessing {
+		return nil, domain.ErrConflict
+	}
+
+	run, err := scanTurnRun(tx.QueryRow(ctx, `
+		SELECT `+turnRunColumns+`
+		FROM turn_runs tr
+		WHERE tr.id = $1::uuid AND tr.turn_id = $2::uuid
+		FOR UPDATE OF tr
+	`, lease.RunID, lease.TurnID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("lock turn run for awaiting input: %w", err)
+	}
+	var storedLeaseToken string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(lease_token::text, '') FROM turn_runs WHERE id = $1::uuid`, run.ID).Scan(&storedLeaseToken); err != nil {
+		return nil, fmt.Errorf("load awaiting turn run lease: %w", err)
+	}
+	if run.Status != domain.TurnRunStatusRunning || storedLeaseToken != lease.Token {
+		return nil, domain.ErrConflict
+	}
+
+	toolCall, err := scanToolCall(tx.QueryRow(ctx, `
+		SELECT `+toolCallColumns+`
+		FROM tool_calls tc
+		WHERE tc.id = $1::uuid AND tc.turn_id = $2::uuid AND tc.turn_run_id = $3::uuid
+		FOR UPDATE OF tc
+	`, input.ToolCallID, lease.TurnID, lease.RunID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("lock tool call for awaiting input: %w", err)
+	}
+	if toolCall.Status != domain.ToolCallStatusRunning || toolCall.ToolName != tool.AskUser || toolCall.Namespace != "" {
+		return nil, domain.ErrConflict
+	}
+
+	if run.BillingSettledAt == nil {
+		var execution domain.ModelExecutionSnapshot
+		_ = json.Unmarshal(modelSnapshot, &execution)
+		modelCharge, quoteErr := billing.QuoteSnapshot(execution.PricingSnapshot, input.Usage)
+		if quoteErr != nil {
+			return nil, fmt.Errorf("rate awaiting turn run: %w", quoteErr)
+		}
+		toolCharge, quoteErr := loadRunToolCharge(ctx, tx, run.ID, modelCharge.Currency, input.ImageGenerationCount)
+		if quoteErr != nil {
+			return nil, quoteErr
+		}
+		charge, quoteErr := billing.AddToolCharge(modelCharge, toolCharge)
+		if quoteErr != nil {
+			return nil, fmt.Errorf("combine awaiting turn run charges: %w", quoteErr)
+		}
+		billingTransactionID, captureErr := captureUsageCharge(ctx, tx, ownerUserID, charge)
+		if captureErr != nil {
+			if !errors.Is(captureErr, domain.ErrPaymentRequired) {
+				return nil, captureErr
+			}
+			failedRun, failErr := r.failBillingSettlement(
+				ctx, tx, run, input.Usage, execution, ownerUserID, conversationID,
+				modelID, modelRevision, modelPriceID, charge, toolCharge, input.CompactTriggerTokens,
+			)
+			if failErr != nil {
+				return nil, failErr
+			}
+			if _, failErr = tx.Exec(ctx, `
+				UPDATE tool_calls
+				SET status = $2, error_message = $3, completed_at = NULL,
+					failed_at = now(), cancelled_at = NULL
+				WHERE id = $1::uuid AND status = $4
+			`, toolCall.ID, domain.ToolCallStatusFailed, domain.TurnPublicErrorBillingRequired, domain.ToolCallStatusRunning); failErr != nil {
+				return nil, fmt.Errorf("fail awaiting tool after billing settlement: %w", failErr)
+			}
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return nil, fmt.Errorf("commit failed awaiting turn run settlement: %w", commitErr)
+			}
+			return failedRun, nil
+		}
+		if err := r.insertBillingUsageEvent(ctx, tx, run, input.Usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, toolCharge, billingTransactionID); err != nil {
+			return nil, err
+		}
+		run, err = scanTurnRun(tx.QueryRow(ctx, `
+			UPDATE turn_runs tr
+			SET input_tokens = $2, cache_read_input_tokens = $3, cache_creation_input_tokens = $4,
+				output_tokens = $5, reasoning_output_tokens = $6, total_tokens = $7,
+				billing_currency = $8, billing_amount_nanos = $9, billing_settled_at = now()
+			WHERE id = $1::uuid AND billing_settled_at IS NULL
+			RETURNING `+turnRunColumns,
+			run.ID, input.Usage.InputTokens, input.Usage.CacheReadInputTokens, input.Usage.CacheCreationInputTokens,
+			input.Usage.OutputTokens, input.Usage.ReasoningOutputTokens, input.Usage.TotalTokens,
+			charge.Currency, charge.AmountNanos))
+		if err != nil {
+			return nil, fmt.Errorf("settle awaiting turn run billing: %w", err)
+		}
+	}
+
+	head, err := queryContextHeadForUpdate(ctx, tx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertCompleteEvent(ctx, tx, head, domain.ConversationEventInput{
+		ConversationID:  conversationID,
+		TurnID:          lease.TurnID,
+		TurnRunID:       lease.RunID,
+		EventKey:        "run:" + lease.RunID + ":" + domain.ConversationEventInteractionAwaiting + ":" + toolCall.ID + ":" + domain.TurnStatusAwaitingInput,
+		SchemaVersion:   1,
+		EventType:       domain.ConversationEventInteractionAwaiting,
+		Payload:         input.Interaction,
+		ContextIncluded: false,
+	}); err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE tool_calls
+		SET status = $2, error_message = NULL, completed_at = NULL, failed_at = NULL, cancelled_at = NULL
+		WHERE id = $1::uuid AND status = $3
+	`, toolCall.ID, domain.ToolCallStatusAwaitingInput, domain.ToolCallStatusRunning); err != nil {
+		return nil, fmt.Errorf("mark tool call awaiting input: %w", err)
+	}
+	run, err = scanTurnRun(tx.QueryRow(ctx, `
+		UPDATE turn_runs tr
+		SET status = $2, lease_token = NULL, heartbeat_at = NULL,
+			error_message = NULL, completed_at = NULL, failed_at = NULL
+		WHERE id = $1::uuid AND status = $3
+		RETURNING `+turnRunColumns,
+		lease.RunID, domain.TurnRunStatusAwaitingInput, domain.TurnRunStatusRunning))
+	if err != nil {
+		return nil, fmt.Errorf("mark turn run awaiting input: %w", err)
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE turns SET status = $2
+		WHERE id = $1::uuid AND status = $3
+	`, lease.TurnID, domain.TurnStatusAwaitingInput, domain.TurnStatusProcessing)
+	if err != nil {
+		return nil, fmt.Errorf("mark turn awaiting input: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return nil, domain.ErrConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit awaiting turn run input: %w", err)
+	}
+	return run, nil
+}
+
 func (r *TurnRunRepository) ListTurnRunsByTurn(ctx context.Context, turnID string) ([]domain.TurnRun, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+turnRunColumns+` FROM turn_runs tr WHERE tr.turn_id = $1::uuid ORDER BY tr.step_index ASC, tr.created_at ASC`, turnID)
 	if err != nil {
@@ -428,12 +606,12 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 			response_id = $5,
 			response_blob_key = $6,
 			result_blob_key = $7,
-			input_tokens = $8,
-			cache_read_input_tokens = $9,
-			cache_creation_input_tokens = $10,
-			output_tokens = $11,
-			reasoning_output_tokens = $12,
-			total_tokens = $13,
+			input_tokens = CASE WHEN billing_settled_at IS NULL THEN $8 ELSE input_tokens END,
+			cache_read_input_tokens = CASE WHEN billing_settled_at IS NULL THEN $9 ELSE cache_read_input_tokens END,
+			cache_creation_input_tokens = CASE WHEN billing_settled_at IS NULL THEN $10 ELSE cache_creation_input_tokens END,
+			output_tokens = CASE WHEN billing_settled_at IS NULL THEN $11 ELSE output_tokens END,
+			reasoning_output_tokens = CASE WHEN billing_settled_at IS NULL THEN $12 ELSE reasoning_output_tokens END,
+			total_tokens = CASE WHEN billing_settled_at IS NULL THEN $13 ELSE total_tokens END,
 			lease_token = NULL,
 			heartbeat_at = NULL,
 			error_message = NULL,
@@ -492,6 +670,12 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 	`, conversationID, run.ID, run.CheckpointBlobKey, turnRunArtifactChecksum(run.ArtifactMetadata, "context-checkpoint.json.zst")); err != nil {
 		return nil, fmt.Errorf("advance successful run context head: %w", err)
 	}
+	if run.BillingSettledAt != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit previously settled turn run completion: %w", err)
+		}
+		return run, nil
+	}
 	var execution domain.ModelExecutionSnapshot
 	_ = json.Unmarshal(modelSnapshot, &execution)
 	modelCharge, err := billing.QuoteSnapshot(execution.PricingSnapshot, usage)
@@ -533,6 +717,15 @@ func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease 
 	}
 	if err := r.insertBillingUsageEvent(ctx, tx, run, usage, execution, ownerUserID, conversationID, modelID, modelRevision, modelPriceID, charge, toolCharge, billingTransactionID); err != nil {
 		return nil, err
+	}
+	run, err = scanTurnRun(tx.QueryRow(ctx, `
+		UPDATE turn_runs tr
+		SET billing_settled_at = now()
+		WHERE id = $1::uuid AND billing_settled_at IS NULL
+		RETURNING `+turnRunColumns,
+		run.ID))
+	if err != nil {
+		return nil, fmt.Errorf("mark turn run billing settled: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit turn run completion: %w", err)

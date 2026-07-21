@@ -51,8 +51,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     mobileHeaderTitleAction.conversationId === currentConversationId;
 
   useEffect(() => {
-    setMobileHeaderTitle(currentConversationId ? "新会话" : "Assistant");
-  }, [currentConversationId]);
+    setMobileHeaderTitle(
+      currentConversationId
+        ? "新会话"
+        : pathname === "/mcp"
+          ? "MCP 服务器"
+          : pathname === "/storage"
+            ? "存储空间"
+            : "Assistant",
+    );
+  }, [currentConversationId, pathname]);
 
   useEffect(() => {
     if (authStatus === "unauthenticated" && isProtectedRoute) {
@@ -207,6 +215,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             authLoading={isLoading}
             collapsed={desktopSidebarCollapsed}
             currentConversationId={currentConversationId}
+            mcpActive={pathname === "/mcp"}
             storageActive={pathname === "/storage"}
             user={user}
             onLogout={logout}
@@ -231,6 +240,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Sidebar
                   authLoading={isLoading}
                   currentConversationId={currentConversationId}
+                  mcpActive={pathname === "/mcp"}
                   storageActive={pathname === "/storage"}
                   user={user}
                   onLogout={() => {

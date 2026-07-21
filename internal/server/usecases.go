@@ -10,6 +10,9 @@ import (
 	assistantauth "github.com/EurekaMXZ/assistant/internal/auth"
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	assistantmail "github.com/EurekaMXZ/assistant/internal/mail"
+	"github.com/EurekaMXZ/assistant/internal/mcpconfig"
+	"github.com/EurekaMXZ/assistant/internal/profile"
+	"github.com/EurekaMXZ/assistant/internal/tool"
 )
 
 type UpdateConversationInput struct {
@@ -263,6 +266,23 @@ type UserUseCases struct {
 	DeleteManagedUser    func(ctx context.Context, actor *domain.User, userID string) error
 }
 
+type ProfileUseCases struct {
+	GetPersonalization    func(ctx context.Context, userID string) (*domain.UserPreferences, error)
+	UpdatePersonalization func(ctx context.Context, userID string, input profile.UpdatePreferencesInput) (*domain.UserPreferences, error)
+	GetLocation           func(ctx context.Context, userID string) (*domain.UserLocation, error)
+	UpdateLocation        func(ctx context.Context, userID string, input profile.UpdateLocationInput) (*domain.UserLocation, error)
+	DeleteLocation        func(ctx context.Context, userID string) error
+}
+
+type MCPUseCases struct {
+	ListServers  func(ctx context.Context, ownerUserID string) ([]domain.UserMCPServer, error)
+	CreateServer func(ctx context.Context, ownerUserID string, input mcpconfig.CreateServerInput) (*domain.UserMCPServer, error)
+	GetServer    func(ctx context.Context, ownerUserID string, serverID string) (*domain.UserMCPServer, error)
+	UpdateServer func(ctx context.Context, ownerUserID string, serverID string, input mcpconfig.UpdateServerInput) (*domain.UserMCPServer, error)
+	DeleteServer func(ctx context.Context, ownerUserID string, serverID string) error
+	TestServer   func(ctx context.Context, ownerUserID string, serverID string) (*domain.UserMCPServer, error)
+}
+
 type ConversationUseCases struct {
 	CreateConversation      func(ctx context.Context, ownerUserID string, title string, metadata json.RawMessage) (*domain.Conversation, error)
 	CreateConversationShare func(ctx context.Context, ownerUserID string, conversationID string, idempotencyKey string) (*CreateConversationShareResult, error)
@@ -301,6 +321,7 @@ type SandboxUseCases struct {
 type TurnUseCases struct {
 	GetTurn                 func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error)
 	RequestTurnCancellation func(ctx context.Context, ownerUserID string, turnID string) (*domain.Turn, error)
+	AnswerToolCall          func(ctx context.Context, ownerUserID string, turnID string, toolCallID string, optionID string, idempotencyKey string) (*tool.AskUserInteraction, error)
 	GetTurnExecutionTrace   func(ctx context.Context, ownerUserID string, turnID string) (*TurnExecutionTrace, error)
 	GetTurnTimeline         func(ctx context.Context, ownerUserID string, turnID string) (*TurnTimeline, error)
 }
@@ -378,6 +399,8 @@ type MailUseCases struct {
 type UseCases struct {
 	Auth          AuthUseCases
 	Users         UserUseCases
+	Profile       ProfileUseCases
+	MCP           MCPUseCases
 	Conversations ConversationUseCases
 	Attachments   AttachmentUseCases
 	Storage       StorageUseCases

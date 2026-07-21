@@ -1,5 +1,6 @@
 import type {
   TimelineItem,
+  InteractionTimelineItem,
   TurnStreamDone,
   TurnStreamItemDelta,
   TurnStreamSnapshot,
@@ -94,8 +95,23 @@ export function isAssistantOutputItem(item: TimelineItem) {
   return isAssistantOutputType(item.type);
 }
 
+export function isAssistantInteractionType(itemType: string) {
+  return itemType === "interaction";
+}
+
+export function isAssistantInteractionItem(item: TimelineItem): item is InteractionTimelineItem {
+  return (
+    isAssistantInteractionType(item.type) &&
+    typeof item.tool_call_id === "string" &&
+    typeof item.prompt === "string" &&
+    typeof item.kind === "string" &&
+    Array.isArray(item.options) &&
+    (item.status === "awaiting_input" || item.status === "completed" || item.status === "cancelled")
+  );
+}
+
 export function isTimelineItem(item: TimelineItem) {
-  if (isAssistantOutputItem(item)) return false;
+  if (isAssistantOutputItem(item) || isAssistantInteractionItem(item)) return false;
   return !(item.type === "tool_call" && item.title?.trim() === "conversation.rename_title");
 }
 

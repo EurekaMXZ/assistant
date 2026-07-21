@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import {
+  answerToolCall,
   createConversationShare,
   createMessage,
   cancelTurn,
@@ -29,12 +30,21 @@ import {
   writeConversationShareOperation,
   type ConversationShareOperation,
 } from "@/lib/conversation-share-operation";
-import type { Conversation, ConversationShare, Message, Turn } from "@/lib/types";
-import { messageSchema, turnSchema } from "@/lib/api-schemas";
+import type {
+  AskUserInteraction,
+  Conversation,
+  ConversationShare,
+  InteractionTimelineItem,
+  Message,
+  Turn,
+} from "@/lib/types";
+import { askUserInteractionSchema, messageSchema, turnSchema } from "@/lib/api-schemas";
 import {
+  assistantInteractionFromMessage,
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
   ensureStreamingThinkingMessage,
+  upsertAssistantInteraction,
 } from "@/lib/chat-state";
 import { MessageList } from "./message-list";
 import { Composer } from "./composer";
@@ -79,7 +89,12 @@ async function inspectUnresolvedTurns(
 ) {
   const assistantTurnIds = new Set(
     messages
-      .filter((message) => message.role === "assistant" && message.turn_id)
+      .filter(
+        (message) =>
+          message.role === "assistant" &&
+          message.turn_id &&
+          message.metadata?.display_kind !== "ask_user",
+      )
       .map((message) => message.turn_id as string),
   );
   const turnIds = Array.from(
@@ -105,9 +120,13 @@ async function inspectUnresolvedTurns(
   for (const turn of turns) {
     if (!turn) continue;
     const unresolved = !assistantTurnIds.has(turn.id);
-    if (["accepted", "context_ready", "processing", "cancel_requested"].includes(turn.status)) {
+    if (
+      ["accepted", "context_ready", "processing", "awaiting_input", "cancel_requested"].includes(
+        turn.status,
+      )
+    ) {
       nextMessages = ensureStreamingThinkingMessage(nextMessages, turn.id, conversationId);
-      if (unresolved) activeTurnId = turn.id;
+      activeTurnId = turn.id;
       continue;
     }
     if (unresolved && ["failed", "completed", "cancelled"].includes(turn.status)) {
@@ -125,11 +144,57 @@ async function inspectUnresolvedTurns(
 function messagesFromConversationEvents(
   events: Awaited<ReturnType<typeof listConversationEvents>>["events"],
 ): Message[] {
-  return events.flatMap((event) => {
-    if (event.event_type !== "message.completed") return [];
-    const parsed = messageSchema.safeParse(event.payload.message);
-    return parsed.success ? [parsed.data] : [];
-  });
+  let messages: Message[] = [];
+  for (const event of events) {
+    if (event.event_type === "message.completed") {
+      const parsed = messageSchema.safeParse(event.payload.message);
+      if (parsed.success) messages.push(parsed.data);
+      continue;
+    }
+    if (
+      !event.turn_id ||
+      !["interaction.awaiting_input", "interaction.completed", "interaction.cancelled"].includes(
+        event.event_type,
+      )
+    ) {
+      continue;
+    }
+    const parsed = askUserInteractionSchema.safeParse(event.payload);
+    if (!parsed.success) continue;
+    messages = upsertAssistantInteraction(messages, event.turn_id, event.conversation_id, {
+      ...parsed.data,
+      type: "interaction",
+      created_at: event.created_at,
+    });
+  }
+
+  return orderConversationMessages(messages);
+}
+
+function orderConversationMessages(source: Message[]) {
+  const messages = source.map((message) =>
+    assistantInteractionFromMessage(message) ? { ...message } : message,
+  );
+  const interactionsByTurn = new Map<string, Message[]>();
+  for (const message of messages) {
+    if (!message.turn_id || !assistantInteractionFromMessage(message)) continue;
+    const interactions = interactionsByTurn.get(message.turn_id) || [];
+    interactions.push(message);
+    interactionsByTurn.set(message.turn_id, interactions);
+  }
+  for (const [turnId, interactions] of interactionsByTurn) {
+    const turnMessages = messages.filter((message) => message.turn_id === turnId);
+    const userSequence = turnMessages.find((message) => message.role === "user")?.seq ?? 0;
+    const assistantSequence = turnMessages.find(
+      (message) => message.role === "assistant" && !assistantInteractionFromMessage(message),
+    )?.seq;
+    const upperSequence = assistantSequence ?? userSequence + 1;
+    interactions.forEach((interaction, index) => {
+      interaction.seq =
+        userSequence + ((upperSequence - userSequence) * (index + 1)) / (interactions.length + 1);
+    });
+  }
+  return messages.sort((left, right) => left.seq - right.seq);
 }
 
 function turnsFromConversationEvents(
@@ -158,7 +223,7 @@ function mergeMessages(...groups: Message[][]) {
   for (const group of groups) {
     for (const message of group) messages.set(message.id, message);
   }
-  return Array.from(messages.values()).sort((left, right) => left.seq - right.seq);
+  return orderConversationMessages(Array.from(messages.values()));
 }
 
 async function loadConversationMessages(conversationId: string) {
@@ -208,6 +273,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
   const activeConversationIdRef = useRef(conversationId);
   const mountedRef = useRef(true);
   const retryInFlightRef = useRef(false);
+  const answerOperationKeysRef = useRef(new Map<string, string>());
   const editBackupRef = useRef<{
     draft: string;
     attachments: ComposerShellAttachment[];
@@ -301,18 +367,70 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     onFinished: finishActiveTurn,
   });
 
+  const handleAnswerInteraction = useCallback(
+    async (turnId: string, interaction: AskUserInteraction, optionId: string) => {
+      if (!user) {
+        openAuthDialog("login");
+        return false;
+      }
+      const requestedConversationId = conversationId;
+      const operationId = `${interaction.id}:${optionId}`;
+      const idempotencyKey =
+        answerOperationKeysRef.current.get(operationId) || createIdempotencyKey();
+      answerOperationKeysRef.current.set(operationId, idempotencyKey);
+      try {
+        const result = await answerToolCall(
+          turnId,
+          interaction.tool_call_id,
+          optionId,
+          idempotencyKey,
+        );
+        if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
+          return false;
+        }
+        setMessages((previous) => {
+          const createdAt = previous
+            .map(assistantInteractionFromMessage)
+            .find((item) => item?.id === interaction.id)?.created_at;
+          const completedItem: InteractionTimelineItem = {
+            ...result.interaction,
+            type: "interaction",
+            created_at: createdAt || new Date().toISOString(),
+          };
+          return upsertAssistantInteraction(
+            previous,
+            turnId,
+            requestedConversationId,
+            completedItem,
+          );
+        });
+        answerOperationKeysRef.current.delete(operationId);
+        void streamTurn(turnId, result.stream_path);
+        return true;
+      } catch (error) {
+        if (!isSessionUnauthorizedError(error)) {
+          toast.error(error instanceof Error ? error.message : "提交选择失败");
+        }
+        return false;
+      }
+    },
+    [conversationId, streamTurn, user],
+  );
+
   const handleCancelGeneration = useCallback(async () => {
     if (!streamingTurnId || isCancelling) return;
+    const turnId = streamingTurnId;
     setIsCancelling(true);
     try {
-      await cancelTurn(streamingTurnId);
+      await cancelTurn(turnId);
+      void streamTurn(turnId);
     } catch (error) {
       setIsCancelling(false);
       if (!isSessionUnauthorizedError(error)) {
         toast.error(error instanceof Error ? error.message : "停止生成失败");
       }
     }
-  }, [isCancelling, streamingTurnId]);
+  }, [isCancelling, streamTurn, streamingTurnId]);
 
   useEffect(() => {
     if (!isStreaming) setIsCancelling(false);
@@ -418,6 +536,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
     setShareOpen(false);
     setIsSharing(false);
     editBackupRef.current = null;
+    answerOperationKeysRef.current.clear();
     resumeConversationIdRef.current = null;
     restoreConversationIdRef.current = null;
   }, [conversationId]);
@@ -837,7 +956,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
         isStreaming:
           (timelineTurnId === streamingTurnId && isStreaming) ||
           Boolean(timelineLoading[timelineTurnId]) ||
-          ["accepted", "context_ready", "processing"].includes(
+          ["accepted", "context_ready", "processing", "awaiting_input"].includes(
             turnTimelines[timelineTurnId]?.status || "",
           ),
         timeline: turnTimelines[timelineTurnId] || null,
@@ -903,6 +1022,7 @@ export function ChatContainer({ conversationId }: ChatContainerProps) {
               loadingOlderMessages={isLoadingOlderEvents}
               messages={displayMessages}
               onEditMessage={handleEditMessage}
+              onAnswerInteraction={handleAnswerInteraction}
               onLoadOlderMessages={handleLoadOlderEvents}
               onOpenTimeline={handleOpenTimeline}
               onRetryMessage={handleRetryMessage}

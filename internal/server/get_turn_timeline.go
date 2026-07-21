@@ -14,6 +14,7 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/stream"
+	"github.com/EurekaMXZ/assistant/internal/tool"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -23,6 +24,7 @@ const (
 	turnTimelineItemToolCall        = "tool_call"
 	turnTimelineItemOutputText      = "output_text"
 	turnTimelineItemImageGeneration = "image_generation"
+	turnTimelineItemInteraction     = "interaction"
 )
 
 var reasoningTitleParagraphPattern = regexp.MustCompile(`^[ \t]*\*\*([^*\r\n]+)\*\*[ \t]*\r?$`)
@@ -377,6 +379,29 @@ func (uc GetTurnTimeline) buildFallbackToolCallItem(ctx context.Context, call do
 	if err != nil {
 		return TurnTimelineItem{}, err
 	}
+	if call.ToolName == tool.AskUser && call.Namespace == "" {
+		prompt, promptErr := tool.DecodeAskUserPrompt(arguments)
+		if promptErr != nil {
+			return TurnTimelineItem{}, promptErr
+		}
+		var answer *tool.AskUserAnswer
+		if len(output) > 0 {
+			var decoded tool.AskUserAnswer
+			if answerErr := json.Unmarshal(output, &decoded); answerErr != nil {
+				return TurnTimelineItem{}, fmt.Errorf("decode ask_user answer: %w", answerErr)
+			}
+			answer = &decoded
+		}
+		if call.Status == domain.ToolCallStatusCancelled && answer == nil {
+			answer = &tool.AskUserAnswer{Status: "cancelled", OptionID: "cancelled", Label: "已取消", UserReported: false}
+		}
+		return TurnTimelineItem{
+			ID: "ask-user:" + call.ID, Type: turnTimelineItemInteraction, Status: call.Status,
+			ToolCallID: call.ID, Prompt: prompt.Prompt, Kind: prompt.Kind,
+			Options: append([]tool.AskUserOption(nil), prompt.Options...), Action: prompt.Action, Answer: answer,
+			Metadata: fallbackToolCallMetadata(call), CreatedAt: call.StartedAt,
+		}, nil
+	}
 	return TurnTimelineItem{
 		ID:        stableTimelineToolID(call.ID, call.CallID, call.ToolName),
 		Type:      turnTimelineItemToolCall,
@@ -414,7 +439,7 @@ func (uc GetTurnTimeline) reconcileDurableToolCalls(ctx context.Context, turnID 
 func durableToolCallIndex(items []TurnTimelineItem, call domain.ToolCallRecord) int {
 	id := stableTimelineToolID(call.ID, call.CallID, call.ToolName)
 	for index, item := range items {
-		if item.Type != turnTimelineItemToolCall {
+		if item.Type != turnTimelineItemToolCall && item.Type != turnTimelineItemInteraction {
 			continue
 		}
 		if item.ID == id || metadataString(item.Metadata, "tool_call_record_id") == call.ID {
@@ -524,6 +549,12 @@ func timelineEventFromConversationEvent(stored domain.ConversationEvent) (stream
 		event.Type = stream.EventToolCompleted
 	case domain.ConversationEventToolCallFailed:
 		event.Type = stream.EventToolFailed
+	case domain.ConversationEventInteractionAwaiting:
+		event.Type = stream.EventInteractionAwaiting
+	case domain.ConversationEventInteractionCompleted:
+		event.Type = stream.EventInteractionDone
+	case domain.ConversationEventInteractionCancelled:
+		event.Type = stream.EventInteractionCancelled
 	case domain.ConversationEventOutputTextCompleted, domain.ConversationEventOutputTextInterrupted:
 		event.Type = responseEventOutputTextDone
 	case domain.ConversationEventTurnCompleted:

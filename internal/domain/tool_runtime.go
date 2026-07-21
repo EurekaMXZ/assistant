@@ -8,15 +8,18 @@ import (
 const (
 	TurnRunStatusQueued          = "queued"
 	TurnRunStatusRunning         = "running"
+	TurnRunStatusAwaitingInput   = "awaiting_input"
 	TurnRunStatusCancelRequested = "cancel_requested"
 	TurnRunStatusCompleted       = "completed"
 	TurnRunStatusFailed          = "failed"
 	TurnRunStatusCancelled       = "cancelled"
 
-	ToolCallStatusRunning   = "running"
-	ToolCallStatusCompleted = "completed"
-	ToolCallStatusFailed    = "failed"
-	ToolCallStatusAmbiguous = "ambiguous"
+	ToolCallStatusRunning       = "running"
+	ToolCallStatusAwaitingInput = "awaiting_input"
+	ToolCallStatusCompleted     = "completed"
+	ToolCallStatusFailed        = "failed"
+	ToolCallStatusCancelled     = "cancelled"
+	ToolCallStatusAmbiguous     = "ambiguous"
 )
 
 type TurnRun struct {
@@ -52,6 +55,7 @@ type TurnRun struct {
 	TotalTokens               int             `json:"total_tokens,omitempty"`
 	BillingCurrency           string          `json:"billing_currency,omitempty"`
 	BillingAmountNanos        *int64          `json:"billing_amount_nanos,omitempty"`
+	BillingSettledAt          *time.Time      `json:"billing_settled_at,omitempty"`
 	ErrorMessage              string          `json:"error_message,omitempty"`
 	StartedAt                 time.Time       `json:"started_at"`
 	CompletedAt               *time.Time      `json:"completed_at,omitempty"`
@@ -63,21 +67,26 @@ type TurnRun struct {
 }
 
 type ToolCallRecord struct {
-	ID               string     `json:"id"`
-	TurnID           string     `json:"turn_id"`
-	TurnRunID        string     `json:"turn_run_id"`
-	CallID           string     `json:"call_id"`
-	ToolType         string     `json:"tool_type"`
-	Namespace        string     `json:"namespace,omitempty"`
-	ToolName         string     `json:"tool_name"`
-	Status           string     `json:"status"`
-	ExecutionAttempt int        `json:"execution_attempt"`
-	ArgumentsBlobKey string     `json:"arguments_blob_key"`
-	OutputBlobKey    string     `json:"output_blob_key,omitempty"`
-	ErrorMessage     string     `json:"error_message,omitempty"`
-	StartedAt        time.Time  `json:"started_at"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-	FailedAt         *time.Time `json:"failed_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                  string     `json:"id"`
+	TurnID              string     `json:"turn_id"`
+	TurnRunID           string     `json:"turn_run_id"`
+	CallID              string     `json:"call_id"`
+	ToolType            string     `json:"tool_type"`
+	Namespace           string     `json:"namespace,omitempty"`
+	ToolName            string     `json:"tool_name"`
+	Status              string     `json:"status"`
+	ExecutionAttempt    int        `json:"execution_attempt"`
+	ArgumentsBlobKey    string     `json:"arguments_blob_key"`
+	OutputBlobKey       string     `json:"output_blob_key,omitempty"`
+	ErrorMessage        string     `json:"error_message,omitempty"`
+	AnswerKey           string     `json:"-"`
+	AnswerFingerprint   string     `json:"-"`
+	AnswerOptionID      string     `json:"-"`
+	AnswerOutputPending bool       `json:"-"`
+	StartedAt           time.Time  `json:"started_at"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	FailedAt            *time.Time `json:"failed_at,omitempty"`
+	CancelledAt         *time.Time `json:"cancelled_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }

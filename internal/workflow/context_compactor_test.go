@@ -97,7 +97,8 @@ func TestContextCompactorRetainsRecentTurnsAndReusesTurnPrefix(t *testing.T) {
 	model := &stubModelClient{results: []*llm.ModelResult{{FinalText: "durable summary"}}}
 	cacheStore := cache.New(8, 16)
 	anchors := &stubCompactionAnchorStore{}
-	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}}}, nil, nil, nil, nil)
+	catalog := &stubToolCatalog{tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}}}
+	orchestrator := NewToolOrchestrator(model, catalog, nil, nil, nil, nil)
 	execution := testExecutionSnapshot()
 	execution.SupportsTools = true
 	compactor := &ContextCompactor{
@@ -117,6 +118,7 @@ func TestContextCompactorRetainsRecentTurnsAndReusesTurnPrefix(t *testing.T) {
 			execution:  execution,
 			resolveErr: domain.NewValidationError("no enabled default model is configured"),
 		},
+		conversations: ownedConversationReader(),
 	}
 
 	if err := compactor.HandleRequested(t.Context(), WorkflowEvent{EventType: EventContextCompactionRequest, ConversationID: "conv-1", TurnID: "turn-1"}); err != nil {
@@ -127,7 +129,10 @@ func TestContextCompactorRetainsRecentTurnsAndReusesTurnPrefix(t *testing.T) {
 	}
 	request := model.streamRequests[0]
 	if request.Instructions != "stable system" || request.PromptCacheKey != conversationPromptCacheKey("conv-1") {
-		t.Fatalf("compaction did not reuse turn prefix: %#v", request)
+		t.Fatalf("compaction instructions were not purely system-owned: %#v", request)
+	}
+	if catalog.scope.OwnerUserID != "user-1" {
+		t.Fatalf("compaction tool owner = %q, want user-1", catalog.scope.OwnerUserID)
 	}
 	if request.ToolChoice != "none" || len(request.Tools) != 1 || request.Tools[0].Name != "lookup" {
 		t.Fatalf("unexpected compaction tools: choice=%q tools=%#v", request.ToolChoice, request.Tools)

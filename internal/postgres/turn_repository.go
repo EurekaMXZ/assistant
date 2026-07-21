@@ -181,9 +181,9 @@ func ensureNoActiveTurn(ctx context.Context, tx pgx.Tx, conversationID string) e
 			SELECT 1
 			FROM turns
 			WHERE conversation_id = $1::uuid
-				AND status IN ($2, $3, $4)
+				AND status IN ($2, $3, $4, $5)
 		)
-	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing).Scan(&active); err != nil {
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput).Scan(&active); err != nil {
 		return fmt.Errorf("check active turn: %w", err)
 	}
 	if active {

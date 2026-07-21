@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
-import type { Message, Turn } from "@/lib/types";
+import type { AskUserInteraction, Message, Turn } from "@/lib/types";
 import { shouldFollowAfterScroll } from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
 import { ChevronUp, Loader2 } from "lucide-react";
@@ -18,6 +18,11 @@ interface MessageListProps {
   onEditMessage: (message: Message) => void;
   onLoadOlderMessages?: () => Promise<void>;
   onOpenTimeline: (turnId: string) => void;
+  onAnswerInteraction: (
+    turnId: string,
+    interaction: AskUserInteraction,
+    optionId: string,
+  ) => Promise<boolean>;
   onRetryMessage: (message: Message) => void;
   streamingTurnId?: string | null;
   turnsById?: Record<string, Turn>;
@@ -93,6 +98,7 @@ export function MessageList({
   onEditMessage,
   onLoadOlderMessages,
   onOpenTimeline,
+  onAnswerInteraction,
   onRetryMessage,
   streamingTurnId,
   turnsById = {},
@@ -261,6 +267,7 @@ export function MessageList({
                         activityLabel={activityLabels?.[variant.turnId]}
                         messages={variant.assistantMessages}
                         onOpenTimeline={onOpenTimeline}
+                        onAnswerInteraction={onAnswerInteraction}
                         onRetry={onRetryMessage}
                         canRetry={canRetry}
                         isStreaming={streamingTurnId === variant.turnId}

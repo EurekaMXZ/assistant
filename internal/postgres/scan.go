@@ -228,14 +228,15 @@ func scanOutboxEvent(row scanRow) (*workflow.OutboxEvent, error) {
 
 func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 	var (
-		run           domain.TurnRun
-		completedAt   sql.NullTime
-		failedAt      sql.NullTime
-		heartbeatAt   sql.NullTime
-		cancelledAt   sql.NullTime
-		billingAmount sql.NullInt64
-		requestSize   sql.NullInt64
-		responseSize  sql.NullInt64
+		run              domain.TurnRun
+		completedAt      sql.NullTime
+		failedAt         sql.NullTime
+		heartbeatAt      sql.NullTime
+		cancelledAt      sql.NullTime
+		billingSettledAt sql.NullTime
+		billingAmount    sql.NullInt64
+		requestSize      sql.NullInt64
+		responseSize     sql.NullInt64
 	)
 
 	if err := row.Scan(
@@ -268,6 +269,7 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		&run.TotalTokens,
 		&run.BillingCurrency,
 		&billingAmount,
+		&billingSettledAt,
 		&run.ErrorMessage,
 		&run.StartedAt,
 		&completedAt,
@@ -305,6 +307,9 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		value := billingAmount.Int64
 		run.BillingAmountNanos = &value
 	}
+	if billingSettledAt.Valid {
+		run.BillingSettledAt = &billingSettledAt.Time
+	}
 
 	return &run, nil
 }
@@ -315,6 +320,7 @@ func scanToolCall(row scanRow) (*domain.ToolCallRecord, error) {
 		namespace   sql.NullString
 		completedAt sql.NullTime
 		failedAt    sql.NullTime
+		cancelledAt sql.NullTime
 	)
 
 	if err := row.Scan(
@@ -330,9 +336,14 @@ func scanToolCall(row scanRow) (*domain.ToolCallRecord, error) {
 		&record.ArgumentsBlobKey,
 		&record.OutputBlobKey,
 		&record.ErrorMessage,
+		&record.AnswerKey,
+		&record.AnswerFingerprint,
+		&record.AnswerOptionID,
+		&record.AnswerOutputPending,
 		&record.StartedAt,
 		&completedAt,
 		&failedAt,
+		&cancelledAt,
 		&record.CreatedAt,
 		&record.UpdatedAt,
 	); err != nil {
@@ -347,6 +358,9 @@ func scanToolCall(row scanRow) (*domain.ToolCallRecord, error) {
 	}
 	if failedAt.Valid {
 		record.FailedAt = &failedAt.Time
+	}
+	if cancelledAt.Valid {
+		record.CancelledAt = &cancelledAt.Time
 	}
 
 	return &record, nil

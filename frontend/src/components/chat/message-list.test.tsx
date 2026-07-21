@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message, Turn } from "@/lib/types";
-import { MessageBubble } from "./message-bubble";
+import { AskUserInteractionView, MessageBubble } from "./message-bubble";
 import { Composer } from "./composer";
 import { groupMessageEntries, MessageList } from "./message-list";
 
@@ -87,12 +87,116 @@ describe("message turn variants", () => {
           "turn-2": turn("turn-2", 1),
         }}
         onEditMessage={() => undefined}
+        onAnswerInteraction={async () => true}
         onOpenTimeline={() => undefined}
         onRetryMessage={() => undefined}
       />,
     );
 
     expect(markup.match(/<span class="sr-only">重试<\/span>/g)).toHaveLength(1);
+  });
+});
+
+describe("ask user interaction", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const pendingInteraction = {
+    id: "ask-user:tool-1",
+    tool_call_id: "tool-1",
+    prompt: "Choose a route",
+    kind: "external_action" as const,
+    status: "awaiting_input" as const,
+    action: { label: "Open settings", url: "https://example.com/settings" },
+    options: [
+      { id: "continue", label: "Continue", tone: "primary" as const },
+      { id: "cancel", label: "Cancel", tone: "neutral" as const },
+    ],
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("renders pending options and submits the selected option", async () => {
+    const onAnswer = vi.fn(async () => false);
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    await act(async () => {
+      root.render(<AskUserInteractionView interaction={pendingInteraction} onAnswer={onAnswer} />);
+    });
+
+    const option = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Continue",
+    );
+    expect(option).toBeDefined();
+    expect(container.textContent).toContain("目标：example.com");
+    const externalAction = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Open settings"),
+    );
+    await act(async () => externalAction?.click());
+    const confirm = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "继续打开",
+    );
+    expect(confirm).toBeDefined();
+    await act(async () => confirm?.click());
+    expect(open).toHaveBeenCalledWith(
+      "https://example.com/settings",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    await act(async () => option?.click());
+
+    expect(onAnswer).toHaveBeenCalledWith(pendingInteraction, "continue");
+  });
+
+  it("renders a durably cancelled interaction as a neutral disabled status", () => {
+    const markup = renderToStaticMarkup(
+      <AskUserInteractionView
+        interaction={{
+          ...pendingInteraction,
+          status: "cancelled",
+          answer: {
+            status: "cancelled",
+            option_id: "cancelled",
+            label: "已取消",
+            user_reported: false,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("已取消");
+    expect(markup).toContain("text-muted-foreground");
+    expect(markup).not.toContain("<button");
+  });
+
+  it("renders completed and cancelled interactions as button-free status messages", () => {
+    const markup = renderToStaticMarkup(
+      <AskUserInteractionView
+        interaction={{
+          ...pendingInteraction,
+          status: "completed",
+          answer: {
+            status: "cancelled",
+            option_id: "cancel",
+            label: "Cancel",
+            user_reported: true,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("询问用户「Choose a route」：Cancel");
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain("Open settings");
   });
 });
 

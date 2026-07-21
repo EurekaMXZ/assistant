@@ -1,0 +1,34 @@
+# Runtime template rendered by the stock Nginx entrypoint into snippets-enabled/amap-service.conf.
+# NGINX_ENVSUBST_FILTER limits substitution to AMAP_SECURITY_JS_CODE so Nginx variables stay intact.
+# Never put AMAP_SECURITY_JS_CODE in a frontend build argument, image layer, or NEXT_PUBLIC_* value.
+
+location = /_AMapService/v4/map/styles {
+    limit_except GET POST { deny all; }
+    client_max_body_size 16k;
+    limit_req zone=amap_service burst=10 nodelay;
+
+    set $amap_security_js_code "${AMAP_SECURITY_JS_CODE}";
+    if ($amap_security_js_code = "") { return 503; }
+    set $args "$args&jscode=$amap_security_js_code";
+    proxy_ssl_server_name on;
+    proxy_set_header Host webapi.amap.com;
+    proxy_hide_header Content-Type;
+    add_header Content-Type "application/javascript; charset=utf-8" always;
+    proxy_pass https://webapi.amap.com/v4/map/styles;
+}
+
+location /_AMapService/ {
+    if ($amap_rest_path_allowed = 0) { return 404; }
+    limit_except GET POST { deny all; }
+    client_max_body_size 16k;
+    limit_req zone=amap_service burst=10 nodelay;
+
+    set $amap_security_js_code "${AMAP_SECURITY_JS_CODE}";
+    if ($amap_security_js_code = "") { return 503; }
+    set $args "$args&jscode=$amap_security_js_code";
+    proxy_ssl_server_name on;
+    proxy_set_header Host restapi.amap.com;
+    proxy_hide_header Content-Type;
+    add_header Content-Type "application/javascript; charset=utf-8" always;
+    proxy_pass https://restapi.amap.com/;
+}

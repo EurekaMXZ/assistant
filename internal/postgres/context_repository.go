@@ -35,9 +35,9 @@ func (r *WorkflowContextRepository) HasActiveRetry(ctx context.Context, conversa
 			FROM turns
 			WHERE conversation_id = $1::uuid
 				AND retry_of_turn_id IS NOT NULL
-				AND status IN ($2, $3, $4, $5)
+				AND status IN ($2, $3, $4, $5, $6)
 		)
-	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusCancelRequested).Scan(&active); err != nil {
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput, domain.TurnStatusCancelRequested).Scan(&active); err != nil {
 		return false, fmt.Errorf("check active retry: %w", err)
 	}
 	return active, nil
@@ -112,9 +112,9 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 			FROM turns
 			WHERE conversation_id = $1::uuid
 				AND retry_of_turn_id IS NOT NULL
-				AND status IN ($2, $3, $4, $5)
+				AND status IN ($2, $3, $4, $5, $6)
 		)
-	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusCancelRequested).Scan(&activeRetry); err != nil {
+	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput, domain.TurnStatusCancelRequested).Scan(&activeRetry); err != nil {
 		return nil, fmt.Errorf("check active retry before compaction: %w", err)
 	}
 	if activeRetry {

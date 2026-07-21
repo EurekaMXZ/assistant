@@ -33,6 +33,15 @@ type ScheduledRunOutcome struct {
 	GeneratedImageDrafts []domain.AssistantMessageDraft `json:"generated_image_drafts,omitempty"`
 }
 
+type AwaitingInputSignal struct {
+	ToolCall *domain.ToolCallRecord
+	Prompt   *tool.AskUserPrompt
+}
+
+func (s *AwaitingInputSignal) Error() string {
+	return "turn run is awaiting user input"
+}
+
 func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRunInput, stepIndex int, initialInputCount int) (*ScheduledRunState, json.RawMessage, error) {
 	if o == nil || o.model == nil {
 		return nil, nil, fmt.Errorf("tool orchestrator requires model client")
@@ -112,6 +121,10 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 	approvalRequests := approvalRequests(result)
 	remoteCalls := remoteToolCalls(result)
 	remoteContinuations := remoteContinuationItems(result)
+	localCalls, err := localToolCallsAwaitingInputLast(functionCalls)
+	if err != nil {
+		return err
+	}
 	if err := o.recordObservedRemoteCalls(ctx, state.Scope, run, remoteCalls); err != nil {
 		return err
 	}
@@ -135,11 +148,11 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
 	toolOutputBudget := remainingToolOutputTokens(state.Request, nextInput, result.Usage.TotalTokens)
 	toolOutputStart := len(nextInput)
-	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, modelItemsToToolCalls(functionCalls), toolOutputBudget)
+	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, localCalls, toolOutputBudget)
+	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])
 	if err != nil {
 		return err
 	}
-	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])
 	nextState, nextRequest, err := o.PrepareScheduledRun(ctx, ToolRunInput{
 		Scope: nextScope, Model: state.Request.Model, ContextWindowTokens: state.Request.ContextWindowTokens,
 		Instructions:   state.Request.Instructions,

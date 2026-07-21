@@ -1,6 +1,10 @@
 import type { PendingHomeTurn } from "./pending-home-turn";
-import type { Message, TimelineItem } from "./types";
-import { isAssistantOutputItem, isTimelineItem } from "./turn-stream-events";
+import type { InteractionTimelineItem, Message, TimelineItem } from "./types";
+import {
+  isAssistantInteractionItem,
+  isAssistantOutputItem,
+  isTimelineItem,
+} from "./turn-stream-events";
 
 export function thinkingMessageId(turnId: string) {
   return `thinking-${turnId}`;
@@ -20,6 +24,7 @@ function buildAssistantMessage(
   id: string,
   metadata: Record<string, unknown>,
   content = "",
+  createdAt = new Date().toISOString(),
 ): Message {
   return {
     id,
@@ -30,7 +35,7 @@ function buildAssistantMessage(
     content_text: content,
     token_count: 0,
     metadata,
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   };
 }
 
@@ -90,11 +95,28 @@ export function ensureStreamingThinkingMessage(
   turnId: string | null,
   conversationId: string,
 ) {
-  if (!turnId || messages.some((message) => message.id === thinkingMessageId(turnId))) {
+  if (!turnId) {
     return messages;
   }
+  const interactionMessages = messages.filter(
+    (message) => message.turn_id === turnId && assistantInteractionFromMessage(message),
+  );
+  const latestInteraction = interactionMessages.at(-1);
+  if (
+    latestInteraction &&
+    assistantInteractionFromMessage(latestInteraction)?.status === "awaiting_input"
+  ) {
+    return removeThinkingMessage(messages, turnId);
+  }
+  if (messages.some((message) => message.id === thinkingMessageId(turnId))) return messages;
+
   const next = [...messages];
   const marker = buildThinkingMessage(turnId, conversationId);
+  if (latestInteraction) {
+    const interactionIndex = next.findIndex((message) => message.id === latestInteraction.id);
+    next.splice(interactionIndex + 1, 0, marker);
+    return next;
+  }
   const firstAssistantIndex = next.findIndex(
     (message) => message.turn_id === turnId && message.role === "assistant",
   );
@@ -108,6 +130,75 @@ export function ensureStreamingThinkingMessage(
     return next;
   }
   return [...next, marker];
+}
+
+export function removeThinkingMessage(messages: Message[], turnId: string) {
+  const markerId = thinkingMessageId(turnId);
+  return messages.some((message) => message.id === markerId)
+    ? messages.filter((message) => message.id !== markerId)
+    : messages;
+}
+
+export function assistantInteractionFromMessage(message: Message) {
+  if (message.metadata?.display_kind !== "ask_user") return null;
+  const interaction = message.metadata.interaction;
+  if (!interaction || typeof interaction !== "object" || Array.isArray(interaction)) return null;
+  const candidate = interaction as Partial<InteractionTimelineItem>;
+  return candidate.type === "interaction" &&
+    typeof candidate.id === "string" &&
+    typeof candidate.tool_call_id === "string" &&
+    typeof candidate.prompt === "string" &&
+    Array.isArray(candidate.options) &&
+    (candidate.status === "awaiting_input" ||
+      candidate.status === "completed" ||
+      candidate.status === "cancelled")
+    ? (candidate as InteractionTimelineItem)
+    : null;
+}
+
+export function upsertAssistantInteraction(
+  messages: Message[],
+  turnId: string,
+  conversationId: string,
+  interaction: InteractionTimelineItem,
+) {
+  const index = messages.findIndex((message) => message.id === interaction.id);
+  if (index !== -1) {
+    const existing = assistantInteractionFromMessage(messages[index]);
+    if (
+      (existing?.status === "completed" || existing?.status === "cancelled") &&
+      interaction.status === "awaiting_input"
+    ) {
+      return messages;
+    }
+    const updated = messages.map((message, messageIndex) =>
+      messageIndex === index
+        ? {
+            ...message,
+            metadata: { ...message.metadata, display_kind: "ask_user", interaction },
+          }
+        : message,
+    );
+    return interaction.status === "awaiting_input"
+      ? removeThinkingMessage(updated, turnId)
+      : updated;
+  }
+
+  const next = [...messages];
+  const lastTurnIndex = next.findLastIndex((message) => message.turn_id === turnId);
+  next.splice(
+    lastTurnIndex === -1 ? next.length : lastTurnIndex + 1,
+    0,
+    buildAssistantMessage(
+      turnId,
+      conversationId,
+      interaction.id,
+      { display_kind: "ask_user", interaction },
+      "",
+      interaction.created_at,
+    ),
+  );
+  return interaction.status === "awaiting_input" ? removeThinkingMessage(next, turnId) : next;
 }
 
 export function upsertAssistantTextContent(
@@ -168,11 +259,24 @@ export function assistantOutputPhase(item: TimelineItem) {
 export function assistantTimelineThinkingState(turnId: string, items: TimelineItem[]) {
   let afterMessageId: string | null = null;
   let pendingMessageId: string | null = null;
+  let awaitingInput = false;
 
   items.forEach((item, index) => {
+    if (isAssistantInteractionItem(item)) {
+      pendingMessageId = null;
+      if (item.status === "awaiting_input") {
+        awaitingInput = true;
+        return;
+      }
+      awaitingInput = false;
+      afterMessageId = item.id;
+      return;
+    }
     if (!isAssistantOutputItem(item) || item.status !== "completed" || item.content_text == null) {
       return;
     }
+
+    awaitingInput = false;
 
     const messageId = assistantTextMessageId(turnId, item.id);
     const phase = assistantOutputPhase(item);
@@ -188,7 +292,10 @@ export function assistantTimelineThinkingState(turnId: string, items: TimelineIt
 
     const hasContinuation = items
       .slice(index + 1)
-      .some((next) => isAssistantOutputItem(next) || isTimelineItem(next));
+      .some(
+        (next) =>
+          isAssistantOutputItem(next) || isAssistantInteractionItem(next) || isTimelineItem(next),
+      );
     if (hasContinuation) {
       afterMessageId = messageId;
       pendingMessageId = null;
@@ -197,7 +304,7 @@ export function assistantTimelineThinkingState(turnId: string, items: TimelineIt
     pendingMessageId = messageId;
   });
 
-  return { afterMessageId, pendingMessageId };
+  return { afterMessageId, awaitingInput, pendingMessageId };
 }
 
 export function applyAssistantTimelineSnapshot(
@@ -206,28 +313,39 @@ export function applyAssistantTimelineSnapshot(
   conversationId: string,
   items: TimelineItem[],
 ) {
-  const assistantItemIds = new Set(items.filter(isAssistantOutputItem).map((item) => item.id));
-  const retained = messages.filter(
-    (message) =>
-      message.turn_id !== turnId ||
-      message.metadata?.display_kind !== "assistant_text" ||
-      (typeof message.metadata?.timeline_item_id === "string" &&
-        assistantItemIds.has(message.metadata.timeline_item_id)),
+  const assistantTextItemIds = new Set(items.filter(isAssistantOutputItem).map((item) => item.id));
+  const interactionItemIds = new Set(
+    items.filter(isAssistantInteractionItem).map((item) => item.id),
   );
-  const projected = items.reduce(
-    (next, item) =>
-      isAssistantOutputItem(item) && item.content_text != null
-        ? upsertAssistantTextContent(
-            next,
-            turnId,
-            conversationId,
-            item.id,
-            item.content_text,
-            "replace",
-          )
-        : next,
-    retained,
-  );
-  const { afterMessageId } = assistantTimelineThinkingState(turnId, items);
+  const retained = messages.filter((message) => {
+    if (message.turn_id !== turnId) return true;
+    if (message.metadata?.display_kind === "assistant_text") {
+      return (
+        typeof message.metadata?.timeline_item_id === "string" &&
+        assistantTextItemIds.has(message.metadata.timeline_item_id)
+      );
+    }
+    if (message.metadata?.display_kind === "ask_user") {
+      return interactionItemIds.has(message.id);
+    }
+    return true;
+  });
+  const projected = items.reduce((next, item) => {
+    if (isAssistantInteractionItem(item)) {
+      return upsertAssistantInteraction(next, turnId, conversationId, item);
+    }
+    return isAssistantOutputItem(item) && item.content_text != null
+      ? upsertAssistantTextContent(
+          next,
+          turnId,
+          conversationId,
+          item.id,
+          item.content_text,
+          "replace",
+        )
+      : next;
+  }, retained);
+  const { afterMessageId, awaitingInput } = assistantTimelineThinkingState(turnId, items);
+  if (awaitingInput) return removeThinkingMessage(projected, turnId);
   return afterMessageId ? moveThinkingAfter(projected, turnId, afterMessageId) : projected;
 }

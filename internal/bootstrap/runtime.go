@@ -82,23 +82,22 @@ func newBaseAssembly(ctx context.Context, settings baseSettings) (*baseAssembly,
 		return nil, err
 	}
 
-	serverUseCases, workflows := buildApplication(pool, artifactStore, artifactStore, settings.BillingCurrency, authService, sandboxRuntime, settings.SandboxLifecycle, credentialCipher, settings.Server.WebOrigin)
+	streamHub, err := buildStreamHub(ctx, settings.Stream)
+	if err != nil {
+		lifecycle.close()
+		return nil, err
+	}
+	lifecycle.addClose(func() {
+		_ = streamHub.Close()
+	})
+	serverUseCases, workflows := buildApplication(pool, artifactStore, artifactStore, streamHub, settings.BillingCurrency, authService, sandboxRuntime, settings.SandboxLifecycle, credentialCipher, settings.Server.WebOrigin)
 	assembled := &baseAssembly{
 		resources: lifecycle,
 		server:    serverUseCases,
+		streamHub: streamHub,
 		workflows: workflows,
 		address:   settings.Address,
 	}
-
-	stream, err := buildStreamHub(ctx, settings.Stream)
-	if err != nil {
-		assembled.resources.close()
-		return nil, err
-	}
-	assembled.resources.addClose(func() {
-		_ = stream.Close()
-	})
-	assembled.streamHub = stream
 
 	return assembled, nil
 }

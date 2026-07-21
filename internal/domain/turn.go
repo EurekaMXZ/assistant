@@ -9,6 +9,7 @@ const (
 	TurnStatusAccepted        = "accepted"
 	TurnStatusContextReady    = "context_ready"
 	TurnStatusProcessing      = "processing"
+	TurnStatusAwaitingInput   = "awaiting_input"
 	TurnStatusCancelRequested = "cancel_requested"
 	TurnStatusCompleted       = "completed"
 	TurnStatusFailed          = "failed"

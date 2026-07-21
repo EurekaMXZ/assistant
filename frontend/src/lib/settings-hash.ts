@@ -1,4 +1,9 @@
-const settingsSections = ["user/profile", "user/security", "user/expenses"] as const;
+const settingsSections = [
+  "user/profile",
+  "user/personalization",
+  "user/security",
+  "user/expenses",
+] as const;
 
 export type SettingsSection = (typeof settingsSections)[number];
 

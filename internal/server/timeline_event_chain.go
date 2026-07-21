@@ -47,6 +47,7 @@ func newDefaultTimelineEventChain() *timelineEventChain {
 		reasoningPartDoneTimelineHandler{},
 		reasoningSummaryTimelineHandler{},
 		toolTimelineHandler{},
+		interactionTimelineHandler{},
 		responseCompletedTimelineHandler{},
 		responseFailedTimelineHandler{},
 		turnDoneTimelineHandler{},
@@ -202,6 +203,16 @@ type toolTimelineHandler struct{}
 
 func (toolTimelineHandler) EventTypes() []string {
 	return []string{stream.EventToolStarted, stream.EventToolCompleted, stream.EventToolFailed}
+}
+
+type interactionTimelineHandler struct{}
+
+func (interactionTimelineHandler) EventTypes() []string {
+	return []string{stream.EventInteractionAwaiting, stream.EventInteractionDone, stream.EventInteractionCancelled}
+}
+
+func (interactionTimelineHandler) Handle(reducer *timelineReducer, input normalizedTimelineEvent) ([]timelineMutation, error) {
+	return reducer.reduceInteraction(input.Event, input.CreatedAt)
 }
 
 func (toolTimelineHandler) Handle(reducer *timelineReducer, input normalizedTimelineEvent) ([]timelineMutation, error) {

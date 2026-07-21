@@ -405,3 +405,56 @@ func TestPresentationReasoningDoneEmitsOneItemPerTitleParagraph(t *testing.T) {
 		t.Fatalf("reasoning frame IDs = %q, %q", first.ID, second.ID)
 	}
 }
+
+func TestPresentationAskUserUsesStableItemAcrossAwaitingAndCompleted(t *testing.T) {
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		newPresentationItemRegistry(), nil,
+	)
+	chain := newPresentationEventChain()
+	payload := `{"id":"ask-user:tool-1","tool_call_id":"tool-1","prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}],"status":"awaiting_input"}`
+	frames, err := chain.Dispatch(state, stream.Event{Type: stream.EventInteractionAwaiting, Payload: payload}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemUpsert {
+		t.Fatalf("awaiting frames = %#v", frames)
+	}
+	waiting := frames[0].Payload.(TurnTimelineItem)
+	if waiting.ID != "ask-user:tool-1" || waiting.ToolCallID != "tool-1" || waiting.Status != domain.TurnStatusAwaitingInput || len(waiting.Options) != 2 {
+		t.Fatalf("awaiting item = %#v", waiting)
+	}
+	payload = strings.Replace(payload, `"status":"awaiting_input"`, `"status":"completed"`, 1)
+	frames, err = chain.Dispatch(state, stream.Event{Type: stream.EventInteractionDone, Payload: payload}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemDone {
+		t.Fatalf("completed frames = %#v", frames)
+	}
+	completed := frames[0].Payload.(TurnTimelineItem)
+	if completed.ID != waiting.ID || completed.Status != "completed" {
+		t.Fatalf("completed item = %#v", completed)
+	}
+}
+
+func TestPresentationAskUserCancellationIncludesAnswer(t *testing.T) {
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		newPresentationItemRegistry(), nil,
+	)
+	payload := `{"id":"ask-user:tool-1","tool_call_id":"tool-1","prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}],"answer":{"status":"cancelled","option_id":"cancelled","label":"已取消","user_reported":false},"status":"cancelled"}`
+	frames, err := newPresentationEventChain().Dispatch(state, stream.Event{
+		Type: stream.EventInteractionCancelled, Payload: payload,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemDone {
+		t.Fatalf("cancelled frames = %#v", frames)
+	}
+	item := frames[0].Payload.(TurnTimelineItem)
+	if item.Status != domain.ToolCallStatusCancelled || item.Answer == nil || item.Answer.OptionID != "cancelled" {
+		t.Fatalf("cancelled item = %#v", item)
+	}
+}

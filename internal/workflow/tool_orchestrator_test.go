@@ -78,6 +78,17 @@ func (s *stubToolArtifactStore) PutBytes(_ context.Context, key string, data []b
 	return nil
 }
 
+func (s *stubToolArtifactStore) PutImmutableBytes(_ context.Context, key string, data []byte, _ string) error {
+	if s.data == nil {
+		s.data = map[string][]byte{}
+	}
+	if existing, ok := s.data[key]; ok && string(existing) != string(data) {
+		return domain.ErrConflict
+	}
+	s.data[key] = append([]byte(nil), data...)
+	return nil
+}
+
 func (s *stubToolArtifactStore) GetBytes(_ context.Context, key string) ([]byte, error) {
 	if s.data == nil {
 		return nil, domain.ErrNotFound
@@ -122,7 +133,19 @@ type stubToolCallStore struct {
 	completed   []string
 	failed      []string
 	ambiguous   []string
+	awaiting    []string
 	recordsByID map[string]*domain.ToolCallRecord
+	finalizeErr error
+}
+
+func (s *stubToolCallStore) MarkAwaitingInput(_ context.Context, recordID string) (*domain.ToolCallRecord, error) {
+	s.awaiting = append(s.awaiting, recordID)
+	record := s.recordsByID[recordID]
+	if record == nil {
+		return nil, domain.ErrNotFound
+	}
+	record.Status = domain.ToolCallStatusAwaitingInput
+	return record, nil
 }
 
 func (s *stubToolCallStore) AcquireToolCall(_ context.Context, turnID string, turnRunID string, executionAttempt int, call tool.ToolCall, argumentsBlobKey string) (*domain.ToolCallRecord, bool, error) {
@@ -151,6 +174,54 @@ func (s *stubToolCallStore) FailToolCall(_ context.Context, recordID string, out
 func (s *stubToolCallStore) MarkToolCallAmbiguous(_ context.Context, recordID string, message string) (*domain.ToolCallRecord, error) {
 	s.ambiguous = append(s.ambiguous, recordID+":"+message)
 	return &domain.ToolCallRecord{ID: recordID, Status: domain.ToolCallStatusAmbiguous}, nil
+}
+
+func (s *stubToolCallStore) GetToolCallForAnswer(_ context.Context, _ string, _ string, toolCallID string) (*domain.ToolCallRecord, error) {
+	if record := s.recordsByID[toolCallID]; record != nil {
+		return record, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (s *stubToolCallStore) ClaimAwaitingInputAnswer(_ context.Context, _ string, _ string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string) (*AskUserAnswerClaim, error) {
+	record := s.recordsByID[toolCallID]
+	if record == nil {
+		return nil, domain.ErrNotFound
+	}
+	if record.Status == domain.ToolCallStatusCompleted {
+		if record.AnswerKey != answerKey || record.AnswerFingerprint != answerFingerprint || record.AnswerOptionID != answerOptionID || record.OutputBlobKey != outputBlobKey {
+			return nil, domain.ErrConflict
+		}
+		return &AskUserAnswerClaim{ToolCall: record, ConversationID: "conv-1", Finalized: true}, nil
+	}
+	if record.AnswerKey != "" && (record.AnswerKey != answerKey || record.AnswerFingerprint != answerFingerprint || record.AnswerOptionID != answerOptionID || record.OutputBlobKey != outputBlobKey) {
+		return nil, domain.ErrConflict
+	}
+	record.AnswerKey = answerKey
+	record.AnswerFingerprint = answerFingerprint
+	record.AnswerOptionID = answerOptionID
+	record.AnswerOutputPending = true
+	record.OutputBlobKey = outputBlobKey
+	return &AskUserAnswerClaim{ToolCall: record, ConversationID: "conv-1"}, nil
+}
+
+func (s *stubToolCallStore) FinalizeAwaitingInputAnswer(_ context.Context, _ string, _ string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string, _ json.RawMessage) (*domain.ToolCallRecord, bool, error) {
+	if s.finalizeErr != nil {
+		return nil, false, s.finalizeErr
+	}
+	record := s.recordsByID[toolCallID]
+	if record == nil {
+		return nil, false, domain.ErrNotFound
+	}
+	if record.AnswerKey != answerKey || record.AnswerFingerprint != answerFingerprint || record.AnswerOptionID != answerOptionID || record.OutputBlobKey != outputBlobKey {
+		return nil, false, domain.ErrConflict
+	}
+	if record.Status == domain.ToolCallStatusCompleted {
+		return record, true, nil
+	}
+	record.Status = domain.ToolCallStatusCompleted
+	record.AnswerOutputPending = false
+	return record, false, nil
 }
 
 type stubToolExecutor struct {

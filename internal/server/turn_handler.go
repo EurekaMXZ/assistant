@@ -44,6 +44,33 @@ func (a *API) handleCancelTurn(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"turn": turn})
 }
 
+func (a *API) handleAnswerToolCall(c *gin.Context) {
+	var request struct {
+		OptionID string `json:"option_id"`
+	}
+	if err := bindStrictJSON(c, &request); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 128 {
+		writeAPIError(c, domain.NewValidationError("Idempotency-Key is required and must be at most 128 bytes"))
+		return
+	}
+	interaction, err := a.useCases.Turns.AnswerToolCall(
+		c.Request.Context(), currentUser(c).ID, c.Param("turnID"), c.Param("toolCallID"),
+		request.OptionID, idempotencyKey,
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"interaction": interaction,
+		"stream_path": "/api/v1/turns/" + c.Param("turnID") + "/stream",
+	})
+}
+
 func (a *API) handleRetryTurn(c *gin.Context) {
 	result, err := a.useCases.Conversations.RetryTurn(
 		c.Request.Context(), currentUser(c).ID, c.Param("turnID"),

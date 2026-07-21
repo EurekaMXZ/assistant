@@ -27,6 +27,7 @@ type TurnRunner struct {
 	cache                cache.ContextTailAppender
 	loader               *ContextLoader
 	conversations        ConversationReader
+	profiles             PersonalizationReader
 	generatedAttachments GeneratedAttachmentStore
 	sandboxes            tool.ConversationSandboxReader
 	runs                 TurnRunWorkflowStore
@@ -153,7 +154,7 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 
 	scope, err := r.toolScope(ctx, event.ConversationID, event.TurnID)
 	if err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorSandboxScopeFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	if r.models == nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, errors.New("model catalog is not configured"))
@@ -168,6 +169,11 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	if err := validateExecutionSnapshot(execution); err != nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
+	personalization, err := BuildAccountPersonalizationContext(ctx, scope.OwnerUserID, r.profiles)
+	if err != nil {
+		return r.failTurn(ctx, turn, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	modelInput = insertAccountPersonalizationContext(modelInput, personalization)
 	reasoningEffort, reasoningSummary, textVerbosity := modelRequestParameters(execution.DefaultParameters)
 	if execution.ReasoningEffort != "" {
 		reasoningEffort = execution.ReasoningEffort
@@ -396,7 +402,7 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	switch run.Status {
 	case domain.TurnRunStatusCompleted:
 		return r.continueCompletedTurnRun(ctx, event, run)
-	case domain.TurnRunStatusFailed, domain.TurnRunStatusRunning, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusCancelled:
+	case domain.TurnRunStatusFailed, domain.TurnRunStatusRunning, domain.TurnRunStatusAwaitingInput, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusCancelled:
 		return nil
 	case domain.TurnRunStatusQueued:
 	default:
@@ -495,7 +501,44 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			}
 		}
 		if err := r.tools.PostprocessScheduledRun(runCtx, claimed, state, outcome); err != nil {
-			return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			var waiting *AwaitingInputSignal
+			if !errors.As(err, &waiting) {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+			if waiting.ToolCall == nil || waiting.Prompt == nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, errors.New("awaiting input signal is incomplete"))
+			}
+			responseKey, resultKey, err = r.tools.PersistScheduledRunOutcome(runCtx, state.Scope, claimed, outcome)
+			if err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+			if err := r.runs.CheckpointScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey); err != nil {
+				return err
+			}
+			interaction := awaitingInputInteraction(waiting)
+			interactionPayload, marshalErr := json.Marshal(interaction)
+			if marshalErr != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, fmt.Errorf("marshal awaiting interaction: %w", marshalErr))
+			}
+			settled, awaitErr := r.runs.AwaitScheduledTurnRunInput(ctx, AwaitScheduledTurnRunInput{
+				Lease:                lease,
+				ToolCallID:           waiting.ToolCall.ID,
+				Interaction:          interactionPayload,
+				Usage:                outcome.Model.Usage,
+				ImageGenerationCount: billableImageGenerationCount(outcome.Model),
+				CompactTriggerTokens: r.compactTriggerTokens(ctx, event.TurnID, outcome.ContextWindowTokens),
+			})
+			if awaitErr != nil {
+				return awaitErr
+			}
+			if settled != nil && settled.Status == domain.TurnRunStatusFailed {
+				_ = stopLease()
+				return r.publishTurnFailure(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID},
+					domain.TurnErrorBillingSettlementFailed, domain.TurnPublicErrorBillingRequired, domain.ErrPaymentRequired)
+			}
+			_ = stopLease()
+			r.publishAwaitingInput(ctx, event, claimed, waiting)
+			return nil
 		}
 		responseKey, resultKey, err = r.tools.PersistScheduledRunOutcome(runCtx, state.Scope, claimed, outcome)
 		if err != nil {
@@ -547,6 +590,38 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	completedRun.ResponseBlobKey = responseKey
 	completedRun.ResultBlobKey = resultKey
 	return r.finishScheduledTurnRun(ctx, event, completedRun, outcome)
+}
+
+func (r *TurnRunner) publishAwaitingInput(ctx context.Context, event WorkflowEvent, run *domain.TurnRun, waiting *AwaitingInputSignal) {
+	if r == nil || r.streamHub == nil || waiting == nil || waiting.Prompt == nil || waiting.ToolCall == nil {
+		return
+	}
+	interaction := awaitingInputInteraction(waiting)
+	payload, err := json.Marshal(interaction)
+	if err != nil {
+		return
+	}
+	if err := r.streamHub.Publish(ctx, stream.Event{
+		Type: stream.EventInteractionAwaiting, ConversationID: event.ConversationID, TurnID: event.TurnID,
+		RunID: run.ID, ItemID: interaction.ID, Payload: string(payload),
+	}); err != nil && r.logger != nil {
+		r.logger.Printf("publish awaiting input for turn %s: %v", event.TurnID, err)
+	}
+}
+
+func awaitingInputInteraction(waiting *AwaitingInputSignal) tool.AskUserInteraction {
+	if waiting == nil || waiting.ToolCall == nil || waiting.Prompt == nil {
+		return tool.AskUserInteraction{}
+	}
+	return tool.AskUserInteraction{
+		ID:         "ask-user:" + waiting.ToolCall.ID,
+		ToolCallID: waiting.ToolCall.ID,
+		Prompt:     waiting.Prompt.Prompt,
+		Kind:       waiting.Prompt.Kind,
+		Options:    append([]tool.AskUserOption(nil), waiting.Prompt.Options...),
+		Action:     waiting.Prompt.Action,
+		Status:     domain.TurnStatusAwaitingInput,
+	}
 }
 
 func (r *TurnRunner) ensureImmutableRunRequest(ctx context.Context, conversationID string, run *domain.TurnRun) error {
@@ -705,7 +780,18 @@ func (r *TurnRunner) toolScope(ctx context.Context, conversationID string, turnI
 		ConversationID: conversationID,
 		TurnID:         turnID,
 	}
-	if r == nil || r.sandboxes == nil {
+	if r == nil || r.conversations == nil {
+		return scope, errors.New("conversation reader is not configured")
+	}
+	conversation, err := r.conversations.GetConversation(ctx, conversationID)
+	if err != nil {
+		return scope, err
+	}
+	if conversation == nil || strings.TrimSpace(conversation.OwnerUserID) == "" {
+		return scope, errors.New("conversation owner is unavailable")
+	}
+	scope.OwnerUserID = conversation.OwnerUserID
+	if r.sandboxes == nil {
 		return scope, nil
 	}
 

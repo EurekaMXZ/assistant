@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	"github.com/EurekaMXZ/assistant/internal/tool"
 )
 
 func TestHandleInitialTurnCommitPassesIdempotencyAndReturnsStream(t *testing.T) {
@@ -179,6 +180,39 @@ func TestCancelTurnRequestsCancellation(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"status":"cancel_requested"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAnswerToolCallReturnsInteraction(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Turns: TurnUseCases{AnswerToolCall: func(_ context.Context, ownerID string, turnID string, toolCallID string, optionID string, key string) (*tool.AskUserInteraction, error) {
+			if ownerID != "user-1" || turnID != "turn-1" || toolCallID != "tool-1" || optionID != "yes" || key != "answer-1" {
+				t.Fatalf("unexpected answer input: %q %q %q %q %q", ownerID, turnID, toolCallID, optionID, key)
+			}
+			return &tool.AskUserInteraction{ID: "ask-user:tool-1", ToolCallID: toolCallID, Status: "completed"}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/turns/turn-1/tool-calls/tool-1/answer", strings.NewReader(`{"option_id":"yes"}`))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "answer-1")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"id":"ask-user:tool-1"`) || !strings.Contains(rec.Body.String(), `"stream_path":"/api/v1/turns/turn-1/stream"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAnswerToolCallRequiresIdempotencyKey(t *testing.T) {
+	srv := newTestServer(UseCases{Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)}})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/turns/turn-1/tool-calls/tool-1/answer", strings.NewReader(`{"option_id":"yes"}`))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Idempotency-Key") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

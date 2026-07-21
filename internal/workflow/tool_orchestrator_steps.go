@@ -41,13 +41,13 @@ func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domai
 	for _, call := range calls {
 		record, acquired, err := o.recordToolCallStart(ctx, currentScope, run, call)
 		if err != nil {
-			return nil, currentScope, err
+			return currentInput, currentScope, err
 		}
 
 		call.RequestKey = run.ID + ":" + call.CallID
 		execution, err := o.executeRecordedLocalToolCall(ctx, currentScope, record, acquired, call)
 		if err != nil {
-			return nil, currentScope, err
+			return currentInput, currentScope, err
 		}
 		if execution != nil {
 			outputLimit := o.modelToolOutputTokenLimit()
@@ -66,6 +66,23 @@ func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domai
 	}
 
 	return currentInput, currentScope, nil
+}
+
+func localToolCallsAwaitingInputLast(items []llm.ModelItem) ([]tool.ToolCall, error) {
+	calls := modelItemsToToolCalls(items)
+	ordered := make([]tool.ToolCall, 0, len(calls))
+	var awaiting []tool.ToolCall
+	for _, call := range calls {
+		if normalizedToolName(call) == tool.AskUser {
+			awaiting = append(awaiting, call)
+			continue
+		}
+		ordered = append(ordered, call)
+	}
+	if len(awaiting) > 1 {
+		return nil, domain.NewValidationError("ask_user may only be called once per response")
+	}
+	return append(ordered, awaiting...), nil
 }
 
 func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, acquired bool, call tool.ToolCall) (*tool.ToolExecutionResult, error) {
@@ -98,15 +115,25 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 			return &tool.ToolExecutionResult{Failed: true, OutputItem: llm.ModelItem{
 				Type: llm.ModelItemFunctionCallOutput, CallID: call.CallID, Output: output,
 			}}, nil
-		case domain.ToolCallStatusAmbiguous:
+		case domain.ToolCallStatusAmbiguous, domain.ToolCallStatusCancelled:
 			return nil, fmt.Errorf("tool call %s is already %s", describeToolCall(call), record.Status)
+		case domain.ToolCallStatusAwaitingInput:
+			prompt, err := tool.DecodeAskUserPrompt(call.Arguments)
+			if err != nil {
+				return nil, err
+			}
+			prompt.CallID = call.CallID
+			prompt.ToolCallID = record.ID
+			return nil, &AwaitingInputSignal{ToolCall: record, Prompt: prompt}
 		case domain.ToolCallStatusRunning:
 			if !acquired {
 				return nil, fmt.Errorf("tool call %s is already executing", describeToolCall(call))
 			}
 		}
 	}
-	o.publishToolStarted(ctx, scope, record, call)
+	if normalizedToolName(call) != tool.AskUser {
+		o.publishToolStarted(ctx, scope, record, call)
+	}
 
 	execution, err := o.executor.Execute(ctx, scope, call)
 	if err != nil {
@@ -135,6 +162,18 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 		}
 		o.publishToolCompleted(ctx, scope, record, call, nil)
 		return nil, nil
+	}
+	if execution.AwaitingInput != nil {
+		if normalizedToolName(call) != tool.AskUser {
+			return nil, fmt.Errorf("tool %s cannot await user input", describeToolCall(call))
+		}
+		if record == nil || o.calls == nil {
+			return nil, errors.New("awaiting input requires a durable tool call")
+		}
+		prompt := execution.AwaitingInput
+		prompt.CallID = call.CallID
+		prompt.ToolCallID = record.ID
+		return nil, &AwaitingInputSignal{ToolCall: record, Prompt: prompt}
 	}
 
 	if err := o.recordToolCallSuccess(ctx, scope, record, call, execution); err != nil {

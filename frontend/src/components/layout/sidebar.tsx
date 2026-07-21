@@ -25,7 +25,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SidebarConversationList } from "@/components/layout/sidebar-conversation-list";
 import { SidebarSearchDialog } from "@/components/layout/sidebar-search-dialog";
 import { SidebarUserPanel } from "@/components/layout/sidebar-user-panel";
-import { HardDrive, PanelLeft, Search, StickyNotePlus } from "lucide-react";
+import { HardDrive, PanelLeft, Plug, Search, StickyNotePlus } from "lucide-react";
 import { toast } from "sonner";
 import type { SettingsSection } from "@/lib/settings-hash";
 import { cn } from "@/lib/utils";
@@ -36,6 +36,7 @@ interface SidebarProps {
   authLoading?: boolean;
   collapsed?: boolean;
   currentConversationId?: string | null;
+  mcpActive?: boolean;
   storageActive?: boolean;
   user: User | null;
   onNavigate?: () => void;
@@ -50,6 +51,7 @@ export function Sidebar({
   authLoading = false,
   collapsed = false,
   currentConversationId,
+  mcpActive = false,
   storageActive = false,
   user,
   onNavigate,
@@ -306,6 +308,15 @@ export function Sidebar({
     router.push("/storage");
   };
 
+  const handleOpenMCP = () => {
+    if (!user) {
+      onOpenLogin();
+      return;
+    }
+    onNavigate?.();
+    router.push("/mcp");
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -402,6 +413,21 @@ export function Sidebar({
         >
           <HardDrive className="h-4 w-4" />
           {!collapsed ? "存储空间" : <span className="sr-only">存储空间</span>}
+        </Button>
+
+        <Button
+          variant="ghost"
+          size={collapsed ? "icon-sm" : "sm"}
+          aria-pressed={mcpActive}
+          className={cn(
+            "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent aria-pressed:text-sidebar-accent-foreground",
+            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
+          )}
+          disabled={authLoading}
+          onClick={handleOpenMCP}
+        >
+          <Plug className="h-4 w-4" />
+          {!collapsed ? "MCP 服务器" : <span className="sr-only">MCP 服务器</span>}
         </Button>
       </div>
 

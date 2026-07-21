@@ -125,6 +125,8 @@ services:
         condition: service_healthy
     ports:
       - "${NGINX_HOST_PORT:-8080}:8080"
+    environment:
+      AMAP_SECURITY_JS_CODE: ${AMAP_SECURITY_JS_CODE:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
       interval: 10s

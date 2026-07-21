@@ -21,6 +21,21 @@ type stubTurnTimelineEventLister struct {
 	err    error
 }
 
+func TestBuildTimelineRestoresCancelledInteractionAnswer(t *testing.T) {
+	now := time.Now().UTC()
+	payload := json.RawMessage(`{"id":"ask-user:tool-1","tool_call_id":"tool-1","prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}],"answer":{"status":"cancelled","option_id":"cancelled","label":"已取消","user_reported":false},"status":"cancelled"}`)
+	items, err := buildTimelineFromConversationEvents([]domain.ConversationEvent{{
+		ID: "event-1", ConversationID: "conv-1", TurnID: "turn-1", TurnRunID: "run-1",
+		EventSeq: 1, EventType: domain.ConversationEventInteractionCancelled, Payload: payload, CreatedAt: now,
+	}}, "turn-1")
+	if err != nil {
+		t.Fatalf("build cancelled interaction timeline: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != domain.ToolCallStatusCancelled || items[0].Answer == nil || items[0].Answer.OptionID != "cancelled" {
+		t.Fatalf("cancelled interaction timeline = %#v", items)
+	}
+}
+
 func TestBuildTimelineDropsDuplicateAndOutOfOrderSequences(t *testing.T) {
 	now := time.Now().UTC()
 	payloads := []string{

@@ -2,7 +2,14 @@ import type { TurnStreamFrame } from "./api-schemas";
 import type { Turn, TurnStreamDone } from "./types";
 
 export type TurnStreamConnectionState =
-  "connecting" | "streaming" | "reconnecting" | "settling" | "completed" | "cancelled" | "failed";
+  | "connecting"
+  | "streaming"
+  | "reconnecting"
+  | "settling"
+  | "disconnected"
+  | "completed"
+  | "cancelled"
+  | "failed";
 
 export interface TurnStreamControllerOptions {
   turnId: string;
@@ -18,7 +25,7 @@ export interface TurnStreamControllerOptions {
 }
 
 export type TurnStreamControllerResult =
-  { kind: "terminal"; done: TurnStreamDone } | { kind: "retryable"; error: Error };
+  { kind: "terminal"; done: TurnStreamDone } | { kind: "active"; error: Error };
 
 export function reconnectDelay(attempt: number, baseDelayMs = 500, maxDelayMs = 4_000) {
   return Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
@@ -103,6 +110,6 @@ export async function runTurnStreamController({
     return { kind: "terminal", done };
   }
   const error = new Error(`${lastError?.message || "流式连接失败"}，任务仍在处理中，请重试连接`);
-  onStateChange?.("failed");
-  return { kind: "retryable", error };
+  onStateChange?.("disconnected");
+  return { kind: "active", error };
 }

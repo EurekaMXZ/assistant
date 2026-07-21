@@ -11,6 +11,7 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
 	"github.com/EurekaMXZ/assistant/internal/tool"
+	"github.com/EurekaMXZ/assistant/internal/workflow"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -150,13 +151,115 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err != nil || acquired || ambiguous.Status != domain.ToolCallStatusAmbiguous {
 		t.Fatalf("recover ambiguous call = %#v acquired=%t err=%v", ambiguous, acquired, err)
 	}
+	askCall, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt, tool.ToolCall{
+		CallID: "call-ask", Type: llm.ModelItemFunctionCall, Name: tool.AskUser,
+	}, "arguments-ask")
+	if err != nil || !acquired {
+		t.Fatalf("acquire ask_user call: call=%#v acquired=%t err=%v", askCall, acquired, err)
+	}
+	if err := runs.CheckpointScheduledTurnRun(t.Context(), firstLease, "resp-1", "response-1", "result-1"); err != nil {
+		t.Fatalf("checkpoint ask_user run: %v", err)
+	}
+	usage := llm.ModelUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}
+	awaitingPayload := json.RawMessage(`{"id":"ask-user:` + askCall.ID + `","tool_call_id":"` + askCall.ID + `","prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}],"status":"awaiting_input"}`)
+	if _, err := runs.AwaitScheduledTurnRunInput(t.Context(), workflow.AwaitScheduledTurnRunInput{
+		Lease: firstLease, ToolCallID: uuid.NewString(), Interaction: awaitingPayload,
+		Usage: usage, ImageGenerationCount: 1, CompactTriggerTokens: 100_000,
+	}); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("invalid pause error = %v, want not found", err)
+	}
+	var failedPauseRunStatus, failedPauseTurnStatus, failedPauseToolStatus string
+	if err := pool.QueryRow(t.Context(), `
+		SELECT tr.status, t.status, tc.status
+		FROM turn_runs tr
+		JOIN turns t ON t.id = tr.turn_id
+		JOIN tool_calls tc ON tc.turn_run_id = tr.id AND tc.id = $2::uuid
+		WHERE tr.id = $1::uuid
+	`, runID, askCall.ID).Scan(&failedPauseRunStatus, &failedPauseTurnStatus, &failedPauseToolStatus); err != nil {
+		t.Fatalf("load failed pause states: %v", err)
+	}
+	if failedPauseRunStatus != domain.TurnRunStatusRunning || failedPauseTurnStatus != domain.TurnStatusProcessing || failedPauseToolStatus != domain.ToolCallStatusRunning {
+		t.Fatalf("failed pause exposed answerable state: run=%q turn=%q tool=%q", failedPauseRunStatus, failedPauseTurnStatus, failedPauseToolStatus)
+	}
+	awaited, err := runs.AwaitScheduledTurnRunInput(t.Context(), workflow.AwaitScheduledTurnRunInput{
+		Lease: firstLease, ToolCallID: askCall.ID, Interaction: awaitingPayload,
+		Usage: usage, ImageGenerationCount: 1, CompactTriggerTokens: 100_000,
+	})
+	if err != nil {
+		t.Fatalf("pause ask_user run: %v", err)
+	}
+	if awaited.Status != domain.TurnRunStatusAwaitingInput || awaited.BillingSettledAt == nil {
+		t.Fatalf("awaited run = %#v", awaited)
+	}
+	var pausedTurnStatus, pausedToolStatus string
+	if err := pool.QueryRow(t.Context(), `
+		SELECT t.status, tc.status
+		FROM turns t JOIN tool_calls tc ON tc.turn_id = t.id
+		WHERE t.id = $1::uuid AND tc.id = $2::uuid
+	`, turnID, askCall.ID).Scan(&pausedTurnStatus, &pausedToolStatus); err != nil {
+		t.Fatalf("load paused states: %v", err)
+	}
+	if pausedTurnStatus != domain.TurnStatusAwaitingInput || pausedToolStatus != domain.ToolCallStatusAwaitingInput {
+		t.Fatalf("paused states: turn=%q tool=%q", pausedTurnStatus, pausedToolStatus)
+	}
+	fingerprint := strings.Repeat("a", 64)
+	claim, err := calls.ClaimAwaitingInputAnswer(t.Context(), ownerUserID, turnID, askCall.ID, "answer-1", fingerprint, "yes", "answer-output-1")
+	if err != nil || claim.Finalized || claim.ToolCall == nil || !claim.ToolCall.AnswerOutputPending {
+		t.Fatalf("claim ask_user answer = %#v err=%v", claim, err)
+	}
+	if _, err := calls.ClaimAwaitingInputAnswer(t.Context(), ownerUserID, turnID, askCall.ID, "answer-2", strings.Repeat("b", 64), "cancel", "answer-output-2"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("conflicting answer claim error = %v", err)
+	}
+	if _, err := NewTurnRepository(pool).RequestTurnCancellation(t.Context(), turnID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("cancellation over declared answer error = %v, want conflict", err)
+	}
+	completedInteraction := json.RawMessage(`{"id":"ask-user:` + askCall.ID + `","tool_call_id":"` + askCall.ID + `","prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}],"answer":{"status":"answered","option_id":"yes","label":"Yes","user_reported":true},"status":"completed"}`)
+	answered, replayed, err := calls.FinalizeAwaitingInputAnswer(t.Context(), ownerUserID, turnID, askCall.ID, "answer-1", fingerprint, "yes", "answer-output-1", completedInteraction)
+	if err != nil || replayed || answered.Status != domain.ToolCallStatusCompleted {
+		t.Fatalf("finalize ask_user answer = %#v replayed=%t err=%v", answered, replayed, err)
+	}
+	var completedInteractionCount, resumeOutboxCount int
+	var completedInteractionPayload string
+	if err := pool.QueryRow(t.Context(), `
+		SELECT count(*), COALESCE(max(payload::text), '')
+		FROM conversation_events
+		WHERE turn_id = $1::uuid AND event_type = $2
+	`, turnID, domain.ConversationEventInteractionCompleted).Scan(&completedInteractionCount, &completedInteractionPayload); err != nil {
+		t.Fatalf("load completed interaction event: %v", err)
+	}
+	if completedInteractionCount != 1 || (!strings.Contains(completedInteractionPayload, `"option_id": "yes"`) && !strings.Contains(completedInteractionPayload, `"option_id":"yes"`)) {
+		t.Fatalf("completed interaction event count=%d payload=%s", completedInteractionCount, completedInteractionPayload)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM outbox_events WHERE turn_run_id = $1::uuid AND event_type = $2`, runID, workflow.EventTurnRunRequested).Scan(&resumeOutboxCount); err != nil {
+		t.Fatalf("count resumed run outbox: %v", err)
+	}
+	if _, replayed, err := calls.FinalizeAwaitingInputAnswer(t.Context(), ownerUserID, turnID, askCall.ID, "answer-1", fingerprint, "yes", "answer-output-1", completedInteraction); err != nil || !replayed {
+		t.Fatalf("replay finalized ask_user answer: replayed=%t err=%v", replayed, err)
+	}
+	var replayedInteractionCount, replayedOutboxCount int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM conversation_events WHERE turn_id = $1::uuid AND event_type = $2`, turnID, domain.ConversationEventInteractionCompleted).Scan(&replayedInteractionCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM outbox_events WHERE turn_run_id = $1::uuid AND event_type = $2`, runID, workflow.EventTurnRunRequested).Scan(&replayedOutboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if replayedInteractionCount != completedInteractionCount || replayedOutboxCount != resumeOutboxCount {
+		t.Fatalf("idempotent finalize duplicated durable work: events %d->%d outbox %d->%d", completedInteractionCount, replayedInteractionCount, resumeOutboxCount, replayedOutboxCount)
+	}
+	resumed, resumedLease, err := runs.ClaimTurnRun(t.Context(), runID)
+	if err != nil {
+		t.Fatalf("claim resumed ask_user run: %v", err)
+	}
+	if !resumed.StartedAt.Equal(run.StartedAt) {
+		t.Fatalf("resume changed started_at: first=%s resumed=%s", run.StartedAt, resumed.StartedAt)
+	}
 	if _, err := NewConversationEventRepository(pool).AppendCompleteEvent(t.Context(), domain.ConversationEventInput{
 		ConversationID: conversationID, TurnID: turnID, TurnRunID: runID,
 		EventKey: "run:" + runID + ":completed", EventType: domain.ConversationEventRunCompleted,
 	}); err != nil {
 		t.Fatalf("persist first run completion event: %v", err)
 	}
-	completed, err := runs.CompleteScheduledTurnRun(t.Context(), firstLease, "resp-1", "response-1", "result-1", llm.ModelUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}, 1, 100_000)
+	completed, err := runs.CompleteScheduledTurnRun(t.Context(), resumedLease, "resp-1", "response-1", "result-1", usage, 1, 100_000)
 	if err != nil {
 		t.Fatalf("complete first run: %v", err)
 	}
@@ -192,7 +295,7 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if balanceAfter != 1_000_000_000_000-totalAmount || transactionAmount != totalAmount {
 		t.Fatalf("tool debit mismatch: balance=%d transaction=%d total=%d", balanceAfter, transactionAmount, totalAmount)
 	}
-	if _, err := runs.CompleteScheduledTurnRun(t.Context(), firstLease, "resp-duplicate", "", "", llm.ModelUsage{}, 0, 100_000); !errors.Is(err, domain.ErrConflict) {
+	if _, err := runs.CompleteScheduledTurnRun(t.Context(), resumedLease, "resp-duplicate", "", "", llm.ModelUsage{}, 0, 100_000); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("duplicate completion error = %v, want conflict", err)
 	}
 
@@ -244,6 +347,70 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	}
 	if parentStatus != domain.TurnStatusFailed || parentCode != domain.TurnErrorUpstreamRequestFailed {
 		t.Fatalf("failed run diverged from parent turn: status=%q code=%q", parentStatus, parentCode)
+	}
+
+	cancelConversationID := uuid.NewString()
+	cancelTurnID := uuid.NewString()
+	if _, err := pool.Exec(t.Context(), `INSERT INTO conversations (id, owner_user_id) VALUES ($1::uuid, $2::uuid)`, cancelConversationID, ownerUserID); err != nil {
+		t.Fatalf("insert cancellation conversation: %v", err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		INSERT INTO turns (id, conversation_id, seq, status, model_id, model_revision, model_price_id, model_snapshot)
+		VALUES ($1::uuid, $2::uuid, 1, $3, $4::uuid, 1, $5::uuid, $6::jsonb)
+	`, cancelTurnID, cancelConversationID, domain.TurnStatusContextReady, modelID, priceID, modelSnapshot); err != nil {
+		t.Fatalf("insert cancellation turn: %v", err)
+	}
+	cancelRunID, err := runs.StartTurnRun(t.Context(), cancelTurnID, "openai.responses", "gpt-test", "request-cancel", "state-cancel")
+	if err != nil {
+		t.Fatalf("start cancellation run: %v", err)
+	}
+	cancelRun, cancelLease, err := runs.ClaimTurnRun(t.Context(), cancelRunID)
+	if err != nil {
+		t.Fatalf("claim cancellation run: %v", err)
+	}
+	cancelCall, acquired, err := calls.AcquireToolCall(t.Context(), cancelTurnID, cancelRunID, cancelRun.Attempt, tool.ToolCall{
+		CallID: "call-cancel", Type: llm.ModelItemFunctionCall, Name: tool.AskUser,
+	}, "arguments-cancel")
+	if err != nil || !acquired {
+		t.Fatalf("acquire cancellation ask_user: call=%#v acquired=%t err=%v", cancelCall, acquired, err)
+	}
+	if err := runs.CheckpointScheduledTurnRun(t.Context(), cancelLease, "resp-cancel", "response-cancel", "result-cancel"); err != nil {
+		t.Fatalf("checkpoint cancellation run: %v", err)
+	}
+	cancelAwaitingPayload := json.RawMessage(`{"id":"ask-user:` + cancelCall.ID + `","tool_call_id":"` + cancelCall.ID + `","prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}],"status":"awaiting_input"}`)
+	if _, err := runs.AwaitScheduledTurnRunInput(t.Context(), workflow.AwaitScheduledTurnRunInput{
+		Lease: cancelLease, ToolCallID: cancelCall.ID, Interaction: cancelAwaitingPayload,
+		Usage: llm.ModelUsage{InputTokens: 4, OutputTokens: 6, TotalTokens: 10}, CompactTriggerTokens: 100_000,
+	}); err != nil {
+		t.Fatalf("pause cancellation run: %v", err)
+	}
+	cancelledTurn, err := NewTurnRepository(pool).RequestTurnCancellation(t.Context(), cancelTurnID)
+	if err != nil || cancelledTurn.Status != domain.TurnStatusCancelRequested {
+		t.Fatalf("request waiting turn cancellation = %#v err=%v", cancelledTurn, err)
+	}
+	if err := runs.FinalizeTurnCancellation(t.Context(), cancelConversationID, cancelTurnID); err != nil {
+		t.Fatalf("finalize waiting turn cancellation: %v", err)
+	}
+	var cancelledToolStatus, cancelledInteractionPayload, cancellationBillingTransactionID string
+	if err := pool.QueryRow(t.Context(), `SELECT status FROM tool_calls WHERE id = $1::uuid`, cancelCall.ID).Scan(&cancelledToolStatus); err != nil {
+		t.Fatalf("load cancelled tool status: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), `
+		SELECT payload::text
+		FROM conversation_events
+		WHERE turn_id = $1::uuid AND event_type = $2
+	`, cancelTurnID, domain.ConversationEventInteractionCancelled).Scan(&cancelledInteractionPayload); err != nil {
+		t.Fatalf("load cancelled interaction event: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), `
+		SELECT COALESCE(billing_transaction_id::text, '')
+		FROM billing_usage_events
+		WHERE turn_run_id = $1::uuid
+	`, cancelRunID).Scan(&cancellationBillingTransactionID); err != nil {
+		t.Fatalf("load cancelled run billing: %v", err)
+	}
+	if cancelledToolStatus != domain.ToolCallStatusCancelled || !strings.Contains(cancelledInteractionPayload, `"option_id": "cancelled"`) || cancellationBillingTransactionID == "" {
+		t.Fatalf("cancelled interaction status=%q payload=%s billing_transaction=%q", cancelledToolStatus, cancelledInteractionPayload, cancellationBillingTransactionID)
 	}
 
 	insufficientConversationID := uuid.NewString()

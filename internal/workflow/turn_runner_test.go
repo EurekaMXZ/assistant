@@ -40,6 +40,10 @@ func (s *stubWorkflowConversationReader) GetConversation(context.Context, string
 	return s.conversation, nil
 }
 
+func ownedConversationReader() *stubWorkflowConversationReader {
+	return &stubWorkflowConversationReader{conversation: &domain.Conversation{ID: "conv-1", OwnerUserID: "user-1"}}
+}
+
 type stubGeneratedAttachmentStore struct {
 	params []assistantattachment.CreateAttachmentParams
 }
@@ -74,6 +78,8 @@ type stubScheduledRunStore struct {
 	completed    int
 	scheduled    int
 	checkpoints  int
+	awaited      int
+	awaitInput   AwaitScheduledTurnRunInput
 	runID        string
 	run          *domain.TurnRun
 	failErr      error
@@ -186,6 +192,97 @@ func TestTurnRunnerCancellationCancelsProviderContext(t *testing.T) {
 	}
 }
 
+func TestTurnRunnerPersistsCheckpointAndPausesForAskUser(t *testing.T) {
+	arguments := json.RawMessage(`{"prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}]}`)
+	model := &stubModelClient{results: []*llm.ModelResult{{
+		ResponseID: "resp-ask",
+		Usage:      llm.ModelUsage{InputTokens: 7, OutputTokens: 3, TotalTokens: 10},
+		OutputItems: []llm.ModelItem{
+			{Type: llm.ModelItemFunctionCall, CallID: "call-rename", Name: "conversation_rename_title", Arguments: json.RawMessage(`{"title":"Updated"}`)},
+			{Type: llm.ModelItemFunctionCall, CallID: "call-ask", Name: tool.AskUser, Arguments: arguments},
+		},
+	}}}
+	artifacts := &stubToolArtifactStore{}
+	executor := &stubToolExecutor{results: []*tool.ToolExecutionResult{
+		{OutputItem: llm.ModelItem{Type: llm.ModelItemFunctionCallOutput, CallID: "call-rename", Output: `{"renamed":true}`}},
+		{AwaitingInput: &tool.AskUserPrompt{
+			Prompt: "Continue?", Kind: tool.AskUserKindSingleChoice,
+			Options: []tool.AskUserOption{{ID: "yes", Label: "Yes", Tone: tool.AskUserTonePrimary}, {ID: "cancel", Label: "Cancel", Tone: tool.AskUserToneNeutral}},
+		}},
+	}}
+	orchestrator := NewToolOrchestrator(
+		model, &stubToolCatalog{tools: []llm.ModelTool{
+			{Type: llm.ModelToolTypeFunction, Name: "conversation_rename_title"},
+			{Type: llm.ModelToolTypeFunction, Name: tool.AskUser},
+		}}, executor, nil, artifacts, &stubToolCallStore{},
+	)
+	state := &ScheduledRunState{
+		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
+		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{
+			Model: "gpt-test", ContextWindowTokens: 1_000,
+			Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "start"}},
+			Tools: []llm.ModelTool{
+				{Type: llm.ModelToolTypeFunction, Name: "conversation_rename_title"},
+				{Type: llm.ModelToolTypeFunction, Name: tool.AskUser},
+			},
+		},
+	}
+	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{"step":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := &stubScheduledRunStore{run: &domain.TurnRun{
+		ID: "run-1", TurnID: "turn-1", StepIndex: 1, Attempt: 1,
+		Status: domain.TurnRunStatusQueued, StateBlobKey: stateKey,
+	}}
+	publisher := &recordingPublisher{}
+	runner := &TurnRunner{
+		settings: WorkflowSettings{WorkerLeaseTimeout: time.Hour}, tools: orchestrator,
+		runs: runs, streamHub: publisher, blobs: &stubTurnArtifactStore{},
+	}
+	if err := runner.HandleTurnRunRequested(t.Context(), WorkflowEvent{
+		EventType: EventTurnRunRequested, ConversationID: "conv-1", TurnID: "turn-1", TurnRunID: "run-1",
+	}); err != nil {
+		t.Fatalf("handle ask_user run: %v", err)
+	}
+	if runs.run.Status != domain.TurnRunStatusAwaitingInput || runs.completed != 0 || runs.scheduled != 0 || runs.checkpoints < 2 {
+		t.Fatalf("run state=%#v completed=%d scheduled=%d checkpoints=%d", runs.run, runs.completed, runs.scheduled, runs.checkpoints)
+	}
+	if runs.awaited != 1 || runs.awaitInput.ToolCallID != "record-call-ask" || runs.awaitInput.Usage.TotalTokens != 10 {
+		t.Fatalf("await input settlement = %#v count=%d", runs.awaitInput, runs.awaited)
+	}
+	resultKey := artifacts.TurnRunResultKey("conv-1", "turn-1", 1)
+	outcome, err := orchestrator.LoadScheduledRunOutcome(t.Context(), resultKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Postprocessed || outcome.NextState != nil {
+		t.Fatalf("persisted awaiting outcome = %#v", outcome)
+	}
+	if len(outcome.ToolResults) != 1 || outcome.ToolResults[0].CallID != "call-rename" || outcome.ToolResults[0].Output != `{"renamed":true}` {
+		t.Fatalf("persisted ordinary tool results = %#v", outcome.ToolResults)
+	}
+	if len(executor.calls) != 2 || executor.calls[0].CallID != "call-rename" || executor.calls[1].CallID != "call-ask" {
+		t.Fatalf("mixed tool executions = %#v", executor.calls)
+	}
+	lastEvent := publisher.events[len(publisher.events)-1]
+	if lastEvent.Type != stream.EventInteractionAwaiting || lastEvent.ItemID != "ask-user:record-call-ask" {
+		t.Fatalf("awaiting presentation events = %#v", publisher.events)
+	}
+}
+
+func TestTurnRunnerIgnoresAwaitingInputRunUntilAnswered(t *testing.T) {
+	runs := &stubScheduledRunStore{run: &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Status: domain.TurnRunStatusAwaitingInput}}
+	runner := &TurnRunner{runs: runs}
+	if err := runner.HandleTurnRunRequested(t.Context(), WorkflowEvent{TurnRunID: "run-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if runs.run.Status != domain.TurnRunStatusAwaitingInput || runs.completed != 0 || runs.checkpoints != 0 {
+		t.Fatalf("awaiting run was processed: %#v", runs)
+	}
+}
+
 type stubTurnWorkflowStore struct {
 	failures    int
 	turn        *domain.Turn
@@ -261,6 +358,15 @@ func (s *stubScheduledRunStore) CheckpointScheduledTurnRun(context.Context, Turn
 	return nil
 }
 
+func (s *stubScheduledRunStore) AwaitScheduledTurnRunInput(_ context.Context, input AwaitScheduledTurnRunInput) (*domain.TurnRun, error) {
+	s.awaited++
+	s.awaitInput = input
+	if s.run != nil {
+		s.run.Status = domain.TurnRunStatusAwaitingInput
+	}
+	return s.run, nil
+}
+
 func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRunLease, string, string, string, llm.ModelUsage, int, int) (*domain.TurnRun, error) {
 	s.completed++
 	if s.run != nil {
@@ -331,7 +437,8 @@ func TestTurnRunnerToolScopeReflectsActiveSandbox(t *testing.T) {
 		},
 	}
 	runner := &TurnRunner{
-		sandboxes: reader,
+		sandboxes:     reader,
+		conversations: ownedConversationReader(),
 	}
 
 	scope, err := runner.toolScope(context.Background(), "conv-1", "turn-1")
@@ -340,6 +447,9 @@ func TestTurnRunnerToolScopeReflectsActiveSandbox(t *testing.T) {
 	}
 	if !scope.HasSandbox {
 		t.Fatalf("expected active sandbox in scope: %#v", scope)
+	}
+	if scope.OwnerUserID != "user-1" {
+		t.Fatalf("owner user ID = %q, want user-1", scope.OwnerUserID)
 	}
 }
 
@@ -353,13 +463,23 @@ func TestTurnRunnerContextReadySchedulesWithoutCallingModel(t *testing.T) {
 	toolArtifacts := &stubToolArtifactStore{}
 	turnArtifacts := &stubTurnArtifactStore{}
 	runs := &stubScheduledRunStore{}
+	profiles := &personalizationReaderStub{
+		preferences: &domain.UserPreferences{PreferencesText: "Prefer short answers.", LocationEnabledForModel: true},
+		location: &domain.UserLocation{
+			Latitude: 30.290846, Longitude: 120.212605, CoordinateSystem: domain.CoordinateSystemGCJ02,
+			FormattedAddress: "Hangzhou East Railway Station", POIID: "poi-1", POIName: "Hangzhou East Station",
+			Province: "Zhejiang", City: "Hangzhou", District: "Shangcheng", Adcode: "330102",
+		},
+	}
 	runner := &TurnRunner{
-		settings: WorkflowSettings{AgentSystemPrompt: "system"},
-		loader:   &ContextLoader{store: contextStore, cache: cacheStore},
-		models:   &stubTurnExecutionReader{execution: testExecutionSnapshot()},
-		tools:    NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, toolArtifacts, nil),
-		blobs:    turnArtifacts,
-		runs:     runs,
+		settings:      WorkflowSettings{AgentSystemPrompt: "system"},
+		loader:        &ContextLoader{store: contextStore, cache: cacheStore},
+		conversations: ownedConversationReader(),
+		profiles:      profiles,
+		models:        &stubTurnExecutionReader{execution: testExecutionSnapshot()},
+		tools:         NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, toolArtifacts, nil),
+		blobs:         turnArtifacts,
+		runs:          runs,
 	}
 
 	err := runner.HandleContextReady(t.Context(), WorkflowEvent{ConversationID: "conv-1", TurnID: "turn-1"})
@@ -378,6 +498,20 @@ func TestTurnRunnerContextReadySchedulesWithoutCallingModel(t *testing.T) {
 	}
 	if state.Request.PromptCacheKey != conversationPromptCacheKey("conv-1") {
 		t.Fatalf("prompt cache key = %q", state.Request.PromptCacheKey)
+	}
+	if state.Scope.OwnerUserID != "user-1" || state.Request.Instructions != "system" {
+		t.Fatalf("scheduled state instructions are not pure system instructions: scope=%#v instructions=%q", state.Scope, state.Request.Instructions)
+	}
+	if len(state.Request.Input) != 2 || !isAccountPersonalizationContext(state.Request.Input[0]) || state.Request.Input[1].Content != "hello" {
+		t.Fatalf("scheduled state did not place personalization before the user request: %#v", state.Request.Input)
+	}
+	for _, expected := range []string{
+		`"latitude":30.290846`, `"longitude":120.212605`, `"coordinate_system":"gcj02"`,
+		`"formatted_address":"Hangzhou East Railway Station"`, `"poi_name":"Hangzhou East Station"`,
+	} {
+		if !strings.Contains(state.Request.Input[0].Content, expected) {
+			t.Fatalf("scheduled model request is missing %q: %s", expected, state.Request.Input[0].Content)
+		}
 	}
 }
 
@@ -532,12 +666,13 @@ func TestTurnRunnerContextReadyUsesSnapshottedReasoningEffort(t *testing.T) {
 	execution.ReasoningEffort = "high"
 	execution.DefaultParameters = json.RawMessage(`{"reasoning_effort":"low"}`)
 	runner := &TurnRunner{
-		settings: WorkflowSettings{AgentSystemPrompt: "system"},
-		loader:   &ContextLoader{store: contextStore, cache: cacheStore},
-		models:   &stubTurnExecutionReader{execution: execution},
-		tools:    NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, artifacts, nil),
-		blobs:    &stubTurnArtifactStore{},
-		runs:     &stubScheduledRunStore{},
+		settings:      WorkflowSettings{AgentSystemPrompt: "system"},
+		loader:        &ContextLoader{store: contextStore, cache: cacheStore},
+		conversations: ownedConversationReader(),
+		models:        &stubTurnExecutionReader{execution: execution},
+		tools:         NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, artifacts, nil),
+		blobs:         &stubTurnArtifactStore{},
+		runs:          &stubScheduledRunStore{},
 	}
 	if err := runner.HandleContextReady(t.Context(), WorkflowEvent{ConversationID: "conv-1", TurnID: "turn-1"}); err != nil {
 		t.Fatalf("handle context ready: %v", err)
@@ -694,7 +829,8 @@ func TestTurnRunnerResumesCheckpointWithoutCallingModel(t *testing.T) {
 
 func TestTurnRunnerToolScopeHandlesMissingSandbox(t *testing.T) {
 	runner := &TurnRunner{
-		sandboxes: &stubConversationSandboxReader{},
+		sandboxes:     &stubConversationSandboxReader{},
+		conversations: ownedConversationReader(),
 	}
 
 	scope, err := runner.toolScope(context.Background(), "conv-1", "turn-1")

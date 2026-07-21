@@ -25,6 +25,7 @@ type Dependencies struct {
 	ToolExecutor          tool.ToolExecutor
 	ConversationSandboxes tool.ConversationSandboxReader
 	Conversations         ConversationReader
+	Profiles              PersonalizationReader
 	Models                ModelCatalogResolver
 	BillingUsage          CompactionUsageRecorder
 	ToolArtifacts         ToolArtifactStore
@@ -82,6 +83,7 @@ func New(deps Dependencies) *Engine {
 			cache:                deps.ContextTail,
 			loader:               loader,
 			conversations:        deps.Conversations,
+			profiles:             deps.Profiles,
 			generatedAttachments: deps.GeneratedAttachments,
 			sandboxes:            deps.ConversationSandboxes,
 			runs:                 deps.TurnRuns,
@@ -89,17 +91,18 @@ func New(deps Dependencies) *Engine {
 			models:               deps.Models,
 		},
 		compactor: &ContextCompactor{
-			settings:    deps.Settings,
-			store:       deps.Contexts,
-			model:       deps.Model,
-			blobs:       deps.ContextAnchors,
-			checkpoints: checkpointStore,
-			cache:       deps.ContextCompaction,
-			loader:      loader,
-			tools:       orchestrator,
-			sandboxes:   deps.ConversationSandboxes,
-			models:      deps.Models,
-			billing:     deps.BillingUsage,
+			settings:      deps.Settings,
+			store:         deps.Contexts,
+			model:         deps.Model,
+			blobs:         deps.ContextAnchors,
+			checkpoints:   checkpointStore,
+			cache:         deps.ContextCompaction,
+			loader:        loader,
+			tools:         orchestrator,
+			sandboxes:     deps.ConversationSandboxes,
+			models:        deps.Models,
+			billing:       deps.BillingUsage,
+			conversations: deps.Conversations,
 		},
 		outbox: &OutboxRelay{
 			settings: deps.Settings,

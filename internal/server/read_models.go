@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/EurekaMXZ/assistant/internal/tool"
 )
 
 type TurnExecutionTrace struct {
@@ -120,26 +122,32 @@ type TurnStreamDone struct {
 }
 
 type TurnTimelineItem struct {
-	ID               string             `json:"id"`
-	Type             string             `json:"type"`
-	Title            string             `json:"title,omitempty"`
-	Status           string             `json:"status,omitempty"`
-	Summary          string             `json:"summary,omitempty"`
-	ContentText      string             `json:"content_text,omitempty"`
-	Details          []string           `json:"details,omitempty"`
-	InputLabel       string             `json:"input_label,omitempty"`
-	InputText        string             `json:"input_text,omitempty"`
-	Links            []TurnTimelineLink `json:"links,omitempty"`
-	Command          string             `json:"command,omitempty"`
-	WorkingDirectory string             `json:"working_directory,omitempty"`
-	CommandOutput    string             `json:"command_output,omitempty"`
-	ExitCode         *int               `json:"exit_code,omitempty"`
-	TimedOut         bool               `json:"timed_out,omitempty"`
-	Raw              json.RawMessage    `json:"raw,omitempty"`
-	Arguments        json.RawMessage    `json:"arguments,omitempty"`
-	Output           json.RawMessage    `json:"output,omitempty"`
-	Metadata         map[string]any     `json:"metadata,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
+	ID               string               `json:"id"`
+	Type             string               `json:"type"`
+	Title            string               `json:"title,omitempty"`
+	Status           string               `json:"status,omitempty"`
+	Summary          string               `json:"summary,omitempty"`
+	ContentText      string               `json:"content_text,omitempty"`
+	Details          []string             `json:"details,omitempty"`
+	InputLabel       string               `json:"input_label,omitempty"`
+	InputText        string               `json:"input_text,omitempty"`
+	Links            []TurnTimelineLink   `json:"links,omitempty"`
+	Command          string               `json:"command,omitempty"`
+	WorkingDirectory string               `json:"working_directory,omitempty"`
+	CommandOutput    string               `json:"command_output,omitempty"`
+	ExitCode         *int                 `json:"exit_code,omitempty"`
+	TimedOut         bool                 `json:"timed_out,omitempty"`
+	Raw              json.RawMessage      `json:"raw,omitempty"`
+	Arguments        json.RawMessage      `json:"arguments,omitempty"`
+	Output           json.RawMessage      `json:"output,omitempty"`
+	ToolCallID       string               `json:"tool_call_id,omitempty"`
+	Prompt           string               `json:"prompt,omitempty"`
+	Kind             string               `json:"kind,omitempty"`
+	Options          []tool.AskUserOption `json:"options,omitempty"`
+	Action           *tool.AskUserAction  `json:"action,omitempty"`
+	Answer           *tool.AskUserAnswer  `json:"answer,omitempty"`
+	Metadata         map[string]any       `json:"metadata,omitempty"`
+	CreatedAt        time.Time            `json:"created_at"`
 }
 
 type TurnTimelineLink struct {

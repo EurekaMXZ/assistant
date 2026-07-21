@@ -11,9 +11,12 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/credential"
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	assistantmail "github.com/EurekaMXZ/assistant/internal/mail"
+	"github.com/EurekaMXZ/assistant/internal/mcpconfig"
 	"github.com/EurekaMXZ/assistant/internal/postgres"
+	"github.com/EurekaMXZ/assistant/internal/profile"
 	assistantsandbox "github.com/EurekaMXZ/assistant/internal/sandbox"
 	"github.com/EurekaMXZ/assistant/internal/server"
+	"github.com/EurekaMXZ/assistant/internal/stream"
 	"github.com/EurekaMXZ/assistant/internal/tool"
 	"github.com/EurekaMXZ/assistant/internal/workflow"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,9 +42,11 @@ type workflowAdapters struct {
 	ProviderCredentials  *postgres.ProviderCredentialRepository
 	CredentialCipher     *credential.Cipher
 	BillingUsage         *postgres.BillingAccountRepository
+	MCP                  mcpconfig.RuntimeRepository
+	Profiles             workflow.PersonalizationReader
 }
 
-func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentSigner assistantattachment.URLSigner, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, sandboxLifecycle assistantsandbox.LifecycleSettings, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
+func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactStore, attachmentSigner assistantattachment.URLSigner, publisher stream.Publisher, billingCurrency string, authService *assistantauth.Service, sandboxRuntime tool.SandboxManager, sandboxLifecycle assistantsandbox.LifecycleSettings, credentialCipher *credential.Cipher, publicURL string) (server.UseCases, workflowAdapters) {
 	conversationRepository := postgres.NewConversationRepository(pool)
 	conversationShareRepository := postgres.NewConversationShareRepository(pool)
 	conversationSandboxRepository := postgres.NewConversationSandboxRepository(pool)
@@ -62,6 +67,14 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	auditRepository := postgres.NewAuditRepository(pool)
 	actionTokenRepository := postgres.NewActionTokenRepository(pool)
 	smtpSettingsRepository := postgres.NewSMTPSettingsRepository(pool)
+	profileRepository := postgres.NewProfileRepository(pool)
+	profileService := &profile.Service{Repository: profileRepository}
+	mcpRepository := postgres.NewMCPServerRepository(pool)
+	mcpService := &mcpconfig.Service{
+		Repository: mcpRepository,
+		Cipher:     credentialCipher,
+		ToolLister: &mcpconfig.SDKToolLister{},
+	}
 	mailService := &assistantmail.Service{
 		Settings:  smtpSettingsRepository,
 		Cipher:    assistantmail.NewPasswordCipher(credentialCipher),
@@ -141,6 +154,10 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Messages:      messageRepository,
 	}
 	initialTurnService := &InitialTurnService{Messages: messageService, Store: initialTurnRepository}
+	answerService := workflow.AskUserAnswerService{
+		Calls: toolCallRepository, Turns: workflowTurnRepository, Artifacts: toolArtifacts,
+		Publisher: workflow.NewArchivingStreamPublisher(publisher, nil, turnStreamEventRepository, conversationEventRepository),
+	}
 
 	useCases := server.UseCases{
 		Auth: server.AuthUseCases{
@@ -166,6 +183,21 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 			UpdateManagedUser:    authService.UpdateManagedUser,
 			ResetManagedPassword: authService.ResetManagedPassword,
 			DeleteManagedUser:    authService.DeleteManagedUser,
+		},
+		Profile: server.ProfileUseCases{
+			GetPersonalization:    profileService.GetPreferences,
+			UpdatePersonalization: profileService.UpdatePreferences,
+			GetLocation:           profileService.GetLocation,
+			UpdateLocation:        profileService.UpdateLocation,
+			DeleteLocation:        profileService.DeleteLocation,
+		},
+		MCP: server.MCPUseCases{
+			ListServers:  mcpService.List,
+			CreateServer: mcpService.Create,
+			GetServer:    mcpService.Get,
+			UpdateServer: mcpService.Update,
+			DeleteServer: mcpService.Delete,
+			TestServer:   mcpService.Test,
 		},
 		Conversations: server.ConversationUseCases{
 			CreateConversation: conversationRepository.CreateConversation,
@@ -330,6 +362,12 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				}
 				return turnRepository.RequestTurnCancellation(ctx, turnID)
 			},
+			AnswerToolCall: func(ctx context.Context, ownerUserID string, turnID string, toolCallID string, optionID string, idempotencyKey string) (*tool.AskUserInteraction, error) {
+				return answerService.Answer(ctx, workflow.AskUserAnswerInput{
+					OwnerUserID: ownerUserID, TurnID: turnID, ToolCallID: toolCallID,
+					OptionID: optionID, IdempotencyKey: idempotencyKey,
+				})
+			},
 			GetTurnExecutionTrace: func(ctx context.Context, ownerUserID string, turnID string) (*server.TurnExecutionTrace, error) {
 				if _, err := ensureOwnedTurn(ctx, ownerUserID, turnID); err != nil {
 					return nil, err
@@ -373,6 +411,8 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		ProviderCredentials:  providerCredentialRepository,
 		CredentialCipher:     credentialCipher,
 		BillingUsage:         billingAccountRepository,
+		MCP:                  mcpRepository,
+		Profiles:             profileRepository,
 	}
 	return useCases, adapters
 }

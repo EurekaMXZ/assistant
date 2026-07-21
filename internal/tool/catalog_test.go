@@ -12,10 +12,10 @@ import (
 func TestDefaultToolsWithTavilyIncludesInternetNamespace(t *testing.T) {
 	tools := DefaultToolsWithTavily()
 
-	if len(tools) != 4 {
-		t.Fatalf("tool count = %d, want 4", len(tools))
+	if len(tools) != 5 {
+		t.Fatalf("tool count = %d, want 5", len(tools))
 	}
-	web := tools[3]
+	web := tools[len(tools)-1]
 	if web.Type != llm.ModelToolTypeNamespace || web.Name != internetNamespace {
 		t.Fatalf("unexpected web namespace: %#v", web)
 	}

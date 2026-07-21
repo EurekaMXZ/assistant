@@ -56,6 +56,11 @@ type ConversationReader interface {
 	GetConversation(ctx context.Context, conversationID string) (*domain.Conversation, error)
 }
 
+type PersonalizationReader interface {
+	GetUserPreferences(ctx context.Context, userID string) (*domain.UserPreferences, error)
+	GetUserLocation(ctx context.Context, userID string) (*domain.UserLocation, error)
+}
+
 type ModelCatalogResolver interface {
 	ResolveExecution(ctx context.Context, modelID string, compaction bool) (*domain.ModelExecutionSnapshot, error)
 	GetTurnExecution(ctx context.Context, turnID string) (*domain.ModelExecutionSnapshot, error)
@@ -80,6 +85,21 @@ type TurnRunLease struct {
 	Token  string
 }
 
+type AwaitScheduledTurnRunInput struct {
+	Lease                TurnRunLease
+	ToolCallID           string
+	Interaction          json.RawMessage
+	Usage                llm.ModelUsage
+	ImageGenerationCount int
+	CompactTriggerTokens int
+}
+
+type AskUserAnswerClaim struct {
+	ToolCall       *domain.ToolCallRecord
+	ConversationID string
+	Finalized      bool
+}
+
 type TurnRunWorkflowStore interface {
 	StartTurnRun(ctx context.Context, turnID string, provider string, model string, requestBlobKey string, stateBlobKey string) (string, error)
 	ScheduleNextTurnRun(ctx context.Context, turnID string, previousRunID string, stepIndex int, provider string, model string, requestBlobKey string, stateBlobKey string) (string, error)
@@ -87,6 +107,7 @@ type TurnRunWorkflowStore interface {
 	ClaimTurnRun(ctx context.Context, runID string) (*domain.TurnRun, TurnRunLease, error)
 	RenewTurnRunLease(ctx context.Context, lease TurnRunLease) error
 	CheckpointScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string) error
+	AwaitScheduledTurnRunInput(ctx context.Context, input AwaitScheduledTurnRunInput) (*domain.TurnRun, error)
 	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error)
 	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
 }
@@ -108,6 +129,9 @@ type ToolCallStore interface {
 	CompleteToolCall(ctx context.Context, recordID string, outputBlobKey string) (*domain.ToolCallRecord, error)
 	FailToolCall(ctx context.Context, recordID string, outputBlobKey string, message string) (*domain.ToolCallRecord, error)
 	MarkToolCallAmbiguous(ctx context.Context, recordID string, message string) (*domain.ToolCallRecord, error)
+	GetToolCallForAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string) (*domain.ToolCallRecord, error)
+	ClaimAwaitingInputAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string) (*AskUserAnswerClaim, error)
+	FinalizeAwaitingInputAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string, interaction json.RawMessage) (*domain.ToolCallRecord, bool, error)
 }
 
 type TurnStreamEventStore interface {

@@ -1,15 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, CircleAlert, Pencil, RotateCcw } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  ExternalLink,
+  Info,
+  Loader2,
+  Pencil,
+  RotateCcw,
+} from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MarkdownRenderer } from "./markdown-renderer";
 import { CopyButton } from "./copy-button";
 import { TurnTimeline } from "./turn-timeline";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { getConversationAttachmentUrl } from "@/lib/api";
+import { parseSafeAskUserActionURL } from "@/lib/ask-user-action";
+import { assistantInteractionFromMessage } from "@/lib/chat-state";
 import { cn } from "@/lib/utils";
-import type { Message, Turn } from "@/lib/types";
+import type { AskUserInteraction, AskUserOptionTone, Message, Turn } from "@/lib/types";
 import { ImagePreview } from "./image-preview";
 
 interface MessageBubbleProps {
@@ -18,6 +31,11 @@ interface MessageBubbleProps {
   canEdit?: boolean;
   onEdit?: (message: Message) => void;
   onRetry?: (message: Message) => void;
+  onAnswerInteraction?: (
+    turnId: string,
+    interaction: AskUserInteraction,
+    optionId: string,
+  ) => Promise<boolean>;
   isStreaming?: boolean;
   showActions?: boolean;
 }
@@ -29,6 +47,11 @@ interface AssistantTurnBubbleProps {
   messages: Message[];
   onOpenTimeline?: (turnId: string) => void;
   onRetry?: (message: Message) => void;
+  onAnswerInteraction?: (
+    turnId: string,
+    interaction: AskUserInteraction,
+    optionId: string,
+  ) => Promise<boolean>;
   turnId: string;
   turn?: Turn | null;
   variantCount?: number;
@@ -37,6 +60,11 @@ interface AssistantTurnBubbleProps {
 }
 
 const assistantActionIconInsetPx = 6;
+const askUserOptionVariants: Record<AskUserOptionTone, "default" | "outline" | "destructive"> = {
+  primary: "default",
+  neutral: "outline",
+  danger: "destructive",
+};
 
 type MessageAttachment = {
   id: string;
@@ -173,18 +201,160 @@ function AttachmentImagePreviews({
   );
 }
 
+function safeInteractionAction(action: AskUserInteraction["action"]) {
+  if (!action) return null;
+  const parsed = parseSafeAskUserActionURL(action.url);
+  return parsed ? { ...action, ...parsed } : null;
+}
+
+function clippedInteractionPrompt(prompt: string, maximum = 96) {
+  const characters = Array.from(prompt.trim());
+  return characters.length <= maximum
+    ? characters.join("")
+    : `${characters.slice(0, maximum).join("")}…`;
+}
+
+export function AskUserInteractionView({
+  interaction,
+  onAnswer,
+}: {
+  interaction: AskUserInteraction;
+  onAnswer?: (interaction: AskUserInteraction, optionId: string) => Promise<boolean>;
+}) {
+  const [submittingOptionId, setSubmittingOptionId] = useState<string | null>(null);
+  const [confirmActionOpen, setConfirmActionOpen] = useState(false);
+  const action = safeInteractionAction(interaction.action);
+
+  if (interaction.status === "cancelled") {
+    return (
+      <div
+        role="status"
+        className="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-2 font-medium text-muted-foreground"
+      >
+        <span className="flex h-5 items-center" aria-hidden="true">
+          <Info className="h-4 w-4" />
+        </span>
+        <p className="min-w-0 break-words leading-5">已取消</p>
+      </div>
+    );
+  }
+
+  if (interaction.status === "completed") {
+    const cancelled = interaction.answer?.status === "cancelled";
+    const StatusIcon = cancelled ? Info : CheckCircle2;
+    return (
+      <div
+        role="status"
+        className="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-2 font-medium text-muted-foreground"
+      >
+        <span className="flex h-5 items-center" aria-hidden="true">
+          <StatusIcon className="h-4 w-4" />
+        </span>
+        <p className="min-w-0 break-words leading-5">
+          询问用户「{clippedInteractionPrompt(interaction.prompt)}」：
+          {interaction.answer?.label || "已完成"}
+        </p>
+      </div>
+    );
+  }
+
+  const submitting = submittingOptionId !== null;
+  const answer = async (optionId: string) => {
+    if (submitting || !onAnswer) return;
+    setSubmittingOptionId(optionId);
+    try {
+      const succeeded = await onAnswer(interaction, optionId);
+      if (!succeeded) setSubmittingOptionId(null);
+    } catch {
+      setSubmittingOptionId(null);
+    }
+  };
+
+  return (
+    <div className="min-w-0 rounded-xl border bg-muted/20 p-4 shadow-xs">
+      <p className="min-w-0 break-words font-medium leading-6">{interaction.prompt}</p>
+      {action ? (
+        <div className="mt-3 space-y-1.5">
+          {action.protocol === "https" ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={submitting}
+              onClick={() => setConfirmActionOpen(true)}
+            >
+              {action.label}
+              <ExternalLink className="size-3.5" />
+            </Button>
+          ) : (
+            <Button
+              render={
+                <a href={action.url} onClick={(event) => submitting && event.preventDefault()} />
+              }
+              nativeButton={false}
+              type={undefined}
+              variant="secondary"
+              size="sm"
+              disabled={submitting}
+              aria-disabled={submitting}
+            >
+              {action.label}
+              <ExternalLink className="size-3.5" />
+            </Button>
+          )}
+          <p className="break-all text-xs text-muted-foreground">目标：{action.host}</p>
+          {action.protocol === "https" ? (
+            <ConfirmDialog
+              open={confirmActionOpen}
+              onOpenChange={setConfirmActionOpen}
+              title="打开外部网站？"
+              description={`即将打开 ${action.host}，请确认这是你信任的支付目标。`}
+              confirmText="继续打开"
+              onConfirm={() => {
+                const opened = window.open(action.url, "_blank", "noopener,noreferrer");
+                if (opened) opened.opener = null;
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {interaction.options.map((option) => (
+          <Button
+            key={option.id}
+            type="button"
+            variant={askUserOptionVariants[option.tone]}
+            className="h-auto min-w-0 justify-start whitespace-normal py-2.5 text-left"
+            disabled={submitting || !onAnswer}
+            aria-busy={submittingOptionId === option.id}
+            onClick={() => void answer(option.id)}
+          >
+            {submittingOptionId === option.id ? <Loader2 className="size-4 animate-spin" /> : null}
+            <span className="min-w-0 break-words">{option.label}</span>
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MessageBody({
   allowAttachmentPreviews = true,
   isStreaming,
   message,
+  onAnswerInteraction,
 }: {
   allowAttachmentPreviews?: boolean;
   isStreaming?: boolean;
   message: Message;
+  onAnswerInteraction?: (interaction: AskUserInteraction, optionId: string) => Promise<boolean>;
 }) {
   const isUser = message.role === "user";
   const metadata = message.metadata || {};
   const isError = metadata.display_kind === "assistant_error";
+  const interaction = assistantInteractionFromMessage(message);
+  const alignsWithTimeline =
+    isError || interaction?.status === "completed" || interaction?.status === "cancelled";
   const attachments = attachmentsFromMetadata(metadata);
   const imageAttachments = allowAttachmentPreviews ? attachments.filter(isImageAttachment) : [];
   const attachmentCount = attachmentCountFromMetadata(metadata);
@@ -193,9 +363,15 @@ function MessageBody({
   return (
     <div
       className="min-w-0 max-w-full leading-relaxed"
-      style={isUser ? undefined : { paddingLeft: `${assistantActionIconInsetPx}px` }}
+      style={
+        isUser || alignsWithTimeline
+          ? undefined
+          : { paddingLeft: `${assistantActionIconInsetPx}px` }
+      }
     >
-      {isError ? (
+      {interaction ? (
+        <AskUserInteractionView interaction={interaction} onAnswer={onAnswerInteraction} />
+      ) : isError ? (
         <div
           role="alert"
           className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 font-medium text-destructive"
@@ -247,6 +423,7 @@ export function MessageBubble({
   canEdit = false,
   onEdit,
   onRetry,
+  onAnswerInteraction,
   isStreaming,
   showActions = true,
 }: MessageBubbleProps) {
@@ -273,6 +450,12 @@ export function MessageBubble({
               allowAttachmentPreviews={allowAttachmentPreviews}
               isStreaming={isStreaming}
               message={message}
+              onAnswerInteraction={
+                message.turn_id && onAnswerInteraction
+                  ? (interaction, optionId) =>
+                      onAnswerInteraction(message.turn_id as string, interaction, optionId)
+                  : undefined
+              }
             />
           ) : null}
         </div>
@@ -354,6 +537,7 @@ export function AssistantTurnBubble({
   messages,
   onOpenTimeline,
   onRetry,
+  onAnswerInteraction,
   turnId,
   turn,
   variantCount = 1,
@@ -368,6 +552,7 @@ export function AssistantTurnBubble({
   );
   const lastOutput = outputMessages.at(-1);
   const copyText = outputMessages
+    .filter((message) => message.metadata?.display_kind !== "ask_user")
     .map((message) => message.content_text?.trim() || "")
     .filter(Boolean)
     .join("\n\n");
@@ -393,7 +578,16 @@ export function AssistantTurnBubble({
               ) : (
                 <div key={message.id} className="space-y-4">
                   {!hasThinkingMarker && message.id === lastOutput?.id ? timelineControl : null}
-                  <MessageBody isStreaming={isStreaming} message={message} />
+                  <MessageBody
+                    isStreaming={isStreaming}
+                    message={message}
+                    onAnswerInteraction={
+                      onAnswerInteraction
+                        ? (interaction, optionId) =>
+                            onAnswerInteraction(turnId, interaction, optionId)
+                        : undefined
+                    }
+                  />
                 </div>
               ),
             )}
@@ -402,12 +596,14 @@ export function AssistantTurnBubble({
 
         {lastOutput ? (
           <div className="mt-1 flex w-full items-center justify-start gap-1">
-            <Tooltip>
-              <TooltipTrigger render={<CopyButton text={copyText} className="h-7 w-7" />} />
-              <TooltipContent>
-                <p>复制</p>
-              </TooltipContent>
-            </Tooltip>
+            {copyText ? (
+              <Tooltip>
+                <TooltipTrigger render={<CopyButton text={copyText} className="h-7 w-7" />} />
+                <TooltipContent>
+                  <p>复制</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
 
             {canRetry ? (
               <Tooltip>
