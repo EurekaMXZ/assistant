@@ -885,7 +885,7 @@ func TestLocalExecutorExtractWeb(t *testing.T) {
 	}
 }
 
-func TestLocalExecutorWebFailuresAreRecoverable(t *testing.T) {
+func TestLocalExecutorReturnsWebFailures(t *testing.T) {
 	upstreamErr := errors.New("tavily unavailable")
 	tests := []struct {
 		name    string
@@ -908,8 +908,8 @@ func TestLocalExecutorWebFailuresAreRecoverable(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			executor := mustLocalExecutor(t, test.handler)
 			_, err := executor.Execute(t.Context(), ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, test.call)
-			if !errors.Is(err, upstreamErr) || !IsRecoverableError(err) {
-				t.Fatalf("web tool error = %v, want recoverable upstream error", err)
+			if !errors.Is(err, upstreamErr) {
+				t.Fatalf("web tool error = %v, want upstream error", err)
 			}
 		})
 	}

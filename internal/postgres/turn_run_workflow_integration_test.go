@@ -143,13 +143,13 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if err != nil || acquired || replayedCall.Status != domain.ToolCallStatusCompleted {
 		t.Fatalf("replayed tool call = %#v, err=%v", replayedCall, err)
 	}
-	ambiguousCall := tool.ToolCall{CallID: "call-ambiguous", Type: llm.ModelItemFunctionCall, Name: "side-effect"}
-	if _, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt, ambiguousCall, "arguments-ambiguous"); err != nil || !acquired {
-		t.Fatalf("acquire ambiguous fixture: acquired=%t err=%v", acquired, err)
+	incompleteCall := tool.ToolCall{CallID: "call-incomplete", Type: llm.ModelItemFunctionCall, Name: "side-effect"}
+	if _, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt, incompleteCall, "arguments-incomplete"); err != nil || !acquired {
+		t.Fatalf("acquire incomplete fixture: acquired=%t err=%v", acquired, err)
 	}
-	ambiguous, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt+1, ambiguousCall, "arguments-ambiguous")
-	if err != nil || acquired || ambiguous.Status != domain.ToolCallStatusAmbiguous {
-		t.Fatalf("recover ambiguous call = %#v acquired=%t err=%v", ambiguous, acquired, err)
+	failedCall, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt+1, incompleteCall, "arguments-incomplete")
+	if err != nil || acquired || failedCall.Status != domain.ToolCallStatusFailed {
+		t.Fatalf("recover incomplete call = %#v acquired=%t err=%v", failedCall, acquired, err)
 	}
 	askCall, acquired, err := calls.AcquireToolCall(t.Context(), turnID, runID, run.Attempt, tool.ToolCall{
 		CallID: "call-ask", Type: llm.ModelItemFunctionCall, Name: tool.AskUser,

@@ -28,7 +28,7 @@ ALTER TABLE tool_calls
     DROP COLUMN answer_fingerprint,
     DROP COLUMN answer_idempotency_key,
     ADD CONSTRAINT tool_calls_status_check
-        CHECK (status IN ('running', 'completed', 'failed', 'ambiguous'));
+        CHECK (status IN ('running', 'completed', 'failed'));
 
 ALTER TABLE turn_runs
     DROP CONSTRAINT turn_runs_status_check,

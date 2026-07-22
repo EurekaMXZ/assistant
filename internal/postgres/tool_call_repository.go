@@ -66,10 +66,10 @@ func (r *ToolCallRepository) AcquireToolCall(ctx context.Context, turnID string,
 				SET status = $2, error_message = $3, failed_at = now(), completed_at = NULL, cancelled_at = NULL
 				WHERE id = $1::uuid AND status = $4
 				RETURNING `+toolCallColumns+`
-			`, prior.ID, domain.ToolCallStatusAmbiguous,
+			`, prior.ID, domain.ToolCallStatusFailed,
 				"previous run attempt ended without a durable tool result", domain.ToolCallStatusRunning))
 			if err != nil {
-				return nil, false, fmt.Errorf("mark prior tool call ambiguous: %w", err)
+				return nil, false, fmt.Errorf("fail prior incomplete tool call: %w", err)
 			}
 		case domain.ToolCallStatusAwaitingInput:
 			prior, err = scanToolCall(tx.QueryRow(ctx, `
@@ -137,11 +137,11 @@ func (r *ToolCallRepository) AcquireToolCall(ctx context.Context, turnID string,
 			SET status = $2, error_message = $3, failed_at = now(), completed_at = NULL, cancelled_at = NULL
 			WHERE id = $1::uuid AND status = $4 AND execution_attempt < $5
 			RETURNING `+toolCallColumns+`
-		`, record.ID, domain.ToolCallStatusAmbiguous,
+		`, record.ID, domain.ToolCallStatusFailed,
 			"previous execution ended without a durable tool result", domain.ToolCallStatusRunning, executionAttempt)
 		record, err = scanToolCall(row)
 		if err != nil {
-			return nil, false, fmt.Errorf("mark tool call outcome ambiguous: %w", err)
+			return nil, false, fmt.Errorf("fail incomplete tool call: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -208,30 +208,6 @@ func (r *ToolCallRepository) FailToolCall(ctx context.Context, recordID string, 
 		return nil, fmt.Errorf("fail tool call: %w", err)
 	}
 
-	return record, nil
-}
-
-func (r *ToolCallRepository) MarkToolCallAmbiguous(ctx context.Context, recordID string, message string) (*domain.ToolCallRecord, error) {
-	row := r.pool.QueryRow(ctx, `
-		UPDATE tool_calls tc
-		SET
-			status = $2,
-			output_blob_key = NULL,
-			error_message = $3,
-			completed_at = NULL,
-			failed_at = now(),
-			cancelled_at = NULL
-		WHERE id = $1::uuid AND status = $4
-		RETURNING `+toolCallColumns+`
-	`, recordID, domain.ToolCallStatusAmbiguous, message, domain.ToolCallStatusRunning)
-
-	record, err := scanToolCall(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrConflict
-		}
-		return nil, fmt.Errorf("mark tool call ambiguous: %w", err)
-	}
 	return record, nil
 }
 

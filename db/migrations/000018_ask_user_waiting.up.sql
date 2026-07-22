@@ -14,7 +14,7 @@ ALTER TABLE turn_runs
 ALTER TABLE tool_calls
     DROP CONSTRAINT tool_calls_status_check,
     ADD CONSTRAINT tool_calls_status_check
-        CHECK (status IN ('running', 'awaiting_input', 'completed', 'failed', 'cancelled', 'ambiguous')),
+        CHECK (status IN ('running', 'awaiting_input', 'completed', 'failed', 'cancelled')),
     ADD COLUMN answer_idempotency_key text
         CHECK (answer_idempotency_key IS NULL OR length(btrim(answer_idempotency_key)) BETWEEN 1 AND 128),
     ADD COLUMN answer_fingerprint text

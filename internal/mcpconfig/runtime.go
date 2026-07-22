@@ -80,16 +80,16 @@ func (r *CompositeRuntime) Execute(ctx context.Context, scope tool.ToolScope, ca
 	name := runtimeCallName(call)
 	if !strings.HasPrefix(name, runtimeToolPrefix) {
 		if r.LocalExecutor == nil {
-			return nil, tool.RecoverableError(errors.New("local tool executor is not configured"))
+			return nil, errors.New("local tool executor is not configured")
 		}
 		return r.LocalExecutor.Execute(ctx, scope, call)
 	}
 	if strings.TrimSpace(scope.OwnerUserID) == "" || r.Repository == nil {
-		return nil, tool.RecoverableError(errors.New("MCP tool is unavailable"))
+		return nil, errors.New("MCP tool is unavailable")
 	}
 	definitions, err := r.Repository.ListEnabledRuntimeTools(ctx, scope.OwnerUserID)
 	if err != nil {
-		return nil, tool.RecoverableError(errors.New("unable to validate MCP tool availability"))
+		return nil, errors.New("unable to validate MCP tool availability")
 	}
 	var selected *RuntimeTool
 	for index := range definitions {
@@ -99,29 +99,29 @@ func (r *CompositeRuntime) Execute(ctx context.Context, scope tool.ToolScope, ca
 		}
 	}
 	if selected == nil {
-		return nil, tool.RecoverableError(errors.New("MCP tool is disabled or unavailable"))
+		return nil, errors.New("MCP tool is disabled or unavailable")
 	}
 	runtimeTool, err := r.Repository.GetEnabledRuntimeTool(ctx, scope.OwnerUserID, selected.ServerID, selected.ToolName)
 	if errors.Is(err, domain.ErrNotFound) {
-		return nil, tool.RecoverableError(errors.New("MCP tool is disabled or unavailable"))
+		return nil, errors.New("MCP tool is disabled or unavailable")
 	}
 	if err != nil {
-		return nil, tool.RecoverableError(errors.New("unable to validate MCP tool availability"))
+		return nil, errors.New("unable to validate MCP tool availability")
 	}
 	return r.executeMCP(ctx, call, runtimeTool)
 }
 
 func (r *CompositeRuntime) executeMCP(ctx context.Context, call tool.ToolCall, runtimeTool *RuntimeTool) (*tool.ToolExecutionResult, error) {
 	if runtimeTool == nil || r.Cipher == nil {
-		return nil, tool.RecoverableError(errors.New("MCP tool configuration is unavailable"))
+		return nil, errors.New("MCP tool configuration is unavailable")
 	}
 	parameters, err := decryptRuntimeSecrets(r.Cipher, runtimeTool.ServerID, parametersPurpose, runtimeTool.EncryptedParameters, runtimeTool.ParametersNonce)
 	if err != nil {
-		return nil, tool.RecoverableError(errors.New("MCP tool configuration cannot be decrypted"))
+		return nil, errors.New("MCP tool configuration cannot be decrypted")
 	}
 	headers, err := decryptRuntimeSecrets(r.Cipher, runtimeTool.ServerID, headersPurpose, runtimeTool.EncryptedHeaders, runtimeTool.HeadersNonce)
 	if err != nil {
-		return nil, tool.RecoverableError(errors.New("MCP tool configuration cannot be decrypted"))
+		return nil, errors.New("MCP tool configuration cannot be decrypted")
 	}
 	arguments, err := decodeToolArguments(call.Arguments)
 	if err != nil {

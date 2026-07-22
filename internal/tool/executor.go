@@ -40,7 +40,7 @@ func (e LocalExecutor) Execute(ctx context.Context, scope ToolScope, call ToolCa
 	name := normalizedToolName(call)
 	handler, ok := e.handlers[name]
 	if !ok {
-		return nil, RecoverableError(fmt.Errorf("unsupported local tool %q", name))
+		return nil, fmt.Errorf("unsupported local tool %q", name)
 	}
 	return handler.Execute(ctx, scope, call)
 }

@@ -178,19 +178,6 @@ func (o *ToolOrchestrator) recordToolCallFailure(ctx context.Context, scope tool
 	return nil
 }
 
-func (o *ToolOrchestrator) recordToolCallAmbiguous(ctx context.Context, record *domain.ToolCallRecord, message string) error {
-	if o == nil || record == nil || o.calls == nil {
-		return nil
-	}
-	record.OutputBlobKey = ""
-	record.ErrorMessage = message
-	record.Status = domain.ToolCallStatusAmbiguous
-	if _, err := o.calls.MarkToolCallAmbiguous(ctx, record.ID, message); err != nil {
-		return fmt.Errorf("mark tool call ambiguous: %w", err)
-	}
-	return nil
-}
-
 func (o *ToolOrchestrator) recordRemoteToolCall(ctx context.Context, scope tool.ToolScope, run *domain.TurnRun, item llm.ModelItem) (*domain.ToolCallRecord, error) {
 	if o == nil || run == nil || o.calls == nil {
 		return nil, nil
@@ -201,10 +188,10 @@ func (o *ToolOrchestrator) recordRemoteToolCall(ctx context.Context, scope tool.
 	if err != nil {
 		return nil, err
 	}
-	if !acquired && record != nil && record.Status != domain.ToolCallStatusCompleted {
-		return nil, fmt.Errorf("remote tool call %s has no recoverable durable result", describeToolCall(call))
+	if !acquired && record != nil && record.Status != domain.ToolCallStatusCompleted && record.Status != domain.ToolCallStatusFailed {
+		return nil, fmt.Errorf("remote tool call %s has no durable result", describeToolCall(call))
 	}
-	if record != nil && record.Status == domain.ToolCallStatusCompleted {
+	if record != nil && (record.Status == domain.ToolCallStatusCompleted || record.Status == domain.ToolCallStatusFailed) {
 		return record, nil
 	}
 

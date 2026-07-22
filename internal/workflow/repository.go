@@ -128,7 +128,6 @@ type ToolCallStore interface {
 	AcquireToolCall(ctx context.Context, turnID string, turnRunID string, executionAttempt int, call tool.ToolCall, argumentsBlobKey string) (*domain.ToolCallRecord, bool, error)
 	CompleteToolCall(ctx context.Context, recordID string, outputBlobKey string) (*domain.ToolCallRecord, error)
 	FailToolCall(ctx context.Context, recordID string, outputBlobKey string, message string) (*domain.ToolCallRecord, error)
-	MarkToolCallAmbiguous(ctx context.Context, recordID string, message string) (*domain.ToolCallRecord, error)
 	GetToolCallForAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string) (*domain.ToolCallRecord, error)
 	ClaimAwaitingInputAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string) (*AskUserAnswerClaim, error)
 	FinalizeAwaitingInputAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string, interaction json.RawMessage) (*domain.ToolCallRecord, bool, error)

@@ -444,7 +444,7 @@ CREATE TABLE tool_calls (
     tool_type text NOT NULL,
     namespace text,
     tool_name text NOT NULL,
-    status text NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'ambiguous')),
+    status text NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
     execution_attempt integer NOT NULL CHECK (execution_attempt > 0),
     arguments_blob_key text NOT NULL,
     output_blob_key text,

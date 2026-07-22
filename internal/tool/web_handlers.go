@@ -50,12 +50,12 @@ func (h SearchWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCal
 		ExactMatch:               input.ExactMatch,
 	})
 	if err != nil {
-		return nil, RecoverableError(err)
+		return nil, err
 	}
 
 	payload, err := marshalToolOutput(WebSearch, result)
 	if err != nil {
-		return nil, RecoverableError(err)
+		return nil, err
 	}
 
 	return outputOnlyExecutionResult(call.CallID, payload), nil
@@ -91,7 +91,7 @@ func (h ExtractWebHandler) Execute(ctx context.Context, _ ToolScope, call ToolCa
 		Query:          input.Query,
 	})
 	if err != nil {
-		return nil, RecoverableError(err)
+		return nil, err
 	}
 	return outputOnlyExecutionResult(call.CallID, payload), nil
 }

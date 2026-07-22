@@ -11,7 +11,7 @@ import (
 
 func decodeToolArguments(call ToolCall, toolName string, target any) error {
 	if err := json.Unmarshal(call.Arguments, target); err != nil {
-		return RecoverableError(fmt.Errorf("decode %s arguments: %w", toolName, err))
+		return fmt.Errorf("decode %s arguments: %w", toolName, err)
 	}
 	return nil
 }

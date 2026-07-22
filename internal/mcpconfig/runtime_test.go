@@ -116,8 +116,8 @@ func TestCompositeRuntimeRejectsDisabledToolForOwner(t *testing.T) {
 	repository := &runtimeRepositoryStub{tools: []RuntimeTool{runtimeTool}, getErr: domain.ErrNotFound}
 	runtime := &CompositeRuntime{Repository: repository}
 	_, err := runtime.Execute(t.Context(), tool.ToolScope{OwnerUserID: "owner-1"}, tool.ToolCall{Name: RuntimeToolName(runtimeTool)})
-	if err == nil || !tool.IsRecoverableError(err) {
-		t.Fatalf("disabled tool error = %v, want recoverable rejection", err)
+	if err == nil || err.Error() != "MCP tool is disabled or unavailable" {
+		t.Fatalf("disabled tool error = %v", err)
 	}
 	if repository.listOwner != "owner-1" || repository.getOwner != "owner-1" {
 		t.Fatalf("runtime owner checks list=%q get=%q", repository.listOwner, repository.getOwner)
@@ -199,7 +199,7 @@ func TestCompositeRuntimeCallsSDKStreamableHTTPTool(t *testing.T) {
 	}
 }
 
-func TestCompositeRuntimeTransportErrorRemainsAmbiguous(t *testing.T) {
+func TestCompositeRuntimeReturnsTransportError(t *testing.T) {
 	cipher, err := credential.NewCipher(base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func TestCompositeRuntimeTransportErrorRemainsAmbiguous(t *testing.T) {
 	}}
 	runtime := &CompositeRuntime{Repository: repository, Cipher: cipher, Client: client}
 	_, err = runtime.Execute(t.Context(), tool.ToolScope{OwnerUserID: "owner-1"}, tool.ToolCall{Name: RuntimeToolName(runtimeTool)})
-	if err == nil || tool.IsRecoverableError(err) || errors.Is(err, domain.ErrInvalidInput) {
-		t.Fatalf("transport/configuration error = %v, want ordinary ambiguous error", err)
+	if err == nil || err.Error() != "MCP tool transport failed before tools/call completed" {
+		t.Fatalf("transport error = %v", err)
 	}
 }

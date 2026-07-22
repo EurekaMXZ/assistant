@@ -109,13 +109,13 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 				}
 				output = string(payload)
 			}
-			if !isRecoverableToolFailureOutput(output) {
-				return nil, fmt.Errorf("tool call %s is already failed without a recoverable result", describeToolCall(call))
+			if strings.TrimSpace(output) == "" {
+				output = modelVisibleToolFailure(call, errors.New(record.ErrorMessage))
 			}
 			return &tool.ToolExecutionResult{Failed: true, OutputItem: llm.ModelItem{
 				Type: llm.ModelItemFunctionCallOutput, CallID: call.CallID, Output: output,
 			}}, nil
-		case domain.ToolCallStatusAmbiguous, domain.ToolCallStatusCancelled:
+		case domain.ToolCallStatusCancelled:
 			return nil, fmt.Errorf("tool call %s is already %s", describeToolCall(call), record.Status)
 		case domain.ToolCallStatusAwaitingInput:
 			prompt, err := tool.DecodeAskUserPrompt(call.Arguments)
@@ -139,13 +139,6 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("execute tool %s: %w", describeToolCall(call), ctx.Err())
-		}
-		if !tool.IsRecoverableError(err) && !errors.Is(err, domain.ErrInvalidInput) {
-			o.publishToolFailed(ctx, scope, record, call, err.Error(), nil)
-			if markErr := o.recordToolCallAmbiguous(ctx, record, err.Error()); markErr != nil {
-				return nil, errors.Join(fmt.Errorf("execute tool %s with uncertain outcome: %w", describeToolCall(call), err), markErr)
-			}
-			return nil, fmt.Errorf("execute tool %s with uncertain outcome: %w", describeToolCall(call), err)
 		}
 		visibleOutput := modelVisibleToolFailure(call, err)
 		o.publishToolFailed(ctx, scope, record, call, err.Error(), nil)
@@ -185,20 +178,6 @@ func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, sco
 	}
 	return execution, nil
 }
-
-func isRecoverableToolFailureOutput(output string) bool {
-	var payload struct {
-		Error struct {
-			Type        string `json:"type"`
-			Recoverable bool   `json:"recoverable"`
-		} `json:"error"`
-	}
-	if json.Unmarshal([]byte(output), &payload) != nil {
-		return false
-	}
-	return payload.Error.Type == "tool_execution_failed" && payload.Error.Recoverable
-}
-
 func modelVisibleToolFailure(call tool.ToolCall, err error) string {
 	message := "tool execution failed"
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
@@ -207,15 +186,14 @@ func modelVisibleToolFailure(call tool.ToolCall, err error) string {
 	payload, marshalErr := json.Marshal(map[string]any{
 		"ok": false,
 		"error": map[string]any{
-			"type":        "tool_execution_failed",
-			"tool":        describeToolCall(call),
-			"message":     message,
-			"recoverable": true,
+			"type":    "tool_execution_failed",
+			"tool":    describeToolCall(call),
+			"message": message,
 		},
 		"next_action": "Adjust the arguments, try a narrower request, use another tool, or continue without this tool.",
 	})
 	if marshalErr != nil {
-		return `{"ok":false,"error":{"type":"tool_execution_failed","message":"tool execution failed","recoverable":true}}`
+		return `{"ok":false,"error":{"type":"tool_execution_failed","message":"tool execution failed"}}`
 	}
 	return string(payload)
 }

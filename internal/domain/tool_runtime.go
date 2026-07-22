@@ -19,7 +19,6 @@ const (
 	ToolCallStatusCompleted     = "completed"
 	ToolCallStatusFailed        = "failed"
 	ToolCallStatusCancelled     = "cancelled"
-	ToolCallStatusAmbiguous     = "ambiguous"
 )
 
 type TurnRun struct {

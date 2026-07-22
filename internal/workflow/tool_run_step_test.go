@@ -215,7 +215,7 @@ func TestScheduledRunContinuesAfterToolFailure(t *testing.T) {
 	model := &stubModelClient{rawRequests: []json.RawMessage{json.RawMessage(`{"step":1}`), json.RawMessage(`{"step":2}`)}, results: []*llm.ModelResult{{
 		OutputItems: []llm.ModelItem{{Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{"q":"x"}`)}},
 	}}}
-	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{functionTool}}, &stubToolExecutor{err: tool.RecoverableError(errors.New("search unavailable"))}, nil, &stubToolArtifactStore{}, &stubToolCallStore{})
+	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{functionTool}}, &stubToolExecutor{err: errors.New("search unavailable")}, nil, &stubToolArtifactStore{}, &stubToolCallStore{})
 	state, _, err := orchestrator.PrepareScheduledRun(t.Context(), ToolRunInput{
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, Model: "gpt-test",
 		Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}},
@@ -233,8 +233,8 @@ func TestScheduledRunContinuesAfterToolFailure(t *testing.T) {
 	if outcome.NextState == nil || len(outcome.NextState.Request.Input) != 3 {
 		t.Fatalf("tool failure did not schedule model continuation: %#v", outcome.NextState)
 	}
-	if output := outcome.NextState.Request.Input[2].Output; !strings.Contains(output, `"recoverable":true`) {
-		t.Fatalf("next model input does not contain recoverable failure: %s", output)
+	if output := outcome.NextState.Request.Input[2].Output; !strings.Contains(output, `"type":"tool_execution_failed"`) || strings.Contains(output, "recoverable") {
+		t.Fatalf("next model input does not contain tool failure: %s", output)
 	}
 }
 
