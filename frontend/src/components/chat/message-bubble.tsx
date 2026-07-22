@@ -62,6 +62,7 @@ interface AssistantTurnBubbleProps {
 }
 
 const assistantActionIconInsetPx = 6;
+const assistantContentInsetStyle = { paddingLeft: `${assistantActionIconInsetPx}px` };
 const askUserOptionVariants: Record<AskUserOptionTone, "default" | "outline" | "destructive"> = {
   primary: "default",
   neutral: "outline",
@@ -340,8 +341,6 @@ function MessageBody({
   const metadata = message.metadata || {};
   const isError = metadata.display_kind === "assistant_error";
   const interaction = assistantInteractionFromMessage(message);
-  const alignsWithTimeline =
-    isError || interaction?.status === "completed" || interaction?.status === "cancelled";
   const attachments = attachmentsFromMetadata(metadata);
   const imageAttachments = allowAttachmentPreviews ? attachments.filter(isImageAttachment) : [];
   const attachmentCount = attachmentCountFromMetadata(metadata);
@@ -350,11 +349,7 @@ function MessageBody({
   return (
     <div
       className="min-w-0 max-w-full leading-relaxed"
-      style={
-        isUser || alignsWithTimeline
-          ? undefined
-          : { paddingLeft: `${assistantActionIconInsetPx}px` }
-      }
+      style={isUser ? undefined : assistantContentInsetStyle}
     >
       {isUser ? (
         message.content_text ? (
@@ -567,13 +562,15 @@ export function AssistantTurnBubble({
     .join("\n\n");
 
   const timelineControl = (
-    <TurnTimeline
-      activityLabel={activityLabel}
-      turn={turn}
-      turnId={turnId}
-      isStreaming={isStreaming}
-      onOpen={(nextTurnId) => onOpenTimeline?.(nextTurnId)}
-    />
+    <div style={assistantContentInsetStyle}>
+      <TurnTimeline
+        activityLabel={activityLabel}
+        turn={turn}
+        turnId={turnId}
+        isStreaming={isStreaming}
+        onOpen={(nextTurnId) => onOpenTimeline?.(nextTurnId)}
+      />
+    </div>
   );
 
   return (

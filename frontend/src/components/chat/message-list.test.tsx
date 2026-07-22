@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message, Turn } from "@/lib/types";
-import { AskUserInteractionView, MessageBubble } from "./message-bubble";
+import { AskUserInteractionView, AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import { Composer } from "./composer";
 import { groupMessageEntries, MessageList } from "./message-list";
 
@@ -151,6 +151,68 @@ describe("user message presentation", () => {
     expect(markup).not.toContain("max-h-72");
     expect(markup).not.toContain("已附加");
     expect(markup).not.toContain("移除 photo.png");
+  });
+});
+
+describe("assistant message alignment", () => {
+  it("uses the same visual inset for timeline controls and status messages", () => {
+    const errorMarkup = renderToStaticMarkup(
+      <MessageBubble
+        message={{
+          ...message("error", "assistant", 1, "turn-1"),
+          content_text: "Upstream request failed",
+          metadata: { display_kind: "assistant_error" },
+        }}
+        showActions={false}
+      />,
+    );
+    const interactionMarkup = renderToStaticMarkup(
+      <MessageBubble
+        message={{
+          ...message("interaction", "assistant", 2, "turn-1"),
+          metadata: {
+            display_kind: "ask_user",
+            interaction: {
+              type: "interaction",
+              id: "ask-user:tool-1",
+              tool_call_id: "tool-1",
+              prompt: "Continue?",
+              kind: "single_choice",
+              options: [
+                { id: "yes", label: "Yes", tone: "primary" },
+                { id: "no", label: "No", tone: "neutral" },
+              ],
+              status: "completed",
+              answer: {
+                status: "answered",
+                option_id: "yes",
+                label: "Yes",
+                user_reported: true,
+              },
+            },
+          },
+        }}
+        showActions={false}
+      />,
+    );
+    const timelineMarkup = renderToStaticMarkup(
+      <AssistantTurnBubble
+        messages={[
+          {
+            ...message("thinking", "assistant", 1, "turn-1"),
+            content_text: "",
+            metadata: { display_kind: "thinking" },
+          },
+        ]}
+        turnId="turn-1"
+        isStreaming
+      />,
+    );
+
+    expect(errorMarkup).toContain('style="padding-left:6px"');
+    expect(interactionMarkup).toContain('style="padding-left:6px"');
+    expect(timelineMarkup).toContain('style="padding-left:6px"');
+    expect(timelineMarkup).toContain("Thinking...");
   });
 });
 
