@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 
 export interface ComposerShellAttachment {
   attachmentId?: string;
+  category?: string;
   contentType?: string;
   conversationId?: string;
   error?: string;
@@ -79,6 +80,7 @@ function attachmentExtension(name: string) {
 
 function isImageAttachment(attachment: ComposerShellAttachment) {
   return (
+    attachment.category === "image" ||
     attachment.contentType?.startsWith("image/") ||
     ["avif", "bmp", "gif", "heic", "jpeg", "jpg", "png", "svg", "webp"].includes(
       attachmentExtension(attachment.name),
@@ -130,9 +132,11 @@ function attachmentPresentation(attachment: ComposerShellAttachment) {
 function ComposerAttachmentItem({
   attachment,
   onRemove,
+  previewImages = true,
 }: {
   attachment: ComposerShellAttachment;
-  onRemove: () => void;
+  onRemove?: () => void;
+  previewImages?: boolean;
 }) {
   const image = isImageAttachment(attachment);
   const uploading = attachment.status === "uploading";
@@ -141,7 +145,7 @@ function ComposerAttachmentItem({
   const [previewFailed, setPreviewFailed] = useState(false);
 
   useEffect(() => {
-    if (!image) return;
+    if (!image || !previewImages) return;
 
     let cancelled = false;
     let objectUrl: string | null = null;
@@ -171,9 +175,9 @@ function ComposerAttachmentItem({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.attachmentId, attachment.conversationId, attachment.file, image]);
+  }, [attachment.attachmentId, attachment.conversationId, attachment.file, image, previewImages]);
 
-  const removeButton = (
+  const removeButton = onRemove ? (
     <Button
       type="button"
       variant="default"
@@ -186,7 +190,7 @@ function ComposerAttachmentItem({
         <X className="size-3.5" />
       </span>
     </Button>
-  );
+  ) : null;
 
   if (image) {
     return (
@@ -202,7 +206,7 @@ function ComposerAttachmentItem({
             failed && "opacity-35",
           )}
         >
-          {previewUrl && !previewFailed ? (
+          {previewImages && previewUrl && !previewFailed ? (
             <ImagePreview
               src={previewUrl}
               alt={attachment.name}
@@ -212,13 +216,17 @@ function ComposerAttachmentItem({
               showActions={false}
               onError={() => setPreviewFailed(true)}
             />
-          ) : (
+          ) : previewImages ? (
             <div className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted">
               {previewFailed ? (
                 <ImageIcon className="size-5 text-muted-foreground" />
               ) : (
                 <Spinner className="text-muted-foreground" />
               )}
+            </div>
+          ) : (
+            <div className="flex size-16 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+              <ImageIcon className="size-5 text-muted-foreground" />
             </div>
           )}
         </div>
@@ -294,6 +302,39 @@ function ComposerAttachmentItem({
         </span>
       </span>
       {removeButton}
+    </div>
+  );
+}
+
+export function ComposerAttachmentList({
+  attachments,
+  className,
+  onRemoveAttachment,
+  previewImages = true,
+}: {
+  attachments: ComposerShellAttachment[];
+  className?: string;
+  onRemoveAttachment?: (key: string) => void;
+  previewImages?: boolean;
+}) {
+  if (attachments.length === 0) return null;
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        className,
+      )}
+      data-slot="attachment-list"
+    >
+      {attachments.map((attachment) => (
+        <ComposerAttachmentItem
+          key={attachment.key}
+          attachment={attachment}
+          onRemove={onRemoveAttachment ? () => onRemoveAttachment(attachment.key) : undefined}
+          previewImages={previewImages}
+        />
+      ))}
     </div>
   );
 }
@@ -383,15 +424,11 @@ export function ComposerShell({
       />
 
       {attachments.length > 0 ? (
-        <div className="absolute left-3 right-3 top-2 flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {attachments.map((attachment) => (
-            <ComposerAttachmentItem
-              key={attachment.key}
-              attachment={attachment}
-              onRemove={() => onRemoveAttachment?.(attachment.key)}
-            />
-          ))}
-        </div>
+        <ComposerAttachmentList
+          attachments={attachments}
+          className="absolute left-3 right-3 top-2"
+          onRemoveAttachment={onRemoveAttachment}
+        />
       ) : null}
 
       <Textarea

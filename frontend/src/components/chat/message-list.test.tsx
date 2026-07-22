@@ -97,6 +97,63 @@ describe("message turn variants", () => {
   });
 });
 
+describe("user message presentation", () => {
+  it("renders user content as plain text instead of Markdown", () => {
+    const userMessage = {
+      ...message("user-markdown", "user", 1, "turn-1"),
+      content_text: "# Heading\n\n**not bold**",
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessageBubble message={userMessage} showActions={false} />,
+    );
+
+    expect(markup).toContain("whitespace-pre-wrap");
+    expect(markup).toContain("# Heading");
+    expect(markup).toContain("**not bold**");
+    expect(markup).not.toContain("<h1");
+    expect(markup).not.toContain("<strong");
+  });
+
+  it("renders user attachments below the bubble with composer attachment styles", () => {
+    const userMessage = {
+      ...message("user-attachments", "user", 1, "turn-1"),
+      content_text: "See attachments",
+      metadata: {
+        attachment_ids: ["image-1", "document-1"],
+        attachments: [
+          {
+            id: "image-1",
+            filename: "photo.png",
+            content_type: "image/png",
+            category: "image",
+            size_bytes: 1024,
+          },
+          {
+            id: "document-1",
+            filename: "report.pdf",
+            content_type: "application/pdf",
+            category: "document",
+            size_bytes: 2048,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessageBubble message={userMessage} allowAttachmentPreviews={false} showActions={false} />,
+    );
+
+    expect(markup).toContain('data-slot="attachment-list"');
+    expect(markup).toContain("size-16");
+    expect(markup).toContain("report.pdf");
+    expect(markup.indexOf("See attachments")).toBeLessThan(markup.indexOf("attachment-list"));
+    expect(markup).not.toContain("max-h-72");
+    expect(markup).not.toContain("已附加");
+    expect(markup).not.toContain("移除 photo.png");
+  });
+});
+
 describe("ask user interaction", () => {
   let container: HTMLDivElement;
   let root: Root;

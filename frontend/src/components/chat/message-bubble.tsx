@@ -25,6 +25,7 @@ import { assistantInteractionFromMessage } from "@/lib/chat-state";
 import { cn } from "@/lib/utils";
 import type { AskUserInteraction, AskUserOptionTone, Message, Turn } from "@/lib/types";
 import { ImagePreview } from "./image-preview";
+import { ComposerAttachmentList, type ComposerShellAttachment } from "./composer-shell";
 
 interface MessageBubbleProps {
   message: Message;
@@ -93,7 +94,7 @@ function attachmentFromMetadataItem(value: unknown): MessageAttachment | null {
   };
 }
 
-function attachmentsFromMetadata(metadata: Record<string, unknown>) {
+function attachmentsFromMetadata(metadata: Record<string, unknown>): MessageAttachment[] {
   const attachments = metadata.attachments;
   if (Array.isArray(attachments)) {
     return attachments
@@ -108,7 +109,7 @@ function attachmentsFromMetadata(metadata: Record<string, unknown>) {
 
   return attachmentIds
     .filter((id): id is string => typeof id === "string" && !!id.trim())
-    .map((id) => ({ id: id.trim() }));
+    .map<MessageAttachment>((id) => ({ id: id.trim() }));
 }
 
 function attachmentCountFromMetadata(metadata: Record<string, unknown>) {
@@ -370,7 +371,11 @@ function MessageBody({
           : { paddingLeft: `${assistantActionIconInsetPx}px` }
       }
     >
-      {interaction ? (
+      {isUser ? (
+        message.content_text ? (
+          <p className="whitespace-pre-wrap break-words">{message.content_text}</p>
+        ) : null
+      ) : interaction ? (
         <AskUserInteractionView interaction={interaction} onAnswer={onAnswerInteraction} />
       ) : isError ? (
         <div
@@ -432,21 +437,36 @@ export function MessageBubble({
   const displayKind =
     typeof message.metadata?.display_kind === "string" ? message.metadata.display_kind : null;
   const isThinkingBlock = !isUser && displayKind === "thinking";
+  const hasUserText = Boolean(message.content_text?.trim());
+  const userAttachments = isUser
+    ? attachmentsFromMetadata(message.metadata || {}).map<ComposerShellAttachment>(
+        (attachment) => ({
+          attachmentId: attachment.id,
+          category: attachment.category,
+          contentType: attachment.content_type,
+          conversationId: message.conversation_id,
+          key: attachment.id,
+          name: attachment.filename || (isImageAttachment(attachment) ? "图片" : "附件"),
+          size: attachment.size_bytes || 0,
+          status: "ready",
+        }),
+      )
+    : [];
 
   return (
     <div
       className={cn("group/message flex min-w-0 w-full", isUser ? "justify-end" : "justify-start")}
     >
       <div className={cn("flex min-w-0 w-full flex-col", isUser ? "items-end" : "items-start")}>
-        <div
-          className={cn(
-            "relative min-w-0 max-w-full",
-            isUser
-              ? "ml-auto max-w-full rounded-2xl bg-muted px-4 py-3 text-foreground"
-              : "w-full text-foreground",
-          )}
-        >
-          {!isThinkingBlock ? (
+        {!isThinkingBlock && (!isUser || hasUserText) ? (
+          <div
+            className={cn(
+              "relative min-w-0 max-w-full",
+              isUser
+                ? "ml-auto max-w-full rounded-2xl bg-muted px-4 py-3 text-foreground"
+                : "w-full text-foreground",
+            )}
+          >
             <MessageBody
               allowAttachmentPreviews={allowAttachmentPreviews}
               isStreaming={isStreaming}
@@ -458,8 +478,16 @@ export function MessageBubble({
                   : undefined
               }
             />
-          ) : null}
-        </div>
+          </div>
+        ) : null}
+
+        {userAttachments.length > 0 ? (
+          <ComposerAttachmentList
+            attachments={userAttachments}
+            className={cn("mt-2 w-fit max-w-full", !hasUserText && "mt-0")}
+            previewImages={allowAttachmentPreviews}
+          />
+        ) : null}
 
         {!showActions || isThinkingBlock ? null : isUser ? (
           <div className="mt-1 flex w-full justify-end gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover/message:opacity-100 md:group-focus-within/message:opacity-100">
