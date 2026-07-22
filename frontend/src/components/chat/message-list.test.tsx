@@ -94,6 +94,12 @@ describe("message turn variants", () => {
     );
 
     expect(markup.match(/<span class="sr-only">重试<\/span>/g)).toHaveLength(1);
+    expect(markup).not.toContain("Assistant 也可能会犯错，请核查重要信息");
+    expect(markup).toContain('style="padding-bottom:272px"');
+    expect(markup).toContain('data-slot="scroll-to-bottom"');
+    expect(markup).toContain('aria-label="返回底部"');
+    expect(markup).toContain("rounded-full");
+    expect(markup).toContain("transition-opacity");
   });
 });
 
@@ -213,6 +219,21 @@ describe("assistant message alignment", () => {
     expect(interactionMarkup).toContain('style="padding-left:6px"');
     expect(timelineMarkup).toContain('style="padding-left:6px"');
     expect(timelineMarkup).toContain("Thinking...");
+  });
+
+  it("uses the thinking control color for message actions and timestamps assistant output", () => {
+    const userMarkup = renderToStaticMarkup(
+      <MessageBubble message={message("user-actions", "user", 1, "turn-1")} />,
+    );
+    const assistantMessage = message("assistant-actions", "assistant", 2, "turn-1");
+    const assistantMarkup = renderToStaticMarkup(<MessageBubble message={assistantMessage} />);
+
+    expect(userMarkup).toMatch(/data-slot="message-actions" class="[^"]*text-muted-foreground/);
+    expect(assistantMarkup).toMatch(
+      /data-slot="message-actions" class="[^"]*text-muted-foreground/,
+    );
+    expect(assistantMarkup).toContain(`<time`);
+    expect(assistantMarkup).toContain(`dateTime="${assistantMessage.created_at}"`);
   });
 });
 

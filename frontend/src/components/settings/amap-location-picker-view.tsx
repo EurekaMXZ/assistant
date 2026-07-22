@@ -1,6 +1,6 @@
 "use client";
 
-import type { RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { LocateFixed, MapPinned, Search } from "lucide-react";
 import { Spinner } from "@/components/shared/spinner";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,19 @@ export function AMapLocationPickerView({
   onQueryChange: (query: string) => void;
   onSelectResult: (result: AMapSearchResult) => void;
 }) {
+  const searchRootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (results.length === 0) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !searchRootRef.current?.contains(event.target)) {
+        onEscapeSearch();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [onEscapeSearch, results.length]);
+
   if (!configured) {
     return (
       <div className="flex h-80 flex-col items-center justify-center bg-muted/20 px-6 text-center sm:h-[360px]">
@@ -62,7 +75,7 @@ export function AMapLocationPickerView({
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
-        <div className="relative min-w-0 flex-1">
+        <div ref={searchRootRef} className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}

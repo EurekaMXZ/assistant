@@ -7,12 +7,14 @@ import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { AskUserInteraction, Message, Turn } from "@/lib/types";
 import {
   DEFAULT_MESSAGE_BOTTOM_GAP,
+  isMessageAreaCoveringDisclaimer,
+  isViewportNearBottom,
   latestTurnMinimumHeight,
   messageScrollAction,
   shouldFollowAfterScroll,
 } from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
-import { ChevronUp } from "lucide-react";
+import { ArrowDown, ChevronUp } from "lucide-react";
 import { Spinner } from "@/components/shared/spinner";
 
 const messageTopOffset = 24;
@@ -26,6 +28,7 @@ interface MessageListProps {
   bottomInset?: number;
   onEditMessage: (message: Message) => void;
   onLoadOlderMessages?: () => Promise<void>;
+  onDisclaimerCoveredChange?: (covered: boolean) => void;
   onOpenTimeline: (turnId: string) => void;
   onAnswerInteraction: (
     turnId: string,
@@ -106,6 +109,7 @@ export function MessageList({
   messages,
   bottomInset = 208,
   onEditMessage,
+  onDisclaimerCoveredChange,
   onLoadOlderMessages,
   onOpenTimeline,
   onAnswerInteraction,
@@ -120,6 +124,7 @@ export function MessageList({
   const latestUserMessageIdRef = useRef<string | null | undefined>(undefined);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const latestUserMessageId = messages.findLast((message) => message.role === "user")?.id ?? null;
 
   useEffect(() => {
@@ -127,6 +132,10 @@ export function MessageList({
       '[data-slot="scroll-area-viewport"]',
     );
     if (!viewport) return;
+    const updateDisclaimerCoverage = () => {
+      onDisclaimerCoveredChange?.(isMessageAreaCoveringDisclaimer(viewport));
+      setShowScrollToBottom(!isViewportNearBottom(viewport, 1));
+    };
     const updateFollow = () => {
       shouldFollowRef.current = shouldFollowAfterScroll(
         viewport,
@@ -134,6 +143,7 @@ export function MessageList({
         shouldFollowRef.current,
       );
       lastScrollTopRef.current = viewport.scrollTop;
+      updateDisclaimerCoverage();
     };
     const stopFollowing = () => {
       shouldFollowRef.current = false;
@@ -163,6 +173,7 @@ export function MessageList({
 
     lastScrollTopRef.current = viewport.scrollTop;
     updateViewportHeight();
+    updateDisclaimerCoverage();
     resizeObserver.observe(viewport);
     viewport.addEventListener("scroll", updateFollow, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: true });
@@ -179,17 +190,23 @@ export function MessageList({
       viewport.removeEventListener("touchend", handleTouchEnd);
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [onDisclaimerCoveredChange]);
 
   useEffect(() => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
     );
     if (!viewport) return;
+    const updateDisclaimerCoverage = () => {
+      onDisclaimerCoveredChange?.(isMessageAreaCoveringDisclaimer(viewport));
+      setShowScrollToBottom(!isViewportNearBottom(viewport, 1));
+    };
     if (messages.length === 0) {
       shouldFollowRef.current = true;
       lastScrollTopRef.current = 0;
       latestUserMessageIdRef.current = null;
+      onDisclaimerCoveredChange?.(false);
+      setShowScrollToBottom(false);
       return;
     }
 
@@ -215,16 +232,28 @@ export function MessageList({
         behavior: "auto",
       });
       lastScrollTopRef.current = viewport.scrollTop;
+      updateDisclaimerCoverage();
       return;
     }
-    if (scrollAction === "none") return;
+    if (scrollAction === "none") {
+      updateDisclaimerCoverage();
+      return;
+    }
 
     viewport.scrollTo({
       top: viewport.scrollHeight,
       behavior: "auto",
     });
     lastScrollTopRef.current = viewport.scrollTop;
-  }, [bottomInset, latestUserMessageId, messages, streamingTurnId, viewportHeight]);
+    updateDisclaimerCoverage();
+  }, [
+    bottomInset,
+    latestUserMessageId,
+    messages,
+    onDisclaimerCoveredChange,
+    streamingTurnId,
+    viewportHeight,
+  ]);
 
   useEffect(() => {
     if (!streamingTurnId) return;
@@ -249,12 +278,20 @@ export function MessageList({
       lastScrollTopRef.current = viewport.scrollTop;
     });
   };
+  const scrollToBottom = () => {
+    const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    if (!viewport) return;
+    shouldFollowRef.current = true;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+  };
 
   return (
     <div
       ref={scrollRootRef}
       className={cn(
-        "min-h-0 flex-1 transition-[filter,opacity,transform] duration-200 motion-reduce:transition-none",
+        "relative min-h-0 flex-1 transition-[filter,opacity,transform] duration-200 motion-reduce:transition-none",
         dimmed && "pointer-events-none scale-[0.995] opacity-45 blur-[2px]",
       )}
     >
@@ -358,6 +395,23 @@ export function MessageList({
           )}
         </div>
       </ScrollArea>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        data-slot="scroll-to-bottom"
+        aria-label="返回底部"
+        aria-hidden={!showScrollToBottom}
+        tabIndex={showScrollToBottom ? 0 : -1}
+        className={cn(
+          "absolute left-1/2 z-20 size-9 -translate-x-1/2 rounded-full border border-border/70 bg-background/75 text-muted-foreground shadow-sm backdrop-blur-md transition-opacity duration-200 hover:bg-background/90 hover:text-foreground motion-reduce:transition-none dark:bg-background/70 dark:hover:bg-background/90",
+          showScrollToBottom ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        style={{ bottom: bottomInset + 12 }}
+        onClick={scrollToBottom}
+      >
+        <ArrowDown className="size-4" />
+      </Button>
     </div>
   );
 }

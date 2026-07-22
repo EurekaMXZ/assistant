@@ -11,10 +11,23 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { LogOut, Settings, Shield, User as UserIcon } from "lucide-react";
+import {
+  Bug,
+  CircleHelp,
+  Info,
+  LogOut,
+  MessagesSquare,
+  Scale,
+  Settings,
+  Shield,
+  User as UserIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SidebarUserPanelProps {
@@ -134,6 +147,62 @@ export function SidebarUserPanel({
                 管理员
               </DropdownMenuItem>
             ) : null}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <CircleHelp className="mr-2 size-4" />
+                帮助
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-48">
+                <DropdownMenuItem
+                  render={
+                    <a
+                      href="https://github.com/EurekaMXZ/assistant"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <Info className="mr-2 size-4" />
+                  关于
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  render={
+                    <a
+                      href="https://github.com/EurekaMXZ/assistant/issues"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <Bug className="mr-2 size-4" />
+                  报告错误
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  render={
+                    <a
+                      href="https://github.com/EurekaMXZ/assistant/discussions"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <MessagesSquare className="mr-2 size-4" />
+                  帮助中心
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  render={
+                    <a
+                      href="https://www.apache.org/licenses/LICENSE-2.0"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <Scale className="mr-2 size-4" />
+                  开源协议
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuItem onClick={onLogout}>
               <LogOut className="mr-2 size-4" />
               退出登录

@@ -7,6 +7,7 @@ import {
 } from "./api-schemas";
 import {
   isViewportNearBottom,
+  isMessageAreaCoveringDisclaimer,
   latestTurnMinimumHeight,
   messageScrollAction,
   shouldFollowAfterScroll,
@@ -176,5 +177,14 @@ describe("scroll following", () => {
     expect(latestTurnMinimumHeight(800, 160)).toBe(576);
     expect(latestTurnMinimumHeight(320, 200)).toBe(192);
     expect(latestTurnMinimumHeight(0, 160)).toBe(0);
+  });
+
+  it("covers the composer disclaimer only when messages enter its fixed line", () => {
+    expect(
+      isMessageAreaCoveringDisclaimer({ scrollHeight: 1000, scrollTop: 356, clientHeight: 600 }),
+    ).toBe(false);
+    expect(
+      isMessageAreaCoveringDisclaimer({ scrollHeight: 1000, scrollTop: 355, clientHeight: 600 }),
+    ).toBe(true);
   });
 });

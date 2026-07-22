@@ -1,6 +1,7 @@
 export const DEFAULT_SCROLL_FOLLOW_THRESHOLD = 96;
 export const DEFAULT_MESSAGE_BOTTOM_GAP = 64;
 export const MINIMUM_LATEST_TURN_HEIGHT = 192;
+const MESSAGE_DISCLAIMER_LINE_HEIGHT = 20;
 
 export type MessageScrollAction = "anchor-user" | "follow-bottom" | "none";
 
@@ -42,4 +43,11 @@ export function latestTurnMinimumHeight(viewportHeight: number, bottomInset: num
     MINIMUM_LATEST_TURN_HEIGHT,
     viewportHeight - Math.max(0, bottomInset) - DEFAULT_MESSAGE_BOTTOM_GAP,
   );
+}
+
+export function isMessageAreaCoveringDisclaimer(
+  viewport: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
+) {
+  const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+  return distanceFromBottom > DEFAULT_MESSAGE_BOTTOM_GAP - MESSAGE_DISCLAIMER_LINE_HEIGHT;
 }

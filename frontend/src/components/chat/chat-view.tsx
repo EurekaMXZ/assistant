@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Pencil, Share } from "lucide-react";
 import { Spinner } from "@/components/shared/spinner";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { TimelineDialog } from "./timeline-dialog";
 import { TurnTimelinePanel } from "./turn-timeline";
 
 export function ChatView({ controller }: { controller: ChatController }) {
+  const [disclaimerCovered, setDisclaimerCovered] = useState(false);
   const {
     attachments,
     authLoading,
@@ -115,6 +117,7 @@ export function ChatView({ controller }: { controller: ChatController }) {
               messages={displayMessages}
               bottomInset={composerHeight + visualViewportBottomInset}
               onEditMessage={handleEditMessage}
+              onDisclaimerCoveredChange={setDisclaimerCovered}
               onAnswerInteraction={handleAnswerInteraction}
               onLoadOlderMessages={handleLoadOlderEvents}
               onOpenTimeline={handleOpenTimeline}
@@ -123,6 +126,20 @@ export function ChatView({ controller }: { controller: ChatController }) {
               streamingTurnId={streamingTurnId}
               turnsById={turnsById}
             />
+
+            <div
+              data-slot="message-list-disclaimer"
+              aria-hidden={disclaimerCovered || displayMessages.length === 0}
+              className={cn(
+                "pointer-events-none absolute inset-x-0 z-10 px-4 text-center text-xs leading-5 text-muted-foreground transition-opacity duration-200 motion-reduce:transition-none sm:px-6",
+                disclaimerCovered || displayMessages.length === 0 || composerHeight <= 0
+                  ? "opacity-0"
+                  : "opacity-100",
+              )}
+              style={{ bottom: composerHeight + visualViewportBottomInset }}
+            >
+              Assistant 也可能会犯错，请核查重要信息
+            </div>
 
             <Composer
               allowEmpty={Boolean(

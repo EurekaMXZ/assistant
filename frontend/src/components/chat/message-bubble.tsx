@@ -22,6 +22,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { getConversationAttachmentUrl } from "@/lib/api";
 import { parseSafeAskUserActionURL } from "@/lib/ask-user-action";
 import { assistantInteractionFromMessage } from "@/lib/chat-state";
+import { formatDateTime, formatMessageDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { AskUserInteraction, AskUserOptionTone, Message, Turn } from "@/lib/types";
 import { ImagePreview } from "./image-preview";
@@ -215,6 +216,18 @@ function clippedInteractionPrompt(prompt: string, maximum = 96) {
   return characters.length <= maximum
     ? characters.join("")
     : `${characters.slice(0, maximum).join("")}…`;
+}
+
+function AssistantOutputTime({ createdAt }: { createdAt: string }) {
+  return (
+    <time
+      className="ml-1 text-xs font-normal text-muted-foreground"
+      dateTime={createdAt}
+      title={formatDateTime(createdAt)}
+    >
+      {formatMessageDateTime(createdAt)}
+    </time>
+  );
 }
 
 export function AskUserInteractionView({
@@ -471,7 +484,10 @@ export function MessageBubble({
         ) : null}
 
         {!showActions || isThinkingBlock ? null : isUser ? (
-          <div className="mt-1 flex w-full justify-end gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover/message:opacity-100 md:group-focus-within/message:opacity-100">
+          <div
+            data-slot="message-actions"
+            className="mt-1 flex w-full justify-end gap-1 text-muted-foreground opacity-100 transition-opacity md:opacity-0 md:group-hover/message:opacity-100 md:group-focus-within/message:opacity-100"
+          >
             <Tooltip>
               <TooltipTrigger render={<CopyButton text={message.content_text || ""} />} />
               <TooltipContent>
@@ -501,7 +517,10 @@ export function MessageBubble({
             ) : null}
           </div>
         ) : (
-          <div className="mt-1 flex w-full items-center justify-start gap-1">
+          <div
+            data-slot="message-actions"
+            className="mt-1 flex w-full flex-wrap items-center justify-start gap-1 text-muted-foreground"
+          >
             <Tooltip>
               <TooltipTrigger render={<CopyButton text={message.content_text || ""} />} />
               <TooltipContent>
@@ -527,6 +546,7 @@ export function MessageBubble({
                 <p>重试</p>
               </TooltipContent>
             </Tooltip>
+            <AssistantOutputTime createdAt={message.created_at} />
           </div>
         )}
       </div>
@@ -601,7 +621,10 @@ export function AssistantTurnBubble({
         </div>
 
         {lastOutput ? (
-          <div className="mt-1 flex w-full items-center justify-start gap-1">
+          <div
+            data-slot="message-actions"
+            className="mt-1 flex w-full flex-wrap items-center justify-start gap-1 text-muted-foreground"
+          >
             {copyText ? (
               <Tooltip>
                 <TooltipTrigger render={<CopyButton text={copyText} />} />
@@ -659,6 +682,7 @@ export function AssistantTurnBubble({
                 </Button>
               </div>
             ) : null}
+            <AssistantOutputTime createdAt={lastOutput.created_at} />
           </div>
         ) : null}
       </div>

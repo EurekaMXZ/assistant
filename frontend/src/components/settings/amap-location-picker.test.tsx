@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AMapLocationPickerView } from "./amap-location-picker-view";
 
 const amapLoader = vi.hoisted(() => ({ load: vi.fn() }));
 
@@ -140,5 +141,44 @@ describe("AMap location picker", () => {
       regeocode: { addressComponent: { province: "卸载后", city: "", district: "" } },
     });
     expect(onChange).toHaveBeenCalledTimes(callCountBeforeUnmount);
+  });
+
+  it("dismisses address results when clicking outside the search area", async () => {
+    const onEscapeSearch = vi.fn();
+    await act(async () => {
+      root.render(
+        <AMapLocationPickerView
+          configured
+          containerRef={{ current: null }}
+          disabled={false}
+          loadError=""
+          loading={false}
+          locating={false}
+          operationError=""
+          query="杭州"
+          results={[
+            {
+              id: "result-1",
+              name: "杭州电子科技大学",
+              district: "钱塘区",
+              latitude: 30.315,
+              longitude: 120.343,
+            },
+          ]}
+          searching={false}
+          onEscapeSearch={onEscapeSearch}
+          onLocate={vi.fn()}
+          onQueryChange={vi.fn()}
+          onSelectResult={vi.fn()}
+        />,
+      );
+    });
+
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="搜索地址或地点"]');
+    input?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(onEscapeSearch).not.toHaveBeenCalled();
+
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(onEscapeSearch).toHaveBeenCalledOnce();
   });
 });
