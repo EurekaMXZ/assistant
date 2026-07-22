@@ -5,10 +5,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { AskUserInteraction, Message, Turn } from "@/lib/types";
-import { shouldFollowAfterScroll } from "@/lib/scroll-follow";
+import {
+  DEFAULT_MESSAGE_BOTTOM_GAP,
+  latestTurnMinimumHeight,
+  messageScrollAction,
+  shouldFollowAfterScroll,
+} from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
 import { ChevronUp } from "lucide-react";
 import { Spinner } from "@/components/shared/spinner";
+
+const messageTopOffset = 24;
 
 interface MessageListProps {
   activityLabels?: Record<string, string | null>;
@@ -110,7 +117,10 @@ export function MessageList({
   const shouldFollowRef = useRef(true);
   const lastScrollTopRef = useRef(0);
   const lastTouchYRef = useRef<number | null>(null);
+  const latestUserMessageIdRef = useRef<string | null | undefined>(undefined);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const latestUserMessageId = messages.findLast((message) => message.role === "user")?.id ?? null;
 
   useEffect(() => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
@@ -118,7 +128,11 @@ export function MessageList({
     );
     if (!viewport) return;
     const updateFollow = () => {
-      shouldFollowRef.current = shouldFollowAfterScroll(viewport, lastScrollTopRef.current);
+      shouldFollowRef.current = shouldFollowAfterScroll(
+        viewport,
+        lastScrollTopRef.current,
+        shouldFollowRef.current,
+      );
       lastScrollTopRef.current = viewport.scrollTop;
     };
     const stopFollowing = () => {
@@ -142,8 +156,14 @@ export function MessageList({
     const handleTouchEnd = () => {
       lastTouchYRef.current = null;
     };
+    const updateViewportHeight = () => {
+      setViewportHeight(Math.ceil(viewport.clientHeight));
+    };
+    const resizeObserver = new ResizeObserver(updateViewportHeight);
 
     lastScrollTopRef.current = viewport.scrollTop;
+    updateViewportHeight();
+    resizeObserver.observe(viewport);
     viewport.addEventListener("scroll", updateFollow, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: true });
     viewport.addEventListener("keydown", handleKeyDown);
@@ -157,6 +177,7 @@ export function MessageList({
       viewport.removeEventListener("touchstart", handleTouchStart);
       viewport.removeEventListener("touchmove", handleTouchMove);
       viewport.removeEventListener("touchend", handleTouchEnd);
+      resizeObserver.disconnect();
     };
   }, []);
 
@@ -168,16 +189,42 @@ export function MessageList({
     if (messages.length === 0) {
       shouldFollowRef.current = true;
       lastScrollTopRef.current = 0;
+      latestUserMessageIdRef.current = null;
       return;
     }
-    if (!shouldFollowRef.current) return;
+
+    const previousUserMessageId = latestUserMessageIdRef.current;
+    latestUserMessageIdRef.current = latestUserMessageId;
+    const scrollAction = messageScrollAction(
+      previousUserMessageId,
+      latestUserMessageId,
+      shouldFollowRef.current,
+    );
+    if (scrollAction === "anchor-user") {
+      shouldFollowRef.current = false;
+      const target = Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+        (element) => element.dataset.messageId === latestUserMessageId,
+      );
+      if (!target) return;
+      const targetTop =
+        target.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top +
+        viewport.scrollTop;
+      viewport.scrollTo({
+        top: Math.max(0, targetTop - messageTopOffset),
+        behavior: "auto",
+      });
+      lastScrollTopRef.current = viewport.scrollTop;
+      return;
+    }
+    if (scrollAction === "none") return;
 
     viewport.scrollTo({
       top: viewport.scrollHeight,
       behavior: "auto",
     });
     lastScrollTopRef.current = viewport.scrollTop;
-  }, [bottomInset, messages, streamingTurnId]);
+  }, [bottomInset, latestUserMessageId, messages, streamingTurnId, viewportHeight]);
 
   useEffect(() => {
     if (!streamingTurnId) return;
@@ -187,6 +234,7 @@ export function MessageList({
 
   const entries = groupMessageEntries(messages, turnsById);
   const editableRootTurnId = entries.findLast((entry) => entry.kind === "turn")?.rootTurnId;
+  const latestTurnMinHeight = latestTurnMinimumHeight(viewportHeight, bottomInset) || undefined;
   const loadOlderMessages = async () => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -213,7 +261,7 @@ export function MessageList({
       <ScrollArea className="h-full">
         <div
           className="mx-auto min-w-0 w-full max-w-2xl space-y-8 px-4 pt-4 sm:px-6"
-          style={{ paddingBottom: bottomInset }}
+          style={{ paddingBottom: bottomInset + DEFAULT_MESSAGE_BOTTOM_GAP }}
         >
           {hasOlderMessages ? (
             <div className="flex justify-center">
@@ -255,7 +303,15 @@ export function MessageList({
                 const canRetry =
                   entry.rootTurnId === editableRootTurnId && !streamingTurnId && terminal;
                 return (
-                  <div key={`turn-${entry.rootTurnId}`} className="space-y-3">
+                  <div
+                    key={`turn-${entry.rootTurnId}`}
+                    className="space-y-3"
+                    style={
+                      entry.rootTurnId === editableRootTurnId
+                        ? { minHeight: latestTurnMinHeight }
+                        : undefined
+                    }
+                  >
                     {variant.userMessage ? (
                       <MessageBubble
                         key={variant.userMessage.id}

@@ -5,7 +5,12 @@ import {
   conversationSchema,
   parseTurnStreamFrame,
 } from "./api-schemas";
-import { isViewportNearBottom, shouldFollowAfterScroll } from "./scroll-follow";
+import {
+  isViewportNearBottom,
+  latestTurnMinimumHeight,
+  messageScrollAction,
+  shouldFollowAfterScroll,
+} from "./scroll-follow";
 import { parseSseFrame, SseValidationError } from "./sse";
 
 describe("runtime schemas", () => {
@@ -137,5 +142,25 @@ describe("scroll following", () => {
     expect(
       shouldFollowAfterScroll({ scrollHeight: 1000, scrollTop: 900, clientHeight: 100 }, 850),
     ).toBe(true);
+    expect(
+      shouldFollowAfterScroll(
+        { scrollHeight: 1000, scrollTop: 900, clientHeight: 100 },
+        900,
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it("anchors a newly sent user message instead of following the bottom", () => {
+    expect(messageScrollAction(undefined, "message-1", true)).toBe("follow-bottom");
+    expect(messageScrollAction(null, "message-1", true)).toBe("anchor-user");
+    expect(messageScrollAction("message-1", "message-1", false)).toBe("none");
+    expect(messageScrollAction("message-1", "message-1", true)).toBe("follow-bottom");
+  });
+
+  it("reserves the visible message area for the latest turn", () => {
+    expect(latestTurnMinimumHeight(800, 160)).toBe(576);
+    expect(latestTurnMinimumHeight(320, 200)).toBe(192);
+    expect(latestTurnMinimumHeight(0, 160)).toBe(0);
   });
 });

@@ -456,6 +456,7 @@ export function MessageBubble({
   return (
     <div
       className={cn("group/message flex min-w-0 w-full", isUser ? "justify-end" : "justify-start")}
+      data-message-id={message.id}
     >
       <div className={cn("flex min-w-0 w-full flex-col", isUser ? "items-end" : "items-start")}>
         {!isThinkingBlock && (!isUser || hasUserText) ? (
