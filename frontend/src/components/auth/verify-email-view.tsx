@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { PublicAuthShell } from "@/components/auth/public-auth-shell";
 import { Button } from "@/components/ui/button";
 import { verifyEmail } from "@/lib/api";
@@ -36,7 +36,7 @@ export function VerifyEmailView({ token }: { token: string }) {
     <PublicAuthShell title="验证邮箱">
       {state === "verifying" ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
+          <Spinner />
           验证中
         </div>
       ) : state === "verified" ? (

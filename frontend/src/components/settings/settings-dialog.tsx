@@ -104,8 +104,8 @@ export function SettingsDialog({
                     ref={active ? activeSectionRef : undefined}
                     type="button"
                     size="sm"
-                    variant={active ? "secondary" : "ghost"}
-                    className="h-9 shrink-0 snap-center justify-start rounded-lg px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground md:snap-none"
+                    variant="nav"
+                    className="h-9 shrink-0 snap-center justify-start px-3 text-muted-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground md:snap-none"
                     data-active={active}
                     onClick={() => onSectionChange(item.id)}
                   >

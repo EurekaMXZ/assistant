@@ -3,26 +3,12 @@
 import { useState } from "react";
 import { KeyRound, MoreHorizontal, Plus, Trash2, UserRound, Users } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AdminEmpty,
-  AdminError,
-  AdminLoading,
-  AdminPageHeader,
-  SavingIcon,
-  adminSelectClass,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "@/components/admin/admin-shared";
+import { AdminPageHeader } from "@/components/admin/admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { FormDialog } from "@/components/shared/form-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,9 +17,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
+import { formatDateTime } from "@/lib/format";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import {
   createAdminUser,
   deleteAdminUser,
@@ -175,235 +168,223 @@ export function AdminUsers({ actor }: { actor: User }) {
           </Button>
         }
       />
-      {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={reload} /> : null}
-      {!loading && !error && !users.length ? <AdminEmpty icon={Users} title="暂无用户" /> : null}
-      {!loading && !error && users.length ? (
-        <CursorTableScroll
-          className={`${adminTableScrollClass} mt-6`}
-          hasMore={page.has_more}
-          loadingMore={loadingMore}
-          loadMoreError={loadMoreError}
-          onLoadMore={loadMore}
-          aria-label="用户列表"
-        >
-          <table className="w-[72rem] min-w-full table-fixed text-left text-sm">
-            <colgroup>
-              <col className="w-[26rem]" />
-              <col className="w-[9rem]" />
-              <col className="w-[11rem]" />
-              <col className="w-[13rem]" />
-              <col className="w-[9rem]" />
-              <col className="w-[7rem]" />
-            </colgroup>
-            <thead className={adminTableHeadClass}>
-              <tr className="border-b">
-                <th className="py-3 pr-4 font-medium">用户</th>
-                <th className="px-4 py-3 font-medium">角色</th>
-                <th className="px-4 py-3 font-medium">存储空间</th>
-                <th className="px-4 py-3 font-medium">最近登录</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="py-3 pl-4 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {users.map((item) => {
-                const manageable = canManageUser(actor, item);
-                return (
-                  <tr key={item.id}>
-                    <td className="py-3 pr-4">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
-                          <UserRound className="size-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate font-medium" title={item.username}>
-                            {item.username}
-                          </p>
-                          <p
-                            className="mt-0.5 truncate text-xs text-muted-foreground"
-                            title={item.email}
-                          >
-                            {item.email}
-                          </p>
-                        </div>
+      <AdminListPage
+        ariaLabel="用户列表"
+        className="mt-6"
+        emptyIcon={Users}
+        emptyTitle="暂无用户"
+        error={error}
+        hasItems={users.length > 0}
+        hasMore={page.has_more}
+        loading={loading}
+        loadingMore={loadingMore}
+        loadMoreError={loadMoreError}
+        onLoadMore={loadMore}
+        onRetry={reload}
+      >
+        <table className="admin-responsive-table w-[72rem] min-w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[26rem]" />
+            <col className="w-[9rem]" />
+            <col className="w-[11rem]" />
+            <col className="w-[13rem]" />
+            <col className="w-[9rem]" />
+            <col className="w-[7rem]" />
+          </colgroup>
+          <thead className={tableHeadClass}>
+            <tr className="border-b">
+              <th className={tableClasses.headStart}>用户</th>
+              <th className={tableClasses.head}>角色</th>
+              <th className={tableClasses.head}>存储空间</th>
+              <th className={tableClasses.head}>最近登录</th>
+              <th className={tableClasses.head}>状态</th>
+              <th className={tableClasses.headEnd}>操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {users.map((item) => {
+              const manageable = canManageUser(actor, item);
+              return (
+                <tr key={item.id}>
+                  <td className={tableClasses.cellStart} data-primary>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
+                        <UserRound className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium" title={item.username}>
+                          {item.username}
+                        </p>
+                        <p
+                          className="mt-0.5 truncate text-xs text-muted-foreground"
+                          title={item.email}
+                        >
+                          {item.email}
+                        </p>
                       </div>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{roleLabels[item.role]}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {formatStorageBytes(item.storage_used_bytes)} /{" "}
-                      {formatStorageBytes(item.storage_quota_bytes)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {formatAdminDate(item.last_login_at)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={item.status === "active" ? "secondary" : "outline"}>
-                        {item.status === "active" ? "正常" : "已停用"}
-                      </Badge>
-                    </td>
-                    <td className="py-3 pl-4 text-right">
-                      {manageable ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" />}>
-                            <MoreHorizontal />
-                            <span className="sr-only">用户操作</span>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem onClick={() => openEditor(item)}>
-                                编辑资料
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setResetUser(item);
-                                  setPassword("");
-                                }}
-                              >
-                                <KeyRound />
-                                重置密码
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void toggleStatus(item)}>
-                                {item.status === "active" ? "停用用户" : "启用用户"}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => setDeleteUser(item)}
-                              >
-                                <Trash2 />
-                                删除用户
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </CursorTableScroll>
-      ) : null}
+                    </div>
+                  </td>
+                  <td className={`${tableClasses.cell} text-muted-foreground`} data-label="角色">
+                    {roleLabels[item.role]}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="存储空间"
+                  >
+                    {formatStorageBytes(item.storage_used_bytes)} /{" "}
+                    {formatStorageBytes(item.storage_quota_bytes)}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="最近登录"
+                  >
+                    {formatDateTime(item.last_login_at)}
+                  </td>
+                  <td className={tableClasses.cell} data-label="状态">
+                    <Badge variant={item.status === "active" ? "secondary" : "outline"}>
+                      {item.status === "active" ? "正常" : "已停用"}
+                    </Badge>
+                  </td>
+                  <td className={tableClasses.cellEnd} data-actions>
+                    {manageable ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" />}>
+                          <MoreHorizontal />
+                          <span className="sr-only">用户操作</span>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem onClick={() => openEditor(item)}>
+                              编辑资料
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setResetUser(item);
+                                setPassword("");
+                              }}
+                            >
+                              <KeyRound />
+                              重置密码
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => void toggleStatus(item)}>
+                              {item.status === "active" ? "停用用户" : "启用用户"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => setDeleteUser(item)}
+                            >
+                              <Trash2 />
+                              删除用户
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <span className="sr-only">无可用操作</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </AdminListPage>
 
-      <Dialog open={editor !== null} onOpenChange={(open) => !open && setEditor(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editor === "create" ? "创建用户" : "编辑用户"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="admin-user-email">邮箱</Label>
-              <Input
-                id="admin-user-email"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="admin-username">用户名</Label>
-              <Input
-                id="admin-username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-              />
-            </div>
-            {actor.role === "system" ? (
-              <div className="space-y-2">
-                <Label htmlFor="admin-user-role">角色</Label>
-                <select
-                  id="admin-user-role"
-                  className={adminSelectClass}
-                  value={role}
-                  onChange={(event) => setRole(event.target.value as Exclude<UserRole, "system">)}
-                >
-                  {manageableRoles.map((item) => (
-                    <option key={item} value={item}>
-                      {roleLabels[item]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-            {editor !== "create" ? (
-              <div className="space-y-2">
-                <Label htmlFor="admin-user-storage-quota">存储配额（MB）</Label>
-                <Input
-                  id="admin-user-storage-quota"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={storageQuotaMB}
-                  onChange={(event) => setStorageQuotaMB(event.target.value)}
-                />
-              </div>
-            ) : null}
-            {editor === "create" ? (
-              <div className="space-y-2">
-                <Label htmlFor="admin-user-password">初始密码</Label>
-                <Input
-                  id="admin-user-password"
-                  type="password"
-                  minLength={8}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditor(null)}>
-              取消
-            </Button>
-            <Button
-              disabled={
-                saving ||
-                !email.trim() ||
-                !username.trim() ||
-                (editor !== "create" &&
-                  (!Number.isFinite(Number(storageQuotaMB)) || Number(storageQuotaMB) < 0)) ||
-                (editor === "create" && password.length < 8)
-              }
-              onClick={() => void save()}
+      <FormDialog
+        open={editor !== null}
+        onOpenChange={(open) => !open && setEditor(null)}
+        title={editor === "create" ? "创建用户" : "编辑用户"}
+        saving={saving}
+        submitDisabled={
+          !email.trim() ||
+          !username.trim() ||
+          (editor !== "create" &&
+            (!Number.isFinite(Number(storageQuotaMB)) || Number(storageQuotaMB) < 0)) ||
+          (editor === "create" && password.length < 8)
+        }
+        onSubmit={save}
+      >
+        <FormField label="邮箱" htmlFor="admin-user-email">
+          <Input
+            id="admin-user-email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </FormField>
+        <FormField label="用户名" htmlFor="admin-username">
+          <Input
+            id="admin-username"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
+        </FormField>
+        {actor.role === "system" ? (
+          <FormField label="角色" htmlFor="admin-user-role">
+            <Select
+              items={manageableRoles.map((item) => ({ value: item, label: roleLabels[item] }))}
+              value={role}
+              onValueChange={(value) => value && setRole(value)}
             >
-              <SavingIcon saving={saving} />
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!resetUser} onOpenChange={(open) => !open && setResetUser(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>重置 {resetUser?.username} 的密码</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="reset-user-password">新密码</Label>
+              <SelectTrigger id="admin-user-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {manageableRoles.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {roleLabels[item]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+        ) : null}
+        {editor !== "create" ? (
+          <FormField label="存储配额（MB）" htmlFor="admin-user-storage-quota">
             <Input
-              id="reset-user-password"
+              id="admin-user-storage-quota"
+              type="number"
+              min="0"
+              step="1"
+              value={storageQuotaMB}
+              onChange={(event) => setStorageQuotaMB(event.target.value)}
+            />
+          </FormField>
+        ) : null}
+        {editor === "create" ? (
+          <FormField label="初始密码" htmlFor="admin-user-password">
+            <Input
+              id="admin-user-password"
               type="password"
               minLength={8}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="new-password"
             />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setResetUser(null)}>
-              取消
-            </Button>
-            <Button disabled={saving || password.length < 8} onClick={() => void resetPassword()}>
-              <SavingIcon saving={saving} />
-              重置密码
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </FormField>
+        ) : null}
+      </FormDialog>
+
+      <FormDialog
+        open={!!resetUser}
+        onOpenChange={(open) => !open && setResetUser(null)}
+        title={`重置 ${resetUser?.username || "用户"} 的密码`}
+        saving={saving}
+        submitDisabled={password.length < 8}
+        submitText="重置密码"
+        onSubmit={resetPassword}
+      >
+        <FormField label="新密码" htmlFor="reset-user-password">
+          <Input
+            id="reset-user-password"
+            type="password"
+            minLength={8}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+          />
+        </FormField>
+      </FormDialog>
 
       <ConfirmDialog
         open={deleteUser !== null}

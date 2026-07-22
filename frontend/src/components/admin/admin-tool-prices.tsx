@@ -3,18 +3,14 @@
 import { useEffect, useState } from "react";
 import { Box, FileText, ImageIcon, Search } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AdminError,
-  AdminLoading,
-  SavingIcon,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "./admin-shared";
+import { SavingIcon } from "./admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { listAdminBillingToolPrices, updateAdminBillingToolPrices } from "@/lib/api";
 import { parseDecimalNanos } from "@/lib/decimal-nanos";
+import { formatDateTime } from "@/lib/format";
 import type { BillingToolKey, BillingToolPrice } from "@/lib/types";
 
 const toolMeta = {
@@ -94,15 +90,18 @@ export function AdminToolPrices() {
     }
   };
 
-  if (loading) return <AdminLoading />;
-  if (error) {
-    return <AdminError message={error} onRetry={() => setLoadAttempt((value) => value + 1)} />;
-  }
-
   return (
     <form className="mt-5" onSubmit={save}>
-      <div className={adminTableScrollClass}>
-        <table className="w-[62rem] min-w-full table-fixed text-left text-sm">
+      <AdminListPage
+        ariaLabel="工具计费"
+        emptyIcon={Box}
+        emptyTitle="暂无工具计费配置"
+        error={error}
+        hasItems={prices.length > 0}
+        loading={loading}
+        onRetry={() => setLoadAttempt((value) => value + 1)}
+      >
+        <table className="admin-responsive-table w-[62rem] min-w-full table-fixed text-left text-sm">
           <colgroup>
             <col className="w-[18rem]" />
             <col className="w-[16rem]" />
@@ -110,15 +109,15 @@ export function AdminToolPrices() {
             <col className="w-[12rem]" />
             <col className="w-[8rem]" />
           </colgroup>
-          <thead className={adminTableHeadClass}>
+          <thead className={tableHeadClass}>
             <tr className="border-b">
-              <th className="py-3 pr-4 font-medium">工具</th>
-              <th className="px-4 py-3 font-medium">计费键</th>
-              <th className="px-4 py-3 font-medium">启用</th>
-              <th className="px-4 py-3 text-right font-medium">
+              <th className={tableClasses.headStart}>工具</th>
+              <th className={tableClasses.head}>计费键</th>
+              <th className={tableClasses.head}>启用</th>
+              <th className={`${tableClasses.head} text-right`}>
                 单次价格 ({prices[0]?.currency || "-"})
               </th>
-              <th className="py-3 pl-4 text-right font-medium">版本</th>
+              <th className={tableClasses.headEnd}>版本</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -128,16 +127,19 @@ export function AdminToolPrices() {
               const draft = drafts[price.tool_key];
               return (
                 <tr key={price.tool_key}>
-                  <td className="py-3 pr-4">
+                  <td className={tableClasses.cellStart} data-primary>
                     <span className="inline-flex items-center gap-2 font-medium">
                       <Icon className="size-4 text-muted-foreground" />
                       {meta.name}
                     </span>
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                  <td
+                    className={`${tableClasses.cell} font-mono text-xs text-muted-foreground`}
+                    data-label="计费键"
+                  >
                     {price.tool_key}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className={tableClasses.cell} data-label="启用">
                     <label className="inline-flex items-center gap-2">
                       <input
                         type="checkbox"
@@ -151,7 +153,7 @@ export function AdminToolPrices() {
                       <span>{draft?.enabled ? "计费" : "停用"}</span>
                     </label>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className={tableClasses.cell} data-label="单次价格">
                     <Input
                       className="ml-auto h-8 w-40 text-right font-mono"
                       inputMode="decimal"
@@ -163,22 +165,27 @@ export function AdminToolPrices() {
                       }
                     />
                   </td>
-                  <td className="py-3 pl-4 text-right text-xs text-muted-foreground">
+                  <td
+                    className={`${tableClasses.cellEnd} text-xs text-muted-foreground`}
+                    data-label="版本"
+                  >
                     <p>v{price.version}</p>
-                    <p className="mt-0.5">{formatAdminDate(price.updated_at)}</p>
+                    <p className="mt-0.5">{formatDateTime(price.updated_at)}</p>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-      </div>
-      <div className="mt-4 flex justify-end">
-        <Button type="submit" disabled={saving || prices.length === 0}>
-          <SavingIcon saving={saving} />
-          保存方案
-        </Button>
-      </div>
+      </AdminListPage>
+      {!loading && !error ? (
+        <div className="mt-4 flex justify-end">
+          <Button type="submit" disabled={saving || prices.length === 0}>
+            <SavingIcon saving={saving} />
+            保存方案
+          </Button>
+        </div>
+      ) : null}
     </form>
   );
 }

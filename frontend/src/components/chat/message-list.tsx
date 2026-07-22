@@ -7,7 +7,8 @@ import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { AskUserInteraction, Message, Turn } from "@/lib/types";
 import { shouldFollowAfterScroll } from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
-import { ChevronUp, Loader2 } from "lucide-react";
+import { ChevronUp } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 
 interface MessageListProps {
   activityLabels?: Record<string, string | null>;
@@ -15,6 +16,7 @@ interface MessageListProps {
   hasOlderMessages?: boolean;
   loadingOlderMessages?: boolean;
   messages: Message[];
+  bottomInset?: number;
   onEditMessage: (message: Message) => void;
   onLoadOlderMessages?: () => Promise<void>;
   onOpenTimeline: (turnId: string) => void;
@@ -95,6 +97,7 @@ export function MessageList({
   hasOlderMessages = false,
   loadingOlderMessages = false,
   messages,
+  bottomInset = 208,
   onEditMessage,
   onLoadOlderMessages,
   onOpenTimeline,
@@ -174,7 +177,7 @@ export function MessageList({
       behavior: "auto",
     });
     lastScrollTopRef.current = viewport.scrollTop;
-  }, [messages, streamingTurnId]);
+  }, [bottomInset, messages, streamingTurnId]);
 
   useEffect(() => {
     if (!streamingTurnId) return;
@@ -208,7 +211,10 @@ export function MessageList({
       )}
     >
       <ScrollArea className="h-full">
-        <div className="mx-auto min-w-0 w-full max-w-2xl px-4 pt-4 pb-52 sm:px-6">
+        <div
+          className="mx-auto min-w-0 w-full max-w-2xl px-4 pt-4 sm:px-6"
+          style={{ paddingBottom: bottomInset }}
+        >
           {hasOlderMessages ? (
             <div className="mb-4 flex justify-center">
               <Button
@@ -218,11 +224,7 @@ export function MessageList({
                 disabled={loadingOlderMessages}
                 onClick={() => void loadOlderMessages()}
               >
-                {loadingOlderMessages ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <ChevronUp className="size-4" />
-                )}
+                {loadingOlderMessages ? <Spinner /> : <ChevronUp className="size-4" />}
                 更早消息
               </Button>
             </div>

@@ -13,6 +13,7 @@ import { openAuthDialog } from "@/lib/auth-dialog-events";
 import { emitConversationUpdated } from "@/lib/conversation-events";
 import { useAuth } from "@/hooks/use-auth";
 import { useComposerPreferences } from "@/hooks/use-composer-preferences";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { useMobileHeader } from "@/components/layout/mobile-header-context";
 import { stashPendingHomeTurn } from "@/lib/pending-home-turn";
 import {
@@ -35,6 +36,10 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false);
   const { user, isLoading } = useAuth();
   const composerPreferences = useComposerPreferences(Boolean(user) && !isLoading);
+  const { copyToClipboard } = useCopyToClipboard({
+    successMessage: "网站 URL 已复制",
+    errorMessage: "复制网站 URL 失败",
+  });
   const { setAction: setMobileAction } = useMobileHeader();
   const router = useRouter();
   const attachmentsRef = useRef<HomeAttachment[]>([]);
@@ -97,14 +102,8 @@ export default function HomePage() {
   };
 
   const copyWebsiteUrl = useCallback(async () => {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(new URL("/", window.location.origin).toString());
-      toast.success("网站 URL 已复制");
-    } catch {
-      toast.error("复制网站 URL 失败");
-    }
-  }, []);
+    await copyToClipboard(new URL("/", window.location.origin).toString());
+  }, [copyToClipboard]);
 
   useEffect(() => {
     setMobileAction({
@@ -253,13 +252,13 @@ export default function HomePage() {
           <Button
             type="button"
             variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0"
+            size="icon-md"
+            className="shrink-0"
             aria-label="复制网站 URL"
             title="复制网站 URL"
             onClick={() => void copyWebsiteUrl()}
           >
-            <Share className="h-3.5 w-3.5" />
+            <Share className="size-3.5" />
             <span className="sr-only">复制网站 URL</span>
           </Button>
         </div>

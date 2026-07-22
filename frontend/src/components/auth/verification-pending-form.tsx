@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { Button } from "@/components/ui/button";
 import { resendVerification } from "@/lib/api";
 
@@ -39,7 +39,7 @@ export function VerificationPendingForm({
       </p>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="button" disabled={sending} onClick={() => void resend()}>
-        {sending ? <Loader2 className="size-4 animate-spin" /> : null}
+        {sending ? <Spinner /> : null}
         重新发送
       </Button>
       <Button type="button" variant="ghost" onClick={onBackToLogin}>

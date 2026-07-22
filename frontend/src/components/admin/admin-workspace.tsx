@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
 import { AdminNavigation } from "@/components/admin/admin-navigation";
-import { adminSectionsForRole, type AdminSection } from "@/components/admin/admin-sections";
+import {
+  adminSectionsForRole,
+  type AdminSection,
+  type AdminSectionDefinition,
+} from "@/components/admin/admin-sections";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { canAccessAdmin } from "@/lib/permissions";
-import type { UserRole } from "@/lib/types";
 
-function sectionFromHash(role: UserRole): AdminSection {
+function sectionFromHash(sections: readonly AdminSectionDefinition[]): AdminSection {
   if (typeof window === "undefined") return "overview";
   const value = window.location.hash.slice(1) as AdminSection;
-  return adminSectionsForRole(role).some((item) => item.id === value) ? value : "overview";
+  return sections.some((item) => item.id === value) ? value : "overview";
 }
 
 export function AdminWorkspace() {
@@ -22,6 +25,7 @@ export function AdminWorkspace() {
   const router = useRouter();
   const [section, setSection] = useState<AdminSection>("overview");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const sections = useMemo(() => (user ? adminSectionsForRole(user.role) : []), [user]);
 
   useEffect(() => {
     if (user && !canAccessAdmin(user.role)) router.replace("/");
@@ -29,11 +33,11 @@ export function AdminWorkspace() {
 
   useEffect(() => {
     if (!user || !canAccessAdmin(user.role)) return;
-    const sync = () => setSection(sectionFromHash(user.role));
+    const sync = () => setSection(sectionFromHash(sections));
     sync();
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
-  }, [user]);
+  }, [sections, user]);
 
   if (!user || !canAccessAdmin(user.role)) return null;
 
@@ -42,27 +46,35 @@ export function AdminWorkspace() {
     setMobileOpen(false);
     window.history.replaceState(null, "", `/admin#${next}`);
   };
-  const current =
-    adminSectionsForRole(user.role).find((item) => item.id === section) ||
-    adminSectionsForRole(user.role)[0];
+  const current = sections.find((item) => item.id === section) || sections[0];
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
       <aside className="hidden h-full w-[236px] shrink-0 border-r border-sidebar-border md:block">
-        <AdminNavigation section={section} user={user} onSelect={selectSection} />
+        <AdminNavigation
+          section={section}
+          sections={sections}
+          user={user}
+          onSelect={selectSection}
+        />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:hidden">
-          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-            <SheetTrigger render={<Button variant="ghost" size="icon-sm" />}>
+        <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-3 border-b px-4 pt-[env(safe-area-inset-top)] md:hidden">
+          <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>
+            <DialogTrigger render={<Button variant="ghost" size="icon-sm" />}>
               <Menu className="size-4" />
               <span className="sr-only">打开管理导航</span>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-[268px] p-0">
-              <AdminNavigation section={section} user={user} onSelect={selectSection} />
-            </SheetContent>
-          </Sheet>
+            </DialogTrigger>
+            <DialogContent side="left" className="w-[268px] p-0">
+              <AdminNavigation
+                section={section}
+                sections={sections}
+                user={user}
+                onSelect={selectSection}
+              />
+            </DialogContent>
+          </Dialog>
           <p className="text-sm font-semibold">{current.label}</p>
         </header>
 

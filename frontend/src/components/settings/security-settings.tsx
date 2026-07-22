@@ -4,6 +4,7 @@ import { LogOut, MonitorCheck } from "lucide-react";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SettingsSection } from "@/components/shared/settings-section";
 import { useAuth } from "@/hooks/use-auth";
 import type { User } from "@/lib/types";
 
@@ -11,12 +12,8 @@ export function SecuritySettings({ user }: { user: User }) {
   const { logout } = useAuth();
 
   return (
-    <div className="space-y-9">
-      <header>
-        <h2 className="text-xl font-semibold">安全</h2>
-      </header>
-
-      <section className="border-b pb-9">
+    <SettingsSection title="安全">
+      <section>
         <div className="mb-6">
           <h3 className="text-sm font-medium">登录密码</h3>
         </div>
@@ -25,7 +22,7 @@ export function SecuritySettings({ user }: { user: User }) {
 
       <section>
         <h3 className="mb-4 text-sm font-medium">当前会话</h3>
-        <div className="flex flex-col gap-4 border-y py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-secondary">
               <MonitorCheck className="size-4" />
@@ -44,6 +41,6 @@ export function SecuritySettings({ user }: { user: User }) {
           </Button>
         </div>
       </section>
-    </div>
+    </SettingsSection>
   );
 }

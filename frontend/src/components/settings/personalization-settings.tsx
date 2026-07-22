@@ -2,10 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, MapPin, RefreshCw, Save, Trash2 } from "lucide-react";
+import { MapPin, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
+import { SettingsSection } from "@/components/shared/settings-section";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import { FormField } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -209,19 +211,17 @@ export function PersonalizationSettings() {
   }
 
   return (
-    <div className="space-y-9">
-      <header>
-        <h2 className="text-xl font-semibold">个性化</h2>
-      </header>
-
-      <form onSubmit={savePreferences} className="space-y-5 border-b pb-9">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-4">
-            <Label htmlFor="preferences-text">回复偏好</Label>
+    <SettingsSection title="个性化">
+      <form onSubmit={savePreferences} className="space-y-5">
+        <FormField
+          label="回复偏好"
+          htmlFor="preferences-text"
+          labelAction={
             <span className="text-xs tabular-nums text-muted-foreground">
               {preferencesLength}/8000
             </span>
-          </div>
+          }
+        >
           <Textarea
             id="preferences-text"
             value={preferencesText}
@@ -234,9 +234,9 @@ export function PersonalizationSettings() {
             className="min-h-36 resize-y text-sm"
             placeholder="例如：使用简洁中文回答；代码示例优先使用 Go。"
           />
-        </div>
+        </FormField>
 
-        <label className="flex items-start gap-3 border-y py-4">
+        <label className="flex items-start gap-3 py-4">
           <input
             type="checkbox"
             checked={locationEnabled}
@@ -253,13 +253,13 @@ export function PersonalizationSettings() {
         </label>
 
         <Button type="submit" size="sm" disabled={savingPreferences}>
-          {savingPreferences ? <Loader2 className="animate-spin" /> : <Save />}
+          {savingPreferences ? <Spinner /> : <Save />}
           保存偏好
         </Button>
       </form>
 
       <section className="space-y-5">
-        <div className="flex min-w-0 items-start justify-between gap-4 border-y py-4">
+        <div className="flex min-w-0 items-start justify-between gap-4 py-4">
           <div className="flex min-w-0 items-start gap-3">
             <MapPin className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
@@ -282,7 +282,7 @@ export function PersonalizationSettings() {
             onClick={clearLocation}
             disabled={!savedLocation || locationMutation !== "idle"}
           >
-            {locationMutation === "clearing" ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            {locationMutation === "clearing" ? <Spinner /> : <Trash2 />}
           </Button>
         </div>
 
@@ -304,6 +304,6 @@ export function PersonalizationSettings() {
           }}
         />
       </section>
-    </div>
+    </SettingsSection>
   );
 }

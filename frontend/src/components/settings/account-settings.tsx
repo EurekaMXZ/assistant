@@ -1,41 +1,30 @@
 "use client";
 
 import { Check, Copy, UserRound } from "lucide-react";
-import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SettingsSection } from "@/components/shared/settings-section";
 import type { User } from "@/lib/types";
-
-function formatDate(value?: string | null) {
-  if (!value) return "暂无记录";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { formatDateTime } from "@/lib/format";
 
 function roleLabel(role: User["role"]) {
   return role === "admin" ? "管理员" : role === "system" ? "系统" : "用户";
 }
 
 export function AccountSettings({ user }: { user: User }) {
+  const { copyToClipboard } = useCopyToClipboard({
+    successMessage: "账户 ID 已复制",
+    errorMessage: "复制账户 ID 失败",
+  });
   const copyUserID = async () => {
-    await navigator.clipboard.writeText(user.id);
-    toast.success("账户 ID 已复制");
+    await copyToClipboard(user.id);
   };
 
   return (
-    <div className="space-y-8">
-      <header>
-        <h2 className="text-xl font-semibold">账户</h2>
-      </header>
-
-      <section className="flex items-center gap-4 border-b pb-7">
+    <SettingsSection title="账户" className="space-y-8">
+      <section className="flex items-center gap-4">
         <div className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-foreground text-lg font-semibold text-background">
           {user.username.slice(0, 1).toUpperCase() || <UserRound className="size-5" />}
         </div>
@@ -53,7 +42,7 @@ export function AccountSettings({ user }: { user: User }) {
 
       <section>
         <h3 className="mb-4 text-sm font-medium">账户信息</h3>
-        <dl className="divide-y border-y">
+        <dl className="divide-y">
           <div className="grid gap-1 py-4 sm:grid-cols-[160px_1fr] sm:items-center">
             <dt className="text-sm text-muted-foreground">用户名</dt>
             <dd className="text-sm font-medium">{user.username}</dd>
@@ -88,21 +77,23 @@ export function AccountSettings({ user }: { user: User }) {
         </dl>
       </section>
 
-      <Separator />
-
       <section>
         <h3 className="mb-4 text-sm font-medium">时间记录</h3>
         <div className="grid gap-5 sm:grid-cols-2">
           <div>
             <p className="text-xs text-muted-foreground">注册时间</p>
-            <p className="mt-1 text-sm font-medium">{formatDate(user.created_at)}</p>
+            <p className="mt-1 text-sm font-medium">
+              {formatDateTime(user.created_at, { fallback: "暂无记录" })}
+            </p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">最近登录</p>
-            <p className="mt-1 text-sm font-medium">{formatDate(user.last_login_at)}</p>
+            <p className="mt-1 text-sm font-medium">
+              {formatDateTime(user.last_login_at, { fallback: "暂无记录" })}
+            </p>
           </div>
         </div>
       </section>
-    </div>
+    </SettingsSection>
   );
 }

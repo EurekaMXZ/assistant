@@ -15,29 +15,17 @@ import {
 import { toast } from "sonner";
 import { AdminRedemptionCodes } from "@/components/admin/admin-redemption-codes";
 import { AdminToolPrices } from "@/components/admin/admin-tool-prices";
-import { BillingTokenUsage } from "@/components/billing-token-usage";
-import { BillingToolUsage } from "@/components/billing-tool-usage";
 import {
-  AdminEmpty,
-  AdminError,
-  AdminLoading,
-  AdminPageHeader,
-  SavingIcon,
-  adminSelectClass,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "@/components/admin/admin-shared";
+  BillingAccountDialog,
+  BillingAdjustmentDialog,
+  type BillingAdjustment,
+} from "@/components/admin/admin-billing-dialogs";
+import { BillingTokenUsage, BillingToolUsage } from "@/components/billing/billing-usage-tooltip";
+import { AdminPageHeader } from "@/components/admin/admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,10 +33,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   applyAdminBillingAdjustment,
   listAdminBillingAccountsPage,
@@ -58,6 +42,7 @@ import {
   updateAdminBillingAccount,
 } from "@/lib/api";
 import { parseDecimalNanos } from "@/lib/decimal-nanos";
+import { formatDateTime } from "@/lib/format";
 import { createIdempotencyKey } from "@/lib/idempotency-key";
 import type { BillingAccount, BillingTransaction, BillingUsageEvent, User } from "@/lib/types";
 import { useCursorPagination } from "@/lib/use-cursor-pagination";
@@ -91,10 +76,7 @@ export function AdminBilling() {
   const { items: usage } = usageState;
   const [users, setUsers] = useState<User[]>([]);
   const [editing, setEditing] = useState<BillingAccount | null>(null);
-  const [adjusting, setAdjusting] = useState<{
-    account: BillingAccount;
-    kind: "topups" | "refunds";
-  } | null>(null);
+  const [adjusting, setAdjusting] = useState<BillingAdjustment | null>(null);
   const [status, setStatus] = useState<BillingAccount["status"]>("active");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
@@ -209,353 +191,311 @@ export function AdminBilling() {
           );
         })}
       </div>
-      {loading && view !== "codes" && view !== "tool-prices" ? <AdminLoading /> : null}
-      {!loading && error && view !== "codes" && view !== "tool-prices" ? (
-        <AdminError message={error} onRetry={load} />
-      ) : null}
-      {!loading && !error && view === "accounts" ? (
-        accounts.length ? (
-          <CursorTableScroll
-            className={`${adminTableScrollClass} mt-5`}
-            hasMore={accountState.page.has_more}
-            loadingMore={accountState.loadingMore}
-            loadMoreError={accountState.loadMoreError}
-            onLoadMore={accountState.loadMore}
-            aria-label="计费账户"
-          >
-            <table className="w-[72rem] min-w-full table-fixed text-left text-sm">
-              <colgroup>
-                <col className="w-[24rem]" />
-                <col className="w-[8rem]" />
-                <col className="w-[12rem]" />
-                <col className="w-[8rem]" />
-                <col className="w-[14rem]" />
-                <col className="w-[6rem]" />
-              </colgroup>
-              <thead className={adminTableHeadClass}>
-                <tr className="border-b">
-                  <th className="py-3 pr-4 font-medium">用户</th>
-                  <th className="px-4 py-3 font-medium">模式</th>
-                  <th className="px-4 py-3 text-right font-medium">余额</th>
-                  <th className="px-4 py-3 font-medium">状态</th>
-                  <th className="px-4 py-3 font-medium">更新时间</th>
-                  <th className="py-3 pl-4 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {accounts.map((account) => {
-                  const user = userMap.get(account.user_id);
-                  return (
-                    <tr key={account.id}>
-                      <td className="py-3 pr-4">
-                        <p
-                          className="truncate font-medium"
-                          title={user?.username || account.user_id}
-                        >
-                          {user?.username || account.user_id.slice(0, 8)}
-                        </p>
-                        <p
-                          className="mt-0.5 truncate text-xs text-muted-foreground"
-                          title={user?.email || account.user_id}
-                        >
-                          {user?.email || account.user_id}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline">预付费</Badge>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                        {account.currency} {account.balance}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={account.status === "active" ? "secondary" : "destructive"}>
-                          {account.status === "active" ? "正常" : "冻结"}
-                        </Badge>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                        {formatAdminDate(account.updated_at)}
-                      </td>
-                      <td className="py-3 pl-4 text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" />}>
-                            <MoreHorizontal />
-                            <span className="sr-only">计费账户操作</span>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem onClick={() => openEdit(account)}>
-                                账户设置
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openAdjustment(account, "topups")}>
-                                <ArrowDownLeft />
-                                充值
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openAdjustment(account, "refunds")}>
-                                <ArrowUpRight />
-                                退款扣减
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </CursorTableScroll>
-        ) : (
-          <AdminEmpty icon={WalletCards} title="暂无计费账户" />
-        )
-      ) : null}
-
-      {!loading && !error && view === "transactions" ? (
-        transactions.length ? (
-          <CursorTableScroll
-            className={`${adminTableScrollClass} mt-5`}
-            hasMore={transactionState.page.has_more}
-            loadingMore={transactionState.loadingMore}
-            loadMoreError={transactionState.loadMoreError}
-            onLoadMore={transactionState.loadMore}
-            aria-label="资金流水"
-          >
-            <table className="w-[78rem] min-w-full table-fixed text-left text-sm">
-              <colgroup>
-                <col className="w-[11rem]" />
-                <col className="w-[18rem]" />
-                <col className="w-[14rem]" />
-                <col className="w-[12rem]" />
-                <col className="w-[10rem]" />
-                <col className="w-[13rem]" />
-              </colgroup>
-              <thead className={adminTableHeadClass}>
-                <tr className="border-b">
-                  <th className="py-3 pr-4 font-medium">时间</th>
-                  <th className="px-4 py-3 font-medium">用户</th>
-                  <th className="px-4 py-3 font-medium">类型</th>
-                  <th className="px-4 py-3 text-right font-medium">金额</th>
-                  <th className="px-4 py-3 text-right font-medium">余额</th>
-                  <th className="py-3 pl-4 font-medium">原因</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {transactions.map((item) => (
-                  <tr key={item.id}>
-                    <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
-                      {formatAdminDate(item.created_at)}
+      {view === "accounts" ? (
+        <AdminListPage
+          ariaLabel="计费账户"
+          className="mt-5"
+          emptyIcon={WalletCards}
+          emptyTitle="暂无计费账户"
+          error={error}
+          hasItems={accounts.length > 0}
+          hasMore={accountState.page.has_more}
+          loading={loading}
+          loadingMore={accountState.loadingMore}
+          loadMoreError={accountState.loadMoreError}
+          onLoadMore={accountState.loadMore}
+          onRetry={load}
+        >
+          <table className="admin-responsive-table w-[72rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[24rem]" />
+              <col className="w-[8rem]" />
+              <col className="w-[12rem]" />
+              <col className="w-[8rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[6rem]" />
+            </colgroup>
+            <thead className={tableHeadClass}>
+              <tr className="border-b">
+                <th className={tableClasses.headStart}>用户</th>
+                <th className={tableClasses.head}>模式</th>
+                <th className={`${tableClasses.head} text-right`}>余额</th>
+                <th className={tableClasses.head}>状态</th>
+                <th className={tableClasses.head}>更新时间</th>
+                <th className={tableClasses.headEnd}>操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {accounts.map((account) => {
+                const user = userMap.get(account.user_id);
+                return (
+                  <tr key={account.id}>
+                    <td className={tableClasses.cellStart} data-primary>
+                      <p className="truncate font-medium" title={user?.username || account.user_id}>
+                        {user?.username || account.user_id.slice(0, 8)}
+                      </p>
+                      <p
+                        className="mt-0.5 truncate text-xs text-muted-foreground"
+                        title={user?.email || account.user_id}
+                      >
+                        {user?.email || account.user_id}
+                      </p>
+                    </td>
+                    <td className={tableClasses.cell} data-label="模式">
+                      <Badge variant="outline">预付费</Badge>
                     </td>
                     <td
-                      className="truncate px-4 py-3"
-                      title={userMap.get(item.user_id)?.username || item.user_id}
+                      className={`${tableClasses.cell} whitespace-nowrap text-right font-mono`}
+                      data-label="余额"
                     >
-                      {userMap.get(item.user_id)?.username || item.user_id.slice(0, 8)}
+                      {account.currency} {account.balance}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                        {item.direction === "credit" ? (
-                          <ArrowDownLeft className="size-4 shrink-0 stroke-[1.75] text-emerald-600" />
-                        ) : (
-                          <ArrowUpRight className="size-4 shrink-0 stroke-[1.75] text-amber-600" />
-                        )}
-                        {transactionName(item.kind)}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                      {item.direction === "credit" ? "+" : "-"}
-                      {item.currency} {item.amount}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
-                      {item.balance_after}
-                    </td>
-                    <td
-                      className="truncate py-3 pl-4 text-muted-foreground"
-                      title={item.reason || ""}
-                    >
-                      {item.reason || "-"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CursorTableScroll>
-        ) : (
-          <AdminEmpty icon={ReceiptText} title="暂无资金流水" />
-        )
-      ) : null}
-
-      {!loading && !error && view === "usage" ? (
-        usage.length ? (
-          <CursorTableScroll
-            className={`${adminTableScrollClass} mt-5`}
-            hasMore={usageState.page.has_more}
-            loadingMore={usageState.loadingMore}
-            loadMoreError={usageState.loadMoreError}
-            onLoadMore={usageState.loadMore}
-            aria-label="用量明细"
-          >
-            <table className="w-[80rem] min-w-full table-fixed text-left text-sm">
-              <colgroup>
-                <col className="w-[11rem]" />
-                <col className="w-[16rem]" />
-                <col className="w-[18rem]" />
-                <col className="w-[9rem]" />
-                <col className="w-[7rem]" />
-                <col className="w-[12rem]" />
-                <col className="w-[7rem]" />
-              </colgroup>
-              <thead className={adminTableHeadClass}>
-                <tr className="border-b">
-                  <th className="py-3 pr-4 font-medium">时间</th>
-                  <th className="px-4 py-3 font-medium">用户</th>
-                  <th className="px-4 py-3 font-medium">模型</th>
-                  <th className="px-4 py-3 text-right font-medium">Tokens</th>
-                  <th className="px-4 py-3 text-right font-medium">工具</th>
-                  <th className="px-4 py-3 text-right font-medium">费用</th>
-                  <th className="py-3 pl-4 text-right font-medium">状态</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {usage.map((item) => (
-                  <tr key={item.id}>
-                    <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
-                      {formatAdminDate(item.created_at)}
-                    </td>
-                    <td
-                      className="truncate px-4 py-3"
-                      title={
-                        item.owner_user_id
-                          ? userMap.get(item.owner_user_id)?.username || item.owner_user_id
-                          : ""
-                      }
-                    >
-                      {item.owner_user_id
-                        ? userMap.get(item.owner_user_id)?.username ||
-                          item.owner_user_id.slice(0, 8)
-                        : "-"}
-                    </td>
-                    <td className="truncate px-4 py-3 font-medium" title={item.upstream_model}>
-                      {item.upstream_model}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      <BillingTokenUsage usage={item} />
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      <BillingToolUsage usage={item} />
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                      {item.currency && item.amount_nanos != null
-                        ? `${item.currency} ${(item.amount_nanos / 1_000_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 9 })}`
-                        : "未计价"}
-                    </td>
-                    <td className="py-3 pl-4 text-right">
-                      <Badge variant={item.status === "completed" ? "secondary" : "destructive"}>
-                        {item.status}
+                    <td className={tableClasses.cell} data-label="状态">
+                      <Badge variant={account.status === "active" ? "secondary" : "destructive"}>
+                        {account.status === "active" ? "正常" : "冻结"}
                       </Badge>
                     </td>
+                    <td
+                      className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
+                      data-label="更新时间"
+                    >
+                      {formatDateTime(account.updated_at)}
+                    </td>
+                    <td className={tableClasses.cellEnd} data-actions>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" />}>
+                          <MoreHorizontal />
+                          <span className="sr-only">计费账户操作</span>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem onClick={() => openEdit(account)}>
+                              账户设置
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openAdjustment(account, "topups")}>
+                              <ArrowDownLeft />
+                              充值
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openAdjustment(account, "refunds")}>
+                              <ArrowUpRight />
+                              退款扣减
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </CursorTableScroll>
-        ) : (
-          <AdminEmpty icon={CreditCard} title="暂无模型用量" />
-        )
+                );
+              })}
+            </tbody>
+          </table>
+        </AdminListPage>
+      ) : null}
+
+      {view === "transactions" ? (
+        <AdminListPage
+          ariaLabel="资金流水"
+          className="mt-5"
+          emptyIcon={ReceiptText}
+          emptyTitle="暂无资金流水"
+          error={error}
+          hasItems={transactions.length > 0}
+          hasMore={transactionState.page.has_more}
+          loading={loading}
+          loadingMore={transactionState.loadingMore}
+          loadMoreError={transactionState.loadMoreError}
+          onLoadMore={transactionState.loadMore}
+          onRetry={load}
+        >
+          <table className="admin-responsive-table w-[78rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[11rem]" />
+              <col className="w-[18rem]" />
+              <col className="w-[14rem]" />
+              <col className="w-[12rem]" />
+              <col className="w-[10rem]" />
+              <col className="w-[13rem]" />
+            </colgroup>
+            <thead className={tableHeadClass}>
+              <tr className="border-b">
+                <th className={tableClasses.headStart}>时间</th>
+                <th className={tableClasses.head}>用户</th>
+                <th className={tableClasses.head}>类型</th>
+                <th className={`${tableClasses.head} text-right`}>金额</th>
+                <th className={`${tableClasses.head} text-right`}>余额</th>
+                <th className={`${tableClasses.headEnd} text-left`}>原因</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {transactions.map((item) => (
+                <tr key={item.id}>
+                  <td
+                    className={`${tableClasses.cellStart} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="时间"
+                  >
+                    {formatDateTime(item.created_at)}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} truncate`}
+                    title={userMap.get(item.user_id)?.username || item.user_id}
+                    data-primary
+                  >
+                    {userMap.get(item.user_id)?.username || item.user_id.slice(0, 8)}
+                  </td>
+                  <td className={`${tableClasses.cell} whitespace-nowrap`} data-label="类型">
+                    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                      {item.direction === "credit" ? (
+                        <ArrowDownLeft className="size-4 shrink-0 stroke-[1.75] text-credit" />
+                      ) : (
+                        <ArrowUpRight className="size-4 shrink-0 stroke-[1.75] text-debit" />
+                      )}
+                      {transactionName(item.kind)}
+                    </span>
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-right font-mono`}
+                    data-label="金额"
+                  >
+                    {item.direction === "credit" ? "+" : "-"}
+                    {item.currency} {item.amount}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-right font-mono text-muted-foreground`}
+                    data-label="余额"
+                  >
+                    {item.balance_after}
+                  </td>
+                  <td
+                    className={`${tableClasses.cellEnd} truncate text-left text-muted-foreground`}
+                    title={item.reason || ""}
+                    data-label="原因"
+                  >
+                    {item.reason || "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </AdminListPage>
+      ) : null}
+
+      {view === "usage" ? (
+        <AdminListPage
+          ariaLabel="用量明细"
+          className="mt-5"
+          emptyIcon={CreditCard}
+          emptyTitle="暂无模型用量"
+          error={error}
+          hasItems={usage.length > 0}
+          hasMore={usageState.page.has_more}
+          loading={loading}
+          loadingMore={usageState.loadingMore}
+          loadMoreError={usageState.loadMoreError}
+          onLoadMore={usageState.loadMore}
+          onRetry={load}
+        >
+          <table className="admin-responsive-table w-[80rem] min-w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[11rem]" />
+              <col className="w-[16rem]" />
+              <col className="w-[18rem]" />
+              <col className="w-[9rem]" />
+              <col className="w-[7rem]" />
+              <col className="w-[12rem]" />
+              <col className="w-[7rem]" />
+            </colgroup>
+            <thead className={tableHeadClass}>
+              <tr className="border-b">
+                <th className={tableClasses.headStart}>时间</th>
+                <th className={tableClasses.head}>用户</th>
+                <th className={tableClasses.head}>模型</th>
+                <th className={`${tableClasses.head} text-right`}>Tokens</th>
+                <th className={`${tableClasses.head} text-right`}>工具</th>
+                <th className={`${tableClasses.head} text-right`}>费用</th>
+                <th className={tableClasses.headEnd}>状态</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {usage.map((item) => (
+                <tr key={item.id}>
+                  <td
+                    className={`${tableClasses.cellStart} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="时间"
+                  >
+                    {formatDateTime(item.created_at)}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} truncate`}
+                    title={
+                      item.owner_user_id
+                        ? userMap.get(item.owner_user_id)?.username || item.owner_user_id
+                        : ""
+                    }
+                    data-label="用户"
+                  >
+                    {item.owner_user_id
+                      ? userMap.get(item.owner_user_id)?.username || item.owner_user_id.slice(0, 8)
+                      : "-"}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} truncate font-medium`}
+                    title={item.upstream_model}
+                    data-primary
+                  >
+                    {item.upstream_model}
+                  </td>
+                  <td className={`${tableClasses.cell} text-right font-mono`} data-label="Tokens">
+                    <BillingTokenUsage usage={item} />
+                  </td>
+                  <td className={`${tableClasses.cell} text-right font-mono`} data-label="工具">
+                    <BillingToolUsage usage={item} />
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-right font-mono`}
+                    data-label="费用"
+                  >
+                    {item.currency && item.amount_nanos != null
+                      ? `${item.currency} ${(item.amount_nanos / 1_000_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 9 })}`
+                      : "未计价"}
+                  </td>
+                  <td className={tableClasses.cellEnd} data-label="状态">
+                    <Badge variant={item.status === "completed" ? "secondary" : "destructive"}>
+                      {item.status}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </AdminListPage>
       ) : null}
 
       {view === "codes" ? <AdminRedemptionCodes users={users} /> : null}
       {view === "tool-prices" ? <AdminToolPrices /> : null}
 
-      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>账户设置</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="billing-status">状态</Label>
-            <select
-              id="billing-status"
-              className={adminSelectClass}
-              value={status}
-              onChange={(event) => setStatus(event.target.value as BillingAccount["status"])}
-            >
-              <option value="active">正常</option>
-              <option value="frozen">冻结</option>
-            </select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>
-              取消
-            </Button>
-            <Button disabled={saving} onClick={() => void saveAccount()}>
-              <SavingIcon saving={saving} />
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!adjusting}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAdjusting(null);
-            setAdjustmentKey("");
-          }
+      <BillingAccountDialog
+        account={editing}
+        status={status}
+        saving={saving}
+        onClose={() => setEditing(null)}
+        onSave={() => void saveAccount()}
+        onStatusChange={setStatus}
+      />
+      <BillingAdjustmentDialog
+        adjustment={adjusting}
+        amount={amount}
+        reason={reason}
+        reference={reference}
+        saving={saving}
+        onAmountChange={setAmount}
+        onClose={() => {
+          setAdjusting(null);
+          setAdjustmentKey("");
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{adjusting?.kind === "topups" ? "账户充值" : "退款扣减"}</DialogTitle>
-            <DialogDescription>金额将以独立账本记录写入，操作不可直接删除。</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="billing-amount">金额 ({adjusting?.account.currency})</Label>
-              <Input
-                id="billing-amount"
-                inputMode="decimal"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="billing-reason">原因</Label>
-              <Textarea
-                id="billing-reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="billing-reference">外部参考</Label>
-              <Input
-                id="billing-reference"
-                value={reference}
-                onChange={(event) => setReference(event.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setAdjusting(null);
-                setAdjustmentKey("");
-              }}
-            >
-              取消
-            </Button>
-            <Button
-              variant={adjusting?.kind === "refunds" ? "destructive" : "default"}
-              disabled={saving || !amount || !reason.trim()}
-              onClick={() => void applyAdjustment()}
-            >
-              <SavingIcon saving={saving} />
-              确认入账
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onReasonChange={setReason}
+        onReferenceChange={setReference}
+        onSave={() => void applyAdjustment()}
+      />
     </div>
   );
 }

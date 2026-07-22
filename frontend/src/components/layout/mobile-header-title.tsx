@@ -51,7 +51,7 @@ export function MobileHeaderTitle({
   return (
     <h1
       className={cn(
-        "truncate px-2 text-center text-sm font-medium",
+        "flex min-h-10 items-center justify-center truncate px-3 text-center text-sm font-medium",
         onLongPress &&
           "select-none rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}

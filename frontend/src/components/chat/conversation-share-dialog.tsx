@@ -2,7 +2,6 @@
 
 import { useRef } from "react";
 import { Copy } from "lucide-react";
-import { toast } from "sonner";
 import type { ConversationShare } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 
 export function buildConversationShareUrl(shareId: string, origin?: string) {
   const path = `/share/${encodeURIComponent(shareId)}`;
@@ -29,6 +29,10 @@ export function ConversationShareDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const linkInputRef = useRef<HTMLInputElement>(null);
+  const { copyToClipboard } = useCopyToClipboard({
+    successMessage: "分享链接已复制",
+    errorMessage: "无法自动复制，请手动复制链接",
+  });
   if (!share) return null;
 
   const shareUrl = buildConversationShareUrl(
@@ -37,27 +41,9 @@ export function ConversationShareDialog({
   );
 
   const copyLink = async () => {
-    let copied = false;
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(shareUrl);
-      copied = true;
-    } catch {
-      const input = linkInputRef.current;
-      try {
-        input?.focus();
-        input?.select();
-        copied = document.execCommand("copy");
-      } catch {
-        copied = false;
-      }
-    }
-    if (copied) {
-      toast.success("分享链接已复制");
-    } else {
+    if (!(await copyToClipboard(shareUrl))) {
       linkInputRef.current?.focus();
       linkInputRef.current?.select();
-      toast.error("无法自动复制，请手动复制链接");
     }
   };
 

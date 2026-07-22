@@ -1,10 +1,20 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { LocateFixed, Loader2, MapPinned, Search } from "lucide-react";
 import { load as loadAMap } from "@amap/amap-jsapi-loader";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  AMapLocationPickerView,
+  type AMapSearchResult,
+} from "@/components/settings/amap-location-picker-view";
+import type {
+  AMapAutocomplete,
+  AMapGeolocation,
+  AMapLngLat,
+  AMapMap,
+  AMapMarker,
+  AMapNamespace,
+  AutocompleteTip,
+} from "@/components/settings/amap-location-types";
 import type { UserLocationInput, UserLocationSource } from "@/lib/types";
 
 declare global {
@@ -15,93 +25,6 @@ declare global {
     };
     _AMapSecurityConfig?: { serviceHost: string };
   }
-}
-
-interface AMapLngLat {
-  getLng(): number;
-  getLat(): number;
-}
-
-interface AMapMap {
-  add(overlay: AMapMarker): void;
-  destroy(): void;
-  off(event: "click", handler: (event: { lnglat: AMapLngLat }) => void): void;
-  on(event: "click", handler: (event: { lnglat: AMapLngLat }) => void): void;
-  remove(overlay: AMapMarker): void;
-  setCenter(position: [number, number]): void;
-  setZoom(zoom: number): void;
-}
-
-interface AMapMarker {
-  setPosition(position: [number, number]): void;
-}
-
-interface AutocompleteTip {
-  id?: string;
-  name?: string;
-  district?: string;
-  adcode?: string;
-  location?: unknown;
-}
-
-interface AutocompleteResult {
-  tips?: AutocompleteTip[];
-}
-
-interface GeocoderResult {
-  info?: string;
-  regeocode?: {
-    formattedAddress?: string;
-    addressComponent?: {
-      province?: string;
-      city?: string | string[];
-      district?: string;
-      adcode?: string;
-    };
-    pois?: Array<{ id?: string; name?: string }>;
-  };
-}
-
-interface GeolocationResult {
-  position?: unknown;
-}
-
-interface AMapAutocomplete {
-  search(
-    keyword: string,
-    callback: (status: string, result: AutocompleteResult | string) => void,
-  ): void;
-}
-
-interface AMapGeocoder {
-  getAddress(
-    position: [number, number],
-    callback: (status: string, result: GeocoderResult) => void,
-  ): void;
-}
-
-interface AMapGeolocation {
-  getCurrentPosition(callback: (status: string, result: GeolocationResult | string) => void): void;
-}
-
-interface AMapNamespace {
-  Map: new (
-    container: HTMLElement,
-    options: { center: [number, number]; resizeEnable: boolean; zoom: number },
-  ) => AMapMap;
-  Marker: new (options: { position: [number, number] }) => AMapMarker;
-  AutoComplete: new (options: { city: string }) => AMapAutocomplete;
-  Geocoder: new (options: { city: string }) => AMapGeocoder;
-  Geolocation: new (options: {
-    convert: boolean;
-    enableHighAccuracy: boolean;
-    timeout: number;
-  }) => AMapGeolocation;
-}
-
-interface SearchResult extends AutocompleteTip {
-  latitude: number;
-  longitude: number;
 }
 
 interface AMapLocationPickerProps {
@@ -183,7 +106,7 @@ export function AMapLocationPicker({
   const [loadError, setLoadError] = useState("");
   const [operationError, setOperationError] = useState("");
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<AMapSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [locating, setLocating] = useState(false);
 
@@ -432,113 +355,41 @@ export function AMapLocationPicker({
     });
   };
 
-  if (!amapKey) {
-    return (
-      <div className="flex h-80 flex-col items-center justify-center border-y bg-muted/20 px-6 text-center sm:h-[360px]">
-        <MapPinned className="size-7 text-muted-foreground" />
-        <p className="mt-3 text-sm font-medium">地图选点不可用</p>
-        <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-          未配置高德地图 Web Key。偏好设置仍可正常保存。
-        </p>
-      </div>
-    );
-  }
+  const changeQuery = (nextQuery: string) => {
+    skipNextSearchRef.current = false;
+    setQuery(nextQuery);
+    setResults([]);
+    setOperationError("");
+  };
+  const escapeSearch = () => {
+    searchRequestRef.current += 1;
+    setSearching(false);
+    setResults([]);
+  };
+  const selectSearchResult = (result: AMapSearchResult) => {
+    skipNextSearchRef.current = true;
+    searchRequestRef.current += 1;
+    setQuery(result.name ?? "");
+    setResults([]);
+    selectCoordinatesRef.current?.(result.latitude, result.longitude, "search", result);
+  };
 
   return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => {
-              skipNextSearchRef.current = false;
-              setQuery(event.target.value);
-              setResults([]);
-              setOperationError("");
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                searchRequestRef.current += 1;
-                setSearching(false);
-                setResults([]);
-              }
-            }}
-            placeholder="搜索地址或地点"
-            maxLength={200}
-            disabled={disabled || loading || Boolean(loadError)}
-            aria-expanded={results.length > 0}
-            aria-controls="amap-address-results"
-            className="pl-9 pr-9"
-          />
-          {searching ? (
-            <Loader2 className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
-          ) : null}
-          {results.length ? (
-            <ul
-              id="amap-address-results"
-              aria-label="地址搜索结果"
-              className="absolute inset-x-0 top-full z-30 mt-1 max-h-56 divide-y overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-lg"
-            >
-              {results.map((result, index) => (
-                <li key={`${result.id ?? result.name}-${index}`}>
-                  <button
-                    type="button"
-                    className="w-full px-3 py-2.5 text-left first:rounded-t-md last:rounded-b-md hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-                    disabled={disabled}
-                    onClick={() => {
-                      skipNextSearchRef.current = true;
-                      searchRequestRef.current += 1;
-                      setQuery(result.name ?? "");
-                      setResults([]);
-                      selectCoordinatesRef.current?.(
-                        result.latitude,
-                        result.longitude,
-                        "search",
-                        result,
-                      );
-                    }}
-                  >
-                    <span className="block truncate text-sm font-medium">{result.name}</span>
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                      {result.district || "地点详情暂缺"}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          onClick={useCurrentLocation}
-          disabled={disabled || locating || loading || Boolean(loadError)}
-        >
-          {locating ? <Loader2 className="animate-spin" /> : <LocateFixed />}
-          定位
-        </Button>
-      </div>
-
-      <div className="relative h-80 overflow-hidden border-y bg-muted/20 sm:h-[360px]">
-        <div ref={containerRef} className="size-full" aria-label="高德地图位置选择器" />
-        {loading ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/80 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 size-4 animate-spin" />
-            正在加载地图
-          </div>
-        ) : null}
-        {loadError ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-background px-6 text-center text-sm text-destructive">
-            地图加载失败：{loadError}
-          </div>
-        ) : null}
-      </div>
-      <p aria-live="polite" className="min-h-5 text-xs text-muted-foreground">
-        {operationError || "点击地图、搜索地点或使用定位来选择位置。"}
-      </p>
-    </div>
+    <AMapLocationPickerView
+      configured={Boolean(amapKey)}
+      containerRef={containerRef}
+      disabled={disabled}
+      loadError={loadError}
+      loading={loading}
+      locating={locating}
+      operationError={operationError}
+      query={query}
+      results={results}
+      searching={searching}
+      onEscapeSearch={escapeSearch}
+      onLocate={useCurrentLocation}
+      onQueryChange={changeQuery}
+      onSelectResult={selectSearchResult}
+    />
   );
 }

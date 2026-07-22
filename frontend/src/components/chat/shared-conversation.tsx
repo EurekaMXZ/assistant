@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, Share2 } from "lucide-react";
+import { EmptyState } from "@/components/shared/empty-state";
+import { ErrorState } from "@/components/shared/error-state";
 import { ApiError, getConversationShare } from "@/lib/api";
 import type { ConversationShareSnapshot } from "@/lib/types";
 import { useMobileHeader } from "@/components/layout/mobile-header-context";
@@ -62,13 +64,12 @@ export function SharedConversation({ shareId }: { shareId: string }) {
 
   if (!snapshot || error) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-        <div className="max-w-sm text-center">
-          <CircleAlert className="mx-auto mb-3 size-6 text-muted-foreground" />
-          <h1 className="text-base font-semibold">无法打开分享链接</h1>
-          <p className="mt-2 text-sm text-muted-foreground">{error || "分享内容不可用"}</p>
-        </div>
-      </div>
+      <ErrorState
+        icon={CircleAlert}
+        message="无法打开分享链接"
+        description={error || "分享内容不可用"}
+        className="min-h-0 flex-1 border-0"
+      />
     );
   }
 
@@ -96,7 +97,11 @@ export function SharedConversation({ shareId }: { shareId: string }) {
               ))}
             </div>
           ) : (
-            <p className="py-20 text-center text-sm text-muted-foreground">该分享中没有消息</p>
+            <EmptyState
+              title="该分享中没有消息"
+              className="min-h-40 border-0"
+              titleClassName="m-0 font-normal text-muted-foreground"
+            />
           )}
         </main>
       </ScrollArea>

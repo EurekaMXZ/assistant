@@ -2,21 +2,15 @@
 
 import { useDeferredValue, useState } from "react";
 import { Activity, Eye, Search } from "lucide-react";
-import {
-  AdminEmpty,
-  AdminError,
-  AdminLoading,
-  AdminPageHeader,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "@/components/admin/admin-shared";
+import { AdminPageHeader } from "@/components/admin/admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import { listAdminAuditEventsPage } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import type { AuditEvent } from "@/lib/types";
 import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
@@ -54,93 +48,99 @@ export function AdminAudit() {
           />
         </div>
       </div>
-      {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={reload} /> : null}
-      {!loading && !error && !filtered.length ? (
-        <AdminEmpty icon={Activity} title={query ? "没有匹配的审计记录" : "暂无审计记录"} />
-      ) : null}
-      {!loading && !error && filtered.length ? (
-        <CursorTableScroll
-          className={`${adminTableScrollClass} mt-5`}
-          hasMore={page.has_more}
-          loadingMore={loadingMore}
-          loadMoreError={loadMoreError}
-          onLoadMore={loadMore}
-          aria-label="审计日志"
-        >
-          <table className="w-[86rem] min-w-full table-fixed text-left text-sm">
-            <colgroup>
-              <col className="w-[11rem]" />
-              <col className="w-[18rem]" />
-              <col className="w-[17rem]" />
-              <col className="w-[14rem]" />
-              <col className="w-[13rem]" />
-              <col className="w-[8rem]" />
-              <col className="w-[5rem]" />
-            </colgroup>
-            <thead className={adminTableHeadClass}>
-              <tr className="border-b">
-                <th className="py-3 pr-4 font-medium">时间</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-                <th className="px-4 py-3 font-medium">资源</th>
-                <th className="px-4 py-3 font-medium">操作者</th>
-                <th className="px-4 py-3 font-medium">请求</th>
-                <th className="px-4 py-3 font-medium">结果</th>
-                <th className="py-3 pl-4 text-right font-medium">详情</th>
+      <AdminListPage
+        ariaLabel="审计日志"
+        className="mt-5"
+        emptyIcon={Activity}
+        emptyTitle={query ? "没有匹配的审计记录" : "暂无审计记录"}
+        error={error}
+        hasItems={filtered.length > 0}
+        hasMore={page.has_more}
+        loading={loading}
+        loadingMore={loadingMore}
+        loadMoreError={loadMoreError}
+        onLoadMore={loadMore}
+        onRetry={reload}
+      >
+        <table className="admin-responsive-table w-[86rem] min-w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[11rem]" />
+            <col className="w-[18rem]" />
+            <col className="w-[17rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[13rem]" />
+            <col className="w-[8rem]" />
+            <col className="w-[5rem]" />
+          </colgroup>
+          <thead className={tableHeadClass}>
+            <tr className="border-b">
+              <th className={tableClasses.headStart}>时间</th>
+              <th className={tableClasses.head}>操作</th>
+              <th className={tableClasses.head}>资源</th>
+              <th className={tableClasses.head}>操作者</th>
+              <th className={tableClasses.head}>请求</th>
+              <th className={tableClasses.head}>结果</th>
+              <th className={tableClasses.headEnd}>详情</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {filtered.map((item) => (
+              <tr key={item.id}>
+                <td
+                  className={`${tableClasses.cellStart} whitespace-nowrap text-xs text-muted-foreground`}
+                  data-label="时间"
+                >
+                  {formatDateTime(item.created_at)}
+                </td>
+                <td
+                  className={`${tableClasses.cell} truncate font-medium`}
+                  title={item.action}
+                  data-primary
+                >
+                  {item.action}
+                </td>
+                <td className={tableClasses.cell} data-label="资源">
+                  <p className="truncate" title={item.resource_type || ""}>
+                    {item.resource_type || "-"}
+                  </p>
+                  <p
+                    className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                    title={item.resource_id || ""}
+                  >
+                    {item.resource_id || ""}
+                  </p>
+                </td>
+                <td className={tableClasses.cell} data-label="操作者">
+                  <p>{item.actor_role || "-"}</p>
+                  <p
+                    className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                    title={item.actor_user_id || ""}
+                  >
+                    {item.actor_user_id || ""}
+                  </p>
+                </td>
+                <td className={tableClasses.cell} data-label="请求">
+                  <p className="font-mono text-xs">
+                    {item.request_id ? item.request_id.slice(0, 12) : "-"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{item.client_ip || ""}</p>
+                </td>
+                <td className={tableClasses.cell} data-label="结果">
+                  <Badge variant={item.outcome === "succeeded" ? "secondary" : "destructive"}>
+                    {item.outcome}
+                  </Badge>
+                </td>
+                <td className={tableClasses.cellEnd} data-actions>
+                  <Button variant="ghost" size="icon-sm" onClick={() => setSelected(item)}>
+                    <Eye />
+                    <span className="sr-only">查看审计详情</span>
+                  </Button>
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y">
-              {filtered.map((item) => (
-                <tr key={item.id}>
-                  <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
-                    {formatAdminDate(item.created_at)}
-                  </td>
-                  <td className="truncate px-4 py-3 font-medium" title={item.action}>
-                    {item.action}
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="truncate" title={item.resource_type || ""}>
-                      {item.resource_type || "-"}
-                    </p>
-                    <p
-                      className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
-                      title={item.resource_id || ""}
-                    >
-                      {item.resource_id || ""}
-                    </p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <p>{item.actor_role || "-"}</p>
-                    <p
-                      className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
-                      title={item.actor_user_id || ""}
-                    >
-                      {item.actor_user_id || ""}
-                    </p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="font-mono text-xs">
-                      {item.request_id ? item.request_id.slice(0, 12) : "-"}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{item.client_ip || ""}</p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={item.outcome === "succeeded" ? "secondary" : "destructive"}>
-                      {item.outcome}
-                    </Badge>
-                  </td>
-                  <td className="py-3 pl-4 text-right">
-                    <Button variant="ghost" size="icon-sm" onClick={() => setSelected(item)}>
-                      <Eye />
-                      <span className="sr-only">查看审计详情</span>
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </CursorTableScroll>
-      ) : null}
+            ))}
+          </tbody>
+        </table>
+      </AdminListPage>
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <DialogContent className="sm:max-w-xl">

@@ -15,7 +15,7 @@ import { MobileHeaderTitle } from "@/components/layout/mobile-header-title";
 import { Sidebar } from "@/components/layout/sidebar";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { openAuthDialog, subscribeAuthDialog, type AuthDialogMode } from "@/lib/auth-dialog-events";
 import { buildSettingsUrl, parseSettingsHash, type SettingsSection } from "@/lib/settings-hash";
@@ -167,7 +167,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }}
       >
         <div className="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
-          <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b px-4 md:hidden">
+          <header className="grid h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b px-4 pt-[env(safe-area-inset-top)] md:hidden">
             <MobileHeaderTitle title={mobileHeaderTitle} />
             {mobileHeaderStatus ? (
               <span className="flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
@@ -228,15 +228,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <header className="grid h-14 shrink-0 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center border-b px-2 md:hidden">
-            <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-              <SheetTrigger
+          <header className="grid h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center border-b px-2 pt-[env(safe-area-inset-top)] md:hidden">
+            <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen}>
+              <DialogTrigger
                 render={<Button variant="ghost" size="icon-sm" className="rounded-lg" />}
               >
                 <AssistantLogo className="size-5" />
                 <span className="sr-only">打开侧栏</span>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-[260px] gap-0 p-0" showCloseButton={false}>
+              </DialogTrigger>
+              <DialogContent side="left" className="w-[260px] gap-0 p-0" showCloseButton={false}>
                 <Sidebar
                   authLoading={isLoading}
                   currentConversationId={currentConversationId}
@@ -258,8 +258,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   }}
                   onOpenSettings={openSettings}
                 />
-              </SheetContent>
-            </Sheet>
+              </DialogContent>
+            </Dialog>
 
             <MobileHeaderTitle
               actionLabel={mobileHeaderTitleAction?.label}

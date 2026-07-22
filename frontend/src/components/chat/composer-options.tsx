@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, Loader2, Settings2 } from "lucide-react";
+import { Check, ChevronDown, Settings2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -82,7 +83,7 @@ export function ComposerOptions({
           <DropdownMenuGroup>
             <DropdownMenuLabel className="flex items-center justify-between">
               <span>模型</span>
-              {modelsLoading ? <Loader2 className="size-3 animate-spin" /> : null}
+              {modelsLoading ? <Spinner className="size-3" /> : null}
             </DropdownMenuLabel>
             {models.map((model) => {
               const isDefault = model.id === defaultModel?.id;

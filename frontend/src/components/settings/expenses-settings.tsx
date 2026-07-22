@@ -6,13 +6,11 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Gift,
-  Loader2,
   ReceiptText,
   RefreshCw,
   WalletCards,
 } from "lucide-react";
-import { BillingTokenUsage } from "@/components/billing-token-usage";
-import { BillingToolUsage } from "@/components/billing-tool-usage";
+import { BillingTokenUsage, BillingToolUsage } from "@/components/billing/billing-usage-tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,9 +22,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { FormField } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
+import { CursorTableScroll } from "@/components/shared/cursor-table-scroll";
+import { EmptyState } from "@/components/shared/empty-state";
+import { SettingsSection } from "@/components/shared/settings-section";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
+import { Spinner } from "@/components/shared/spinner";
 import {
   getBillingAccount,
   isSessionUnauthorizedError,
@@ -36,6 +38,7 @@ import {
 } from "@/lib/api";
 import { emitBillingAccountUpdated } from "@/lib/billing-account-events";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/format";
 import type {
   BillingAccount,
   BillingTransaction,
@@ -46,15 +49,6 @@ import { toast } from "sonner";
 
 type ExpenseView = "transactions" | "usage";
 const redemptionCodePattern = /^(?:[0-9a-f]{48}|ASST-[A-Za-z0-9_-]{32})$/;
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
 
 function transactionLabel(kind: BillingTransaction["kind"]) {
   const labels: Record<BillingTransaction["kind"], string> = {
@@ -212,13 +206,9 @@ export function ExpensesSettings() {
   }
 
   return (
-    <div className="space-y-7">
-      <header>
-        <h2 className="text-xl font-semibold">费用</h2>
-      </header>
-
+    <SettingsSection title="费用" className="space-y-7">
       {account ? (
-        <section className="grid gap-5 border-y py-5 sm:grid-cols-[1fr_auto] sm:items-end">
+        <section className="grid gap-5 py-5 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <WalletCards className="size-4" />
@@ -293,21 +283,21 @@ export function ExpensesSettings() {
                       <div className="min-w-0">
                         <p className="flex items-center gap-2 truncate text-sm font-medium">
                           {item.direction === "credit" ? (
-                            <ArrowDownLeft className="size-3.5 shrink-0 text-emerald-600" />
+                            <ArrowDownLeft className="size-3.5 shrink-0 text-credit" />
                           ) : (
-                            <ArrowUpRight className="size-3.5 shrink-0 text-amber-600" />
+                            <ArrowUpRight className="size-3.5 shrink-0 text-debit" />
                           )}
                           {transactionLabel(item.kind)}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {formatDate(item.created_at)}
+                          {formatDateTime(item.created_at, { includeYear: false })}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
                         <p
                           className={cn(
                             "whitespace-nowrap font-mono text-sm",
-                            item.direction === "credit" ? "text-emerald-700" : "text-foreground",
+                            item.direction === "credit" ? "text-credit-strong" : "text-foreground",
                           )}
                         >
                           {item.direction === "credit" ? "+" : "-"}
@@ -327,40 +317,44 @@ export function ExpensesSettings() {
                     <col className="w-[10rem]" />
                     <col className="w-[10rem]" />
                   </colgroup>
-                  <thead className="sticky top-0 z-10 bg-background text-xs text-muted-foreground">
+                  <thead className={tableHeadClass}>
                     <tr className="border-b">
-                      <th className="py-3 pr-4 font-medium">时间</th>
-                      <th className="px-4 py-3 font-medium">类型</th>
-                      <th className="px-4 py-3 text-right font-medium">金额</th>
-                      <th className="py-3 pl-4 text-right font-medium">余额</th>
+                      <th className={tableClasses.headStart}>时间</th>
+                      <th className={tableClasses.head}>类型</th>
+                      <th className={`${tableClasses.head} text-right`}>金额</th>
+                      <th className={tableClasses.headEnd}>余额</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {transactions.map((item) => (
                       <tr key={item.id}>
-                        <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
-                          {formatDate(item.created_at)}
+                        <td
+                          className={`${tableClasses.cellStart} whitespace-nowrap text-xs text-muted-foreground`}
+                        >
+                          {formatDateTime(item.created_at, { includeYear: false })}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3">
+                        <td className={`${tableClasses.cell} whitespace-nowrap`}>
                           <span className="inline-flex items-center gap-2 whitespace-nowrap font-medium">
                             {item.direction === "credit" ? (
-                              <ArrowDownLeft className="size-3.5 text-emerald-600" />
+                              <ArrowDownLeft className="size-3.5 text-credit" />
                             ) : (
-                              <ArrowUpRight className="size-3.5 text-amber-600" />
+                              <ArrowUpRight className="size-3.5 text-debit" />
                             )}
                             {transactionLabel(item.kind)}
                           </span>
                         </td>
                         <td
                           className={cn(
-                            "whitespace-nowrap px-4 py-3 text-right font-mono",
-                            item.direction === "credit" ? "text-emerald-700" : "text-foreground",
+                            `${tableClasses.cell} whitespace-nowrap text-right font-mono`,
+                            item.direction === "credit" ? "text-credit-strong" : "text-foreground",
                           )}
                         >
                           {item.direction === "credit" ? "+" : "-"}
                           {item.currency} {item.amount}
                         </td>
-                        <td className="whitespace-nowrap py-3 pl-4 text-right font-mono text-muted-foreground">
+                        <td
+                          className={`${tableClasses.cellEnd} whitespace-nowrap font-mono text-muted-foreground`}
+                        >
                           {item.currency} {item.balance_after}
                         </td>
                       </tr>
@@ -370,7 +364,12 @@ export function ExpensesSettings() {
               </CursorTableScroll>
             </>
           ) : (
-            <EmptyExpenses icon={ReceiptText} label="暂无资金流水" />
+            <EmptyState
+              icon={ReceiptText}
+              title="暂无资金流水"
+              className="min-h-40"
+              titleClassName="mt-2 font-normal text-muted-foreground"
+            />
           )
         ) : usageEvents.length ? (
           <>
@@ -393,8 +392,8 @@ export function ExpensesSettings() {
                         </Badge>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {formatDate(item.created_at)} · <BillingTokenUsage usage={item} /> tokens ·
-                        {` `}
+                        {formatDateTime(item.created_at, { includeYear: false })} ·{" "}
+                        <BillingTokenUsage usage={item} /> tokens ·{` `}
                         <BillingToolUsage usage={item} /> tools
                       </p>
                     </div>
@@ -417,39 +416,50 @@ export function ExpensesSettings() {
                   <col className="w-[11rem]" />
                   <col className="w-[8rem]" />
                 </colgroup>
-                <thead className="sticky top-0 z-10 bg-background text-xs text-muted-foreground">
+                <thead className={tableHeadClass}>
                   <tr className="border-b">
-                    <th className="py-3 pr-4 font-medium">时间</th>
-                    <th className="px-4 py-3 font-medium">模型</th>
-                    <th className="px-4 py-3 text-right font-medium">Tokens</th>
-                    <th className="px-4 py-3 text-right font-medium">工具</th>
-                    <th className="px-4 py-3 text-right font-medium">工具费用</th>
-                    <th className="px-4 py-3 text-right font-medium">总费用</th>
-                    <th className="py-3 pl-4 text-right font-medium">状态</th>
+                    <th className={tableClasses.headStart}>时间</th>
+                    <th className={tableClasses.head}>模型</th>
+                    <th className={`${tableClasses.head} text-right`}>Tokens</th>
+                    <th className={`${tableClasses.head} text-right`}>工具</th>
+                    <th className={`${tableClasses.head} text-right`}>工具费用</th>
+                    <th className={`${tableClasses.head} text-right`}>总费用</th>
+                    <th className={tableClasses.headEnd}>状态</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {usageEvents.map((item) => (
                     <tr key={item.id}>
-                      <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
-                        {formatDate(item.created_at)}
+                      <td
+                        className={`${tableClasses.cellStart} whitespace-nowrap text-xs text-muted-foreground`}
+                      >
+                        {formatDateTime(item.created_at, { includeYear: false })}
                       </td>
-                      <td className="truncate px-4 py-3 font-medium" title={item.upstream_model}>
+                      <td
+                        className={`${tableClasses.cell} truncate font-medium`}
+                        title={item.upstream_model}
+                      >
                         {item.upstream_model}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
+                      <td
+                        className={`${tableClasses.cell} whitespace-nowrap text-right font-mono text-muted-foreground`}
+                      >
                         <BillingTokenUsage usage={item} />
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
+                      <td
+                        className={`${tableClasses.cell} whitespace-nowrap text-right font-mono text-muted-foreground`}
+                      >
                         <BillingToolUsage usage={item} />
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground">
+                      <td
+                        className={`${tableClasses.cell} whitespace-nowrap text-right font-mono text-muted-foreground`}
+                      >
                         {toolUsageAmount(item)}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
+                      <td className={`${tableClasses.cell} whitespace-nowrap text-right font-mono`}>
                         {usageAmount(item)}
                       </td>
-                      <td className="py-3 pl-4 text-right">
+                      <td className={tableClasses.cellEnd}>
                         <Badge variant={item.status === "failed" ? "destructive" : "secondary"}>
                           {item.status === "completed" ? "已计费" : "失败"}
                         </Badge>
@@ -461,7 +471,12 @@ export function ExpensesSettings() {
             </CursorTableScroll>
           </>
         ) : (
-          <EmptyExpenses icon={Activity} label="暂无用量明细" />
+          <EmptyState
+            icon={Activity}
+            title="暂无用量明细"
+            className="min-h-40"
+            titleClassName="mt-2 font-normal text-muted-foreground"
+          />
         )}
 
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
@@ -483,8 +498,12 @@ export function ExpensesSettings() {
             <DialogDescription>输入兑换码，金额将立即计入当前账户余额。</DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={redeem}>
-            <div className="space-y-2">
-              <Label htmlFor="billing-redemption-code">兑换码</Label>
+            <FormField
+              label="兑换码"
+              htmlFor="billing-redemption-code"
+              error={redemptionError}
+              errorId="billing-redemption-error"
+            >
               <Input
                 id="billing-redemption-code"
                 autoCapitalize="none"
@@ -500,12 +519,7 @@ export function ExpensesSettings() {
                   setRedemptionError("");
                 }}
               />
-              {redemptionError ? (
-                <p id="billing-redemption-error" role="alert" className="text-sm text-destructive">
-                  {redemptionError}
-                </p>
-              ) : null}
-            </div>
+            </FormField>
             <DialogFooter>
               <Button
                 type="button"
@@ -516,22 +530,13 @@ export function ExpensesSettings() {
                 取消
               </Button>
               <Button type="submit" disabled={isRedeeming || !redemptionCode.trim()}>
-                {isRedeeming ? <Loader2 className="animate-spin" /> : null}
+                {isRedeeming ? <Spinner /> : null}
                 确认兑换
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function EmptyExpenses({ icon: Icon, label }: { icon: typeof ReceiptText; label: string }) {
-  return (
-    <div className="flex min-h-40 flex-col items-center justify-center border-y text-center">
-      <Icon className="size-5 text-muted-foreground" />
-      <p className="mt-2 text-sm text-muted-foreground">{label}</p>
-    </div>
+    </SettingsSection>
   );
 }

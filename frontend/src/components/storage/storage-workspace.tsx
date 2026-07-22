@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, File, HardDrive, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Download, File, HardDrive, RefreshCw, Trash2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
+import { EmptyState } from "@/components/shared/empty-state";
+import { ErrorState } from "@/components/shared/error-state";
+import { tableClasses } from "@/components/shared/table-styles";
 import { toast } from "sonner";
 import {
   deleteStorageAttachment,
@@ -10,8 +14,9 @@ import {
 } from "@/lib/api";
 import type { StorageAttachment, StorageUsage } from "@/lib/types";
 import { formatStorageBytes } from "@/lib/storage";
+import { formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function StorageWorkspace() {
@@ -108,7 +113,7 @@ export function StorageWorkspace() {
             onClick={() => void load()}
             disabled={loading || loadingMore}
           >
-            <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+            {loading ? <Spinner /> : <RefreshCw className="size-4" />}
           </Button>
         </header>
 
@@ -123,14 +128,12 @@ export function StorageWorkspace() {
             </div>
           </div>
         ) : error && !usage ? (
-          <div className="flex min-h-72 flex-col items-center justify-center text-center">
-            <HardDrive className="size-6 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">{error}</p>
-            <Button className="mt-4" variant="outline" size="sm" onClick={() => void load()}>
-              <RefreshCw className="size-4" />
-              重新加载
-            </Button>
-          </div>
+          <ErrorState
+            icon={HardDrive}
+            message={error}
+            className="min-h-72 border-0"
+            onRetry={() => void load()}
+          />
         ) : (
           <div className="space-y-7 pt-7">
             <section
@@ -170,10 +173,12 @@ export function StorageWorkspace() {
 
             <section aria-label="附件">
               {items.length === 0 ? (
-                <div className="flex min-h-40 flex-col items-center justify-center border-b text-center">
-                  <File className="size-5 text-muted-foreground" />
-                  <p className="mt-2 text-sm text-muted-foreground">暂无附件</p>
-                </div>
+                <EmptyState
+                  icon={File}
+                  title="暂无附件"
+                  className="min-h-40 border-t-0"
+                  titleClassName="mt-2 font-normal text-muted-foreground"
+                />
               ) : (
                 <div className="overflow-x-auto border-b" aria-label="附件列表" tabIndex={0}>
                   <div className="divide-y sm:hidden">
@@ -196,33 +201,35 @@ export function StorageWorkspace() {
                     </colgroup>
                     <thead className="text-xs text-muted-foreground">
                       <tr className="border-b">
-                        <th className="py-3 pr-4 font-medium">文件</th>
-                        <th className="px-4 py-3 font-medium">对话</th>
-                        <th className="px-4 py-3 text-right font-medium">大小</th>
-                        <th className="py-3 pl-4 text-right font-medium">操作</th>
+                        <th className={tableClasses.headStart}>文件</th>
+                        <th className={tableClasses.head}>对话</th>
+                        <th className={`${tableClasses.head} text-right`}>大小</th>
+                        <th className={tableClasses.headEnd}>操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {items.map((item) => (
                         <tr key={item.id}>
-                          <td className="py-3 pr-4">
+                          <td className={tableClasses.cellStart}>
                             <p className="truncate font-medium" title={item.filename}>
                               {item.filename}
                             </p>
                             <p className="mt-1 text-xs text-muted-foreground">
-                              {formatAttachmentDate(item.created_at)}
+                              {formatDateTime(item.created_at, { includeYear: false })}
                             </p>
                           </td>
                           <td
-                            className="truncate px-4 py-3 text-muted-foreground"
+                            className={`${tableClasses.cell} truncate text-muted-foreground`}
                             title={item.conversation_title || "新会话"}
                           >
                             {item.conversation_title || "新会话"}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-muted-foreground">
+                          <td
+                            className={`${tableClasses.cell} whitespace-nowrap text-right font-mono text-xs text-muted-foreground`}
+                          >
                             {formatStorageBytes(item.size_bytes)}
                           </td>
-                          <td className="py-3 pl-4 text-right">
+                          <td className={tableClasses.cellEnd}>
                             <StorageAttachmentActions
                               item={item}
                               deleting={deletingID === item.id}
@@ -251,7 +258,7 @@ export function StorageWorkspace() {
                     disabled={loadingMore}
                     onClick={() => nextCursor && void load(nextCursor)}
                   >
-                    {loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {loadingMore ? <Spinner /> : null}
                     {loadMoreError ? "重试" : "加载更多"}
                   </Button>
                 </div>
@@ -272,15 +279,6 @@ export function StorageWorkspace() {
       />
     </div>
   );
-}
-
-function formatAttachmentDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
 }
 
 function StorageAttachmentRow({
@@ -347,7 +345,7 @@ function StorageAttachmentActions({
         className="text-muted-foreground hover:text-destructive"
         onClick={onDelete}
       >
-        {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+        {deleting ? <Spinner /> : <Trash2 className="size-4" />}
       </Button>
     </span>
   );

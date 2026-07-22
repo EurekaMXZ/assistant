@@ -3,27 +3,13 @@
 import { useState } from "react";
 import { KeyRound, MoreHorizontal, Plus, RotateCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AdminEmpty,
-  AdminError,
-  AdminLoading,
-  AdminPageHeader,
-  SavingIcon,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "@/components/admin/admin-shared";
+import { AdminPageHeader } from "@/components/admin/admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { FormDialog } from "@/components/shared/form-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,8 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
+import { formatDateTime } from "@/lib/format";
+import { FormField } from "@/components/ui/form-field";
 import {
   createAdminCredential,
   listAdminCredentialsPage,
@@ -151,232 +137,210 @@ export function AdminCredentials() {
           </Button>
         }
       />
-      {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={reload} /> : null}
-      {!loading && !error && !items.length ? <AdminEmpty icon={KeyRound} title="暂无凭据" /> : null}
-      {!loading && !error && items.length ? (
-        <CursorTableScroll
-          className={`${adminTableScrollClass} mt-6`}
-          hasMore={page.has_more}
-          loadingMore={loadingMore}
-          loadMoreError={loadMoreError}
-          onLoadMore={loadMore}
-          aria-label="提供方凭据"
-        >
-          <table className="w-[72rem] min-w-full table-fixed text-left text-sm">
-            <colgroup>
-              <col className="w-[22rem]" />
-              <col className="w-[22rem]" />
-              <col className="w-[14rem]" />
-              <col className="w-[8rem]" />
-              <col className="w-[6rem]" />
-            </colgroup>
-            <thead className={adminTableHeadClass}>
-              <tr className="border-b">
-                <th className="py-3 pr-4 font-medium">凭据</th>
-                <th className="px-4 py-3 font-medium">地址</th>
-                <th className="px-4 py-3 font-medium">最近验证</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="py-3 pl-4 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td className="py-3 pr-4">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
-                        <KeyRound className="size-4" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate font-medium" title={item.name}>
-                          {item.name}
-                        </p>
-                        <p
-                          className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
-                          title={item.masked_key}
-                        >
-                          {item.masked_key}
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td
-                    className="truncate px-4 py-3 font-mono text-xs text-muted-foreground"
-                    title={item.base_url}
-                  >
-                    {item.base_url}
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="text-xs">{formatAdminDate(item.last_validated_at)}</p>
-                    {item.last_validation_error ? (
-                      <p
-                        className="mt-1 truncate text-xs text-destructive"
-                        title={item.last_validation_error}
-                      >
-                        {item.last_validation_error}
+      <AdminListPage
+        ariaLabel="提供方凭据"
+        className="mt-6"
+        emptyIcon={KeyRound}
+        emptyTitle="暂无凭据"
+        error={error}
+        hasItems={items.length > 0}
+        hasMore={page.has_more}
+        loading={loading}
+        loadingMore={loadingMore}
+        loadMoreError={loadMoreError}
+        onLoadMore={loadMore}
+        onRetry={reload}
+      >
+        <table className="admin-responsive-table w-[72rem] min-w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[22rem]" />
+            <col className="w-[22rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[8rem]" />
+            <col className="w-[6rem]" />
+          </colgroup>
+          <thead className={tableHeadClass}>
+            <tr className="border-b">
+              <th className={tableClasses.headStart}>凭据</th>
+              <th className={tableClasses.head}>地址</th>
+              <th className={tableClasses.head}>最近验证</th>
+              <th className={tableClasses.head}>状态</th>
+              <th className={tableClasses.headEnd}>操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {items.map((item) => (
+              <tr key={item.id}>
+                <td className={tableClasses.cellStart} data-primary>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
+                      <KeyRound className="size-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium" title={item.name}>
+                        {item.name}
                       </p>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant={
-                        item.status === "enabled"
-                          ? "secondary"
-                          : item.status === "revoked"
-                            ? "destructive"
-                            : "outline"
+                      <p
+                        className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                        title={item.masked_key}
+                      >
+                        {item.masked_key}
+                      </p>
+                    </div>
+                  </div>
+                </td>
+                <td
+                  className={`${tableClasses.cell} truncate font-mono text-xs text-muted-foreground`}
+                  title={item.base_url}
+                  data-label="地址"
+                >
+                  {item.base_url}
+                </td>
+                <td className={tableClasses.cell} data-label="最近验证">
+                  <p className="text-xs">{formatDateTime(item.last_validated_at)}</p>
+                  {item.last_validation_error ? (
+                    <p
+                      className="mt-1 truncate text-xs text-destructive"
+                      title={item.last_validation_error}
+                    >
+                      {item.last_validation_error}
+                    </p>
+                  ) : null}
+                </td>
+                <td className={tableClasses.cell} data-label="状态">
+                  <Badge
+                    variant={
+                      item.status === "enabled"
+                        ? "secondary"
+                        : item.status === "revoked"
+                          ? "destructive"
+                          : "outline"
+                    }
+                  >
+                    {item.status === "enabled"
+                      ? "已启用"
+                      : item.status === "disabled"
+                        ? "已停用"
+                        : "已撤销"}
+                  </Badge>
+                </td>
+                <td className={tableClasses.cellEnd} data-actions>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button variant="ghost" size="icon-sm" disabled={actingId === item.id} />
                       }
                     >
-                      {item.status === "enabled"
-                        ? "已启用"
-                        : item.status === "disabled"
-                          ? "已停用"
-                          : "已撤销"}
-                    </Badge>
-                  </td>
-                  <td className="py-3 pl-4 text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button variant="ghost" size="icon-sm" disabled={actingId === item.id} />
-                        }
-                      >
-                        <MoreHorizontal />
-                        <span className="sr-only">凭据操作</span>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-44">
-                        <DropdownMenuGroup>
-                          <DropdownMenuItem
-                            disabled={item.status === "revoked"}
-                            onClick={() => openEditor(item)}
-                          >
-                            编辑
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            disabled={item.status === "revoked"}
-                            onClick={() => void runAction(item, "validate")}
-                          >
-                            <ShieldCheck />
-                            验证连接
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            disabled={item.status === "revoked"}
-                            onClick={() => {
-                              setRotateItem(item);
-                              setApiKey("");
-                            }}
-                          >
-                            <RotateCw />
-                            轮换密钥
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            disabled={item.status === "revoked"}
-                            onClick={() =>
-                              void runAction(item, item.status === "enabled" ? "disable" : "enable")
-                            }
-                          >
-                            {item.status === "enabled" ? "停用凭据" : "启用凭据"}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            disabled={item.status === "revoked"}
-                            onClick={() => setRevokeItem(item)}
-                          >
-                            撤销凭据
-                          </DropdownMenuItem>
-                        </DropdownMenuGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </CursorTableScroll>
-      ) : null}
+                      <MoreHorizontal />
+                      <span className="sr-only">凭据操作</span>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem
+                          disabled={item.status === "revoked"}
+                          onClick={() => openEditor(item)}
+                        >
+                          编辑
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={item.status === "revoked"}
+                          onClick={() => void runAction(item, "validate")}
+                        >
+                          <ShieldCheck />
+                          验证连接
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={item.status === "revoked"}
+                          onClick={() => {
+                            setRotateItem(item);
+                            setApiKey("");
+                          }}
+                        >
+                          <RotateCw />
+                          轮换密钥
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={item.status === "revoked"}
+                          onClick={() =>
+                            void runAction(item, item.status === "enabled" ? "disable" : "enable")
+                          }
+                        >
+                          {item.status === "enabled" ? "停用凭据" : "启用凭据"}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={item.status === "revoked"}
+                          onClick={() => setRevokeItem(item)}
+                        >
+                          撤销凭据
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </AdminListPage>
 
-      <Dialog open={editor !== null} onOpenChange={(open) => !open && setEditor(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editor === "create" ? "添加凭据" : "编辑凭据"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="credential-name">名称</Label>
-              <Input
-                id="credential-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="primary-openai"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="credential-url">Base URL</Label>
-              <Input
-                id="credential-url"
-                value={baseUrl}
-                onChange={(event) => setBaseUrl(event.target.value)}
-              />
-            </div>
-            {editor === "create" ? (
-              <div className="space-y-2">
-                <Label htmlFor="credential-key">API Key</Label>
-                <Input
-                  id="credential-key"
-                  type="password"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditor(null)}>
-              取消
-            </Button>
-            <Button
-              disabled={
-                saving || !name.trim() || !baseUrl.trim() || (editor === "create" && !apiKey.trim())
-              }
-              onClick={() => void save()}
-            >
-              <SavingIcon saving={saving} />
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!rotateItem} onOpenChange={(open) => !open && setRotateItem(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>轮换 API 密钥</DialogTitle>
-            <DialogDescription>轮换后旧密钥立即停止用于新请求，凭据会重新启用。</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="rotate-key">新 API Key</Label>
+      <FormDialog
+        open={editor !== null}
+        onOpenChange={(open) => !open && setEditor(null)}
+        title={editor === "create" ? "添加凭据" : "编辑凭据"}
+        saving={saving}
+        submitDisabled={!name.trim() || !baseUrl.trim() || (editor === "create" && !apiKey.trim())}
+        onSubmit={save}
+      >
+        <FormField label="名称" htmlFor="credential-name">
+          <Input
+            id="credential-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="primary-openai"
+          />
+        </FormField>
+        <FormField label="Base URL" htmlFor="credential-url">
+          <Input
+            id="credential-url"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+        </FormField>
+        {editor === "create" ? (
+          <FormField label="API Key" htmlFor="credential-key">
             <Input
-              id="rotate-key"
+              id="credential-key"
               type="password"
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
               autoComplete="new-password"
             />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRotateItem(null)}>
-              取消
-            </Button>
-            <Button disabled={saving || !apiKey.trim()} onClick={() => void rotate()}>
-              <SavingIcon saving={saving} />
-              轮换密钥
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </FormField>
+        ) : null}
+      </FormDialog>
+
+      <FormDialog
+        open={!!rotateItem}
+        onOpenChange={(open) => !open && setRotateItem(null)}
+        title="轮换 API 密钥"
+        description="轮换后旧密钥立即停止用于新请求，凭据会重新启用。"
+        saving={saving}
+        submitDisabled={!apiKey.trim()}
+        submitText="轮换密钥"
+        onSubmit={rotate}
+      >
+        <FormField label="新 API Key" htmlFor="rotate-key">
+          <Input
+            id="rotate-key"
+            type="password"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            autoComplete="new-password"
+          />
+        </FormField>
+      </FormDialog>
 
       <ConfirmDialog
         open={!!revokeItem}

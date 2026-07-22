@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { Model, ReasoningEffort } from "@/lib/types";
 import { Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,12 +17,14 @@ interface ComposerProps {
   models?: Model[];
   modelsLoading?: boolean;
   modelId?: string;
+  bottomInset?: number;
   onChange: (content: string) => void;
   onCancelEdit?: () => void;
   onCancelGeneration?: () => void;
   onRemoveAttachment?: (attachmentId: string) => void;
   onModelChange?: (modelId: string) => void;
   onModelReasoningEffortChange?: (modelId: string, effort: ReasoningEffort | "") => void;
+  onHeightChange?: (height: number) => void;
   onSend: (content: string, attachmentIds: string[]) => Promise<void> | void;
   onUploadFiles?: (files: File[]) => Promise<void> | void;
   disabled?: boolean;
@@ -41,12 +44,14 @@ export function Composer({
   models = [],
   modelsLoading,
   modelId = "",
+  bottomInset = 0,
   onChange,
   onCancelEdit,
   onCancelGeneration,
   onRemoveAttachment,
   onModelChange,
   onModelReasoningEffortChange,
+  onHeightChange,
   onSend,
   onUploadFiles,
   disabled,
@@ -55,8 +60,24 @@ export function Composer({
   streaming,
   value,
 }: ComposerProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !onHeightChange) return;
+    const updateHeight = () => onHeightChange(Math.ceil(root.getBoundingClientRect().height));
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [onHeightChange]);
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pb-4 pt-3 sm:px-6">
+    <div
+      ref={rootRef}
+      className="pointer-events-none absolute inset-x-0 z-10 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-6"
+      style={{ bottom: bottomInset }}
+    >
       {editing ? (
         <div className="pointer-events-auto mx-auto mb-2 flex h-9 w-full max-w-2xl items-center gap-2 rounded-lg border bg-background/95 px-3 text-xs font-medium shadow-sm backdrop-blur-md">
           <Pencil className="size-3.5 text-muted-foreground" />
@@ -65,7 +86,6 @@ export function Composer({
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="size-6"
             aria-label="取消编辑"
             disabled={editingBusy}
             onClick={onCancelEdit}

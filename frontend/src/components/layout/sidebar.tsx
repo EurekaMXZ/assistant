@@ -20,8 +20,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { SidebarConversationList } from "@/components/layout/sidebar-conversation-list";
 import { SidebarSearchDialog } from "@/components/layout/sidebar-search-dialog";
 import { SidebarUserPanel } from "@/components/layout/sidebar-user-panel";
@@ -327,17 +327,17 @@ export function Sidebar({
       >
         {collapsed && onToggleCollapse ? (
           <Button
-            variant="ghost"
+            variant="nav"
             size="icon-sm"
-            className="group/sidebar-toggle relative shrink-0 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            className="group/sidebar-toggle relative shrink-0"
             onClick={() => {
               setSearchOpen(false);
               setSearchQuery("");
               onToggleCollapse();
             }}
           >
-            <AssistantLogo className="h-5 w-5 transition-opacity group-hover/sidebar-toggle:opacity-0 group-focus-visible/sidebar-toggle:opacity-0" />
-            <PanelLeft className="absolute h-4 w-4 opacity-0 transition-opacity group-hover/sidebar-toggle:opacity-100 group-focus-visible/sidebar-toggle:opacity-100" />
+            <AssistantLogo className="size-5 transition-opacity group-hover/sidebar-toggle:opacity-0 group-focus-visible/sidebar-toggle:opacity-0" />
+            <PanelLeft className="absolute size-4 opacity-0 transition-opacity group-hover/sidebar-toggle:opacity-100 group-focus-visible/sidebar-toggle:opacity-100" />
             <span className="sr-only">展开侧栏</span>
           </Button>
         ) : (
@@ -349,23 +349,23 @@ export function Sidebar({
               onToggleCollapse ? "min-w-0 flex-1" : "w-full",
             )}
           >
-            <AssistantLogo className="h-5 w-5" />
+            <AssistantLogo className="size-5" />
             <span>Assistant</span>
           </Link>
         )}
 
         {onToggleCollapse && !collapsed ? (
           <Button
-            variant="ghost"
+            variant="nav"
             size="icon-sm"
-            className="shrink-0 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            className="shrink-0"
             onClick={() => {
               setSearchOpen(false);
               setSearchQuery("");
               onToggleCollapse();
             }}
           >
-            <PanelLeft className="h-4 w-4" />
+            <PanelLeft className="size-4" />
             <span className="sr-only">{collapsed ? "展开侧栏" : "折叠侧栏"}</span>
           </Button>
         ) : null}
@@ -373,60 +373,56 @@ export function Sidebar({
 
       <div className={cn("px-2 py-2", collapsed && "space-y-1")}>
         <Button
-          variant="ghost"
+          variant="nav"
           size={collapsed ? "icon-sm" : "sm"}
           className={cn(
-            "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground",
-            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
+            collapsed ? "mx-auto" : "min-h-10 w-full justify-start px-2 py-2 md:min-h-9",
           )}
           disabled={authLoading}
           onClick={handleCreate}
         >
-          <StickyNotePlus className="h-4 w-4" />
+          <StickyNotePlus className="size-4" />
           {!collapsed ? "新建会话" : <span className="sr-only">新建会话</span>}
         </Button>
 
         <Button
-          variant="ghost"
+          variant="nav"
           size={collapsed ? "icon-sm" : "sm"}
           className={cn(
-            "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground",
-            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
+            collapsed ? "mx-auto" : "min-h-10 w-full justify-start px-2 py-2 md:min-h-9",
           )}
           disabled={authLoading}
           onClick={handleSearch}
         >
-          <Search className="h-4 w-4" />
+          <Search className="size-4" />
           {!collapsed ? "搜索会话" : <span className="sr-only">搜索会话</span>}
         </Button>
 
         <Button
-          variant="ghost"
+          variant="nav"
           size={collapsed ? "icon-sm" : "sm"}
           aria-pressed={storageActive}
           className={cn(
-            "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent aria-pressed:text-sidebar-accent-foreground",
-            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
+            collapsed ? "mx-auto" : "min-h-10 w-full justify-start px-2 py-2 md:min-h-9",
           )}
           disabled={authLoading}
           onClick={handleOpenStorage}
         >
-          <HardDrive className="h-4 w-4" />
+          <HardDrive className="size-4" />
           {!collapsed ? "存储空间" : <span className="sr-only">存储空间</span>}
         </Button>
 
         <Button
-          variant="ghost"
+          variant="nav"
           size={collapsed ? "icon-sm" : "sm"}
           aria-pressed={mcpActive}
           className={cn(
-            "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent aria-pressed:text-sidebar-accent-foreground",
-            collapsed ? "mx-auto" : "min-h-9 w-full justify-start px-2 py-2",
+            collapsed ? "mx-auto" : "min-h-10 w-full justify-start px-2 py-2 md:min-h-9",
           )}
           disabled={authLoading}
           onClick={handleOpenMCP}
         >
-          <Plug className="h-4 w-4" />
+          <Plug className="size-4" />
           {!collapsed ? "MCP 服务器" : <span className="sr-only">MCP 服务器</span>}
         </Button>
       </div>
@@ -473,15 +469,14 @@ export function Sidebar({
           <DialogHeader>
             <DialogTitle>重命名会话</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-2 py-4">
-            <Label htmlFor="title">标题</Label>
+          <FormField label="标题" htmlFor="title" className="py-4">
             <Input
               id="title"
               value={newTitle}
               onChange={(event) => setNewTitle(event.target.value)}
               onKeyDown={(event) => event.key === "Enter" && void handleRename()}
             />
-          </div>
+          </FormField>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameConversation(null)}>
               取消

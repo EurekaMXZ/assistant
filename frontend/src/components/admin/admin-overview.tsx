@@ -1,20 +1,18 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
-import { ArrowRight } from "lucide-react";
-import {
-  AdminError,
-  AdminLoading,
-  AdminPageHeader,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "@/components/admin/admin-shared";
+import { Activity, ArrowRight } from "lucide-react";
+import { AdminLoading, AdminPageHeader } from "@/components/admin/admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { ErrorState } from "@/components/shared/error-state";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
 import type { AdminSection } from "@/components/admin/admin-sections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getAdminOverview } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import type { AdminOverview as OverviewData, User } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export function AdminOverview({
   actor,
@@ -59,16 +57,22 @@ export function AdminOverview({
       <AdminPageHeader title="运行概览" />
 
       {!data && !error ? <AdminLoading /> : null}
-      {error && !data ? <AdminError message={error} onRetry={load} /> : null}
+      {error && !data ? <ErrorState message={error} onRetry={load} /> : null}
       {data ? (
         <>
           <section
-            className={`mt-7 grid border-y sm:grid-cols-2 ${actor.role === "system" ? "xl:grid-cols-5" : "xl:grid-cols-3"}`}
+            className={cn(
+              "mt-7 grid sm:grid-cols-2",
+              actor.role === "system" ? "xl:grid-cols-5" : "xl:grid-cols-3",
+            )}
           >
             {stats.map((item, index) => (
               <div
                 key={item.label}
-                className={`px-1 py-5 sm:px-5 ${index > 0 ? "sm:border-l" : ""} ${index > 1 ? "border-t sm:border-t-0" : index === 1 ? "border-t sm:border-t-0" : ""}`}
+                className={cn(
+                  "px-1 py-5 sm:px-5",
+                  index > 0 && "border-t sm:border-l sm:border-t-0",
+                )}
               >
                 <p className="text-xs text-muted-foreground">{item.label}</p>
                 <p className="mt-2 font-mono text-3xl font-semibold tabular-nums">{item.value}</p>
@@ -84,38 +88,52 @@ export function AdminOverview({
                   查看全部 <ArrowRight />
                 </Button>
               </div>
-              <div className={adminTableScrollClass}>
-                <table className="w-[50rem] min-w-full table-fixed text-left text-sm">
+              <AdminListPage
+                ariaLabel="最近管理操作"
+                emptyIcon={Activity}
+                emptyTitle="暂无管理操作"
+                hasItems={data.audit.length > 0}
+                onRetry={load}
+              >
+                <table className="admin-responsive-table w-[50rem] min-w-full table-fixed text-left text-sm">
                   <colgroup>
                     <col className="w-[11rem]" />
                     <col className="w-[20rem]" />
                     <col className="w-[12rem]" />
                     <col className="w-[7rem]" />
                   </colgroup>
-                  <thead className={adminTableHeadClass}>
+                  <thead className={tableHeadClass}>
                     <tr className="border-b">
-                      <th className="py-3 pr-4 font-medium">时间</th>
-                      <th className="px-4 py-3 font-medium">操作</th>
-                      <th className="px-4 py-3 font-medium">资源</th>
-                      <th className="py-3 pl-4 text-right font-medium">结果</th>
+                      <th className={tableClasses.headStart}>时间</th>
+                      <th className={tableClasses.head}>操作</th>
+                      <th className={tableClasses.head}>资源</th>
+                      <th className={tableClasses.headEnd}>结果</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {data.audit.map((item) => (
                       <tr key={item.id}>
-                        <td className="whitespace-nowrap py-3 pr-4 text-xs text-muted-foreground">
-                          {formatAdminDate(item.created_at)}
+                        <td
+                          className={`${tableClasses.cellStart} whitespace-nowrap text-xs text-muted-foreground`}
+                          data-label="时间"
+                        >
+                          {formatDateTime(item.created_at)}
                         </td>
-                        <td className="truncate px-4 py-3 font-medium" title={item.action}>
+                        <td
+                          className={`${tableClasses.cell} truncate font-medium`}
+                          title={item.action}
+                          data-primary
+                        >
                           {item.action}
                         </td>
                         <td
-                          className="truncate px-4 py-3 text-muted-foreground"
+                          className={`${tableClasses.cell} truncate text-muted-foreground`}
                           title={item.resource_type || ""}
+                          data-label="资源"
                         >
                           {item.resource_type || "-"}
                         </td>
-                        <td className="py-3 pl-4 text-right">
+                        <td className={tableClasses.cellEnd} data-label="结果">
                           <Badge
                             variant={item.outcome === "succeeded" ? "secondary" : "destructive"}
                           >
@@ -126,7 +144,7 @@ export function AdminOverview({
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </AdminListPage>
             </section>
           </div>
         </>

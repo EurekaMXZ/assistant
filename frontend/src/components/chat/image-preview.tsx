@@ -9,6 +9,7 @@ import {
   useTransformComponent,
 } from "react-zoom-pan-pinch";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const minScale = 0.5;
@@ -78,35 +79,41 @@ function ImagePanZoomControls() {
 
   return (
     <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-1 rounded-md border border-border bg-background/80 p-1 supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:backdrop-blur-sm">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-sm"
         title="放大"
         aria-label="放大"
-        className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        className="text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
         disabled={scale >= maxScale}
         onClick={() => zoomIn(scaleStep, 0)}
       >
         <ZoomIn className="size-4" />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-sm"
         title="缩小"
         aria-label="缩小"
-        className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        className="text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
         disabled={scale <= minScale}
         onClick={() => zoomOut(scaleStep, 0)}
       >
         <ZoomOut className="size-4" />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-sm"
         title="重置缩放与位置"
         aria-label="重置缩放与位置"
-        className="flex cursor-pointer items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="text-muted-foreground hover:text-foreground"
         onClick={() => resetTransform(0)}
       >
         <RotateCcw className="size-4" />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -165,15 +172,17 @@ function ImagePreviewDialog({
         className="inset-0 left-0 top-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 gap-0 rounded-none bg-background/95 p-0 ring-0 backdrop-blur-sm sm:max-w-none"
       >
         <DialogTitle className="sr-only">{alt || "图片预览"}</DialogTitle>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           title="退出全屏"
           aria-label="退出全屏"
-          className="absolute right-4 top-4 z-20 cursor-pointer rounded-md p-2 text-muted-foreground transition-all hover:bg-muted hover:text-foreground"
+          className="absolute right-4 top-4 z-20 text-muted-foreground hover:text-foreground"
           onClick={() => onOpenChange(false)}
         >
           <X className="size-5" />
-        </button>
+        </Button>
         <ImagePanZoom alt={alt} src={src} />
       </DialogContent>
     </Dialog>
@@ -226,13 +235,14 @@ export function ImagePreview({
       data-image-preview="root"
       data-streamdown={streamdown ? "image-wrapper" : undefined}
     >
-      <button
+      <Button
         type="button"
+        variant="ghost"
         aria-label={`预览 ${alt || "图片"}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         className={cn(
-          "relative flex max-w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          "relative h-auto min-h-0 max-w-full cursor-zoom-in overflow-hidden rounded-lg bg-transparent! p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           previewButtonClassName,
         )}
         onClick={(event) => {
@@ -263,15 +273,17 @@ export function ImagePreview({
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 rounded-lg bg-black/0 transition-colors group-hover/image:bg-black/10"
         />
-      </button>
+      </Button>
 
       {showActions && loaded ? (
-        <span className="absolute right-2 top-2 z-10 flex gap-1 rounded-md border border-border bg-background/80 p-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100 supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:backdrop-blur-sm">
-          <button
+        <span className="absolute right-2 top-2 z-10 flex gap-1 rounded-md border border-border bg-background/80 p-1 opacity-100 transition-opacity md:opacity-0 md:group-focus-within/image:opacity-100 md:group-hover/image:opacity-100 supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:backdrop-blur-sm">
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             title="下载图片"
             aria-label="下载图片"
-            className="flex cursor-pointer items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -279,12 +291,14 @@ export function ImagePreview({
             }}
           >
             <Download className="size-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             title="全屏查看"
             aria-label="全屏查看"
-            className="flex cursor-pointer items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -292,7 +306,7 @@ export function ImagePreview({
             }}
           >
             <Maximize2 className="size-3.5" />
-          </button>
+          </Button>
         </span>
       ) : null}
 

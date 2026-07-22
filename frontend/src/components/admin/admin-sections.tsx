@@ -25,7 +25,7 @@ interface AdminSectionContext {
   navigate: (section: AdminSection) => void;
 }
 
-interface AdminSectionDefinition {
+export interface AdminSectionDefinition {
   id: AdminSection;
   label: string;
   icon: LucideIcon;

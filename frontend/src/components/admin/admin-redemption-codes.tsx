@@ -1,20 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Ban, Check, Copy, Gift, Loader2, Plus, RefreshCw } from "lucide-react";
+import { Ban, Check, Copy, Gift, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AdminEmpty,
-  AdminError,
-  AdminLoading,
-  SavingIcon,
-  adminTableHeadClass,
-  adminTableScrollClass,
-  formatAdminDate,
-} from "./admin-shared";
+import { SavingIcon } from "./admin-shared";
+import { AdminListPage } from "@/components/admin/admin-list-page";
+import { tableClasses, tableHeadClass } from "@/components/shared/table-styles";
+import { Spinner } from "@/components/shared/spinner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -25,14 +20,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormField } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
-import { CursorTableScroll } from "@/components/ui/cursor-table-scroll";
 import {
   disableAdminBillingRedemptionCode,
   issueAdminBillingRedemptionCodes,
   listAdminBillingRedemptionCodes,
 } from "@/lib/api";
 import { parseDecimalNanos } from "@/lib/decimal-nanos";
+import { formatDateTime } from "@/lib/format";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import type {
   BillingRedemptionCode,
   BillingRedemptionCodeIssue,
@@ -57,7 +54,11 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
   const [expiresAt, setExpiresAt] = useState("");
   const [saving, setSaving] = useState(false);
   const [issued, setIssued] = useState<BillingRedemptionCodeIssue[]>([]);
-  const [copied, setCopied] = useState(false);
+  const { copied, copyToClipboard, resetCopied } = useCopyToClipboard({
+    successMessage: "兑换码已复制",
+    errorMessage: "无法自动复制，请手动选择兑换码",
+    resetAfter: false,
+  });
   const [confirmedSaved, setConfirmedSaved] = useState(false);
   const [disableTarget, setDisableTarget] = useState<BillingRedemptionCode | null>(null);
   const [disabling, setDisabling] = useState("");
@@ -129,7 +130,7 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
       });
       setCodes((items) => [...result.map((item) => item.redemption_code), ...items]);
       setCreateOpen(false);
-      setCopied(false);
+      resetCopied();
       setConfirmedSaved(false);
       setIssued(result);
     } catch (err) {
@@ -142,33 +143,8 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
   const copyIssuedCode = async () => {
     if (!issued.length) return;
     const plaintext = issued.map((item) => item.code).join("\n");
-    let copiedSuccessfully = false;
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(plaintext);
-      copiedSuccessfully = true;
-    } catch {
-      const input = document.createElement("textarea");
-      try {
-        input.value = plaintext;
-        input.style.position = "fixed";
-        input.style.opacity = "0";
-        document.body.appendChild(input);
-        input.select();
-        copiedSuccessfully = document.execCommand("copy");
-      } catch {
-        copiedSuccessfully = false;
-      } finally {
-        input.remove();
-      }
-    }
-    if (!copiedSuccessfully) {
-      toast.error("无法自动复制，请手动选择兑换码");
-      return;
-    }
-    setCopied(true);
+    if (!(await copyToClipboard(plaintext))) return;
     setConfirmedSaved(true);
-    toast.success("兑换码已复制");
   };
 
   const disableCode = async () => {
@@ -186,9 +162,6 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
     }
   };
 
-  if (loading) return <AdminLoading />;
-  if (error) return <AdminError message={error} onRetry={load} />;
-
   return (
     <div className="mt-5">
       <div className="mb-4 flex justify-end gap-2">
@@ -202,114 +175,123 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
         </Button>
       </div>
 
-      {codes.length ? (
-        <CursorTableScroll
-          className={adminTableScrollClass}
-          hasMore={page.has_more}
-          loadingMore={loadingMore}
-          loadMoreError={loadMoreError}
-          onLoadMore={loadMore}
-          aria-label="兑换码"
-        >
-          <table className="w-[87rem] min-w-full table-fixed text-left text-sm">
-            <colgroup>
-              <col className="w-[18rem]" />
-              <col className="w-[12rem]" />
-              <col className="w-[8rem]" />
-              <col className="w-[14rem]" />
-              <col className="w-[14rem]" />
-              <col className="w-[14rem]" />
-              <col className="w-[7rem]" />
-            </colgroup>
-            <thead className={adminTableHeadClass}>
-              <tr className="border-b">
-                <th className="py-3 pr-4 font-medium">兑换码</th>
-                <th className="px-4 py-3 text-right font-medium">金额</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="px-4 py-3 font-medium">兑换用户</th>
-                <th className="px-4 py-3 font-medium">过期时间</th>
-                <th className="px-4 py-3 font-medium">生成时间</th>
-                <th className="py-3 pl-4 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {codes.map((item) => {
-                const status = item.status;
-                return (
-                  <tr key={item.id}>
-                    <td className="py-3 pr-4 font-mono text-xs">{item.code_hint}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                      {item.currency} {item.amount}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        variant={
-                          status === "active"
-                            ? "secondary"
-                            : status === "disabled"
-                              ? "destructive"
-                              : "outline"
-                        }
-                      >
-                        {status === "active"
-                          ? "可兑换"
+      <AdminListPage
+        ariaLabel="兑换码"
+        emptyIcon={Gift}
+        emptyTitle="暂无兑换码"
+        error={error}
+        hasItems={codes.length > 0}
+        hasMore={page.has_more}
+        loading={loading}
+        loadingMore={loadingMore}
+        loadMoreError={loadMoreError}
+        onLoadMore={loadMore}
+        onRetry={load}
+      >
+        <table className="admin-responsive-table w-[87rem] min-w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[18rem]" />
+            <col className="w-[12rem]" />
+            <col className="w-[8rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[7rem]" />
+          </colgroup>
+          <thead className={tableHeadClass}>
+            <tr className="border-b">
+              <th className={tableClasses.headStart}>兑换码</th>
+              <th className={`${tableClasses.head} text-right`}>金额</th>
+              <th className={tableClasses.head}>状态</th>
+              <th className={tableClasses.head}>兑换用户</th>
+              <th className={tableClasses.head}>过期时间</th>
+              <th className={tableClasses.head}>生成时间</th>
+              <th className={tableClasses.headEnd}>操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {codes.map((item) => {
+              const status = item.status;
+              return (
+                <tr key={item.id}>
+                  <td className={`${tableClasses.cellStart} font-mono text-xs`} data-primary>
+                    {item.code_hint}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-right font-mono`}
+                    data-label="金额"
+                  >
+                    {item.currency} {item.amount}
+                  </td>
+                  <td className={tableClasses.cell} data-label="状态">
+                    <Badge
+                      variant={
+                        status === "active"
+                          ? "secondary"
                           : status === "disabled"
-                            ? "已禁用"
-                            : status === "expired"
-                              ? "已过期"
-                              : "已兑换"}
-                      </Badge>
-                    </td>
-                    <td
-                      className="truncate px-4 py-3"
-                      title={
-                        item.redeemed_by_user_id
-                          ? userMap.get(item.redeemed_by_user_id)?.username ||
-                            item.redeemed_by_user_id
-                          : ""
+                            ? "destructive"
+                            : "outline"
                       }
                     >
-                      {item.redeemed_by_user_id
+                      {status === "active"
+                        ? "可兑换"
+                        : status === "disabled"
+                          ? "已禁用"
+                          : status === "expired"
+                            ? "已过期"
+                            : "已兑换"}
+                    </Badge>
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} truncate`}
+                    data-label="兑换用户"
+                    title={
+                      item.redeemed_by_user_id
                         ? userMap.get(item.redeemed_by_user_id)?.username ||
-                          item.redeemed_by_user_id.slice(0, 8)
-                        : "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {formatAdminDate(item.expires_at)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {formatAdminDate(item.created_at)}
-                    </td>
-                    <td className="py-3 pl-4 text-right">
-                      {status === "active" ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          disabled={disabling === item.id}
-                          onClick={() => setDisableTarget(item)}
-                        >
-                          {disabling === item.id ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <Ban className="size-4" />
-                          )}
-                          禁用
-                        </Button>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </CursorTableScroll>
-      ) : (
-        <AdminEmpty icon={Gift} title="暂无兑换码" />
-      )}
+                          item.redeemed_by_user_id
+                        : ""
+                    }
+                  >
+                    {item.redeemed_by_user_id
+                      ? userMap.get(item.redeemed_by_user_id)?.username ||
+                        item.redeemed_by_user_id.slice(0, 8)
+                      : "-"}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="过期时间"
+                  >
+                    {formatDateTime(item.expires_at)}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="生成时间"
+                  >
+                    {formatDateTime(item.created_at)}
+                  </td>
+                  <td className={tableClasses.cellEnd} data-actions>
+                    {status === "active" ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        disabled={disabling === item.id}
+                        onClick={() => setDisableTarget(item)}
+                      >
+                        {disabling === item.id ? <Spinner /> : <Ban className="size-4" />}
+                        禁用
+                      </Button>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </AdminListPage>
 
       <Dialog open={createOpen} onOpenChange={(open) => !saving && setCreateOpen(open)}>
         <DialogContent>
@@ -320,8 +302,7 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={create}>
-            <div className="space-y-2">
-              <Label htmlFor="redemption-amount">单个面额</Label>
+            <FormField label="单个面额" htmlFor="redemption-amount">
               <Input
                 id="redemption-amount"
                 inputMode="decimal"
@@ -329,9 +310,8 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="redemption-quantity">数量</Label>
+            </FormField>
+            <FormField label="数量" htmlFor="redemption-quantity">
               <Input
                 id="redemption-quantity"
                 type="number"
@@ -342,16 +322,15 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
                 value={quantity}
                 onChange={(event) => setQuantity(event.target.value)}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="redemption-expires-at">过期时间（可选）</Label>
+            </FormField>
+            <FormField label="过期时间（可选）" htmlFor="redemption-expires-at">
               <Input
                 id="redemption-expires-at"
                 type="datetime-local"
                 value={expiresAt}
                 onChange={(event) => setExpiresAt(event.target.value)}
               />
-            </div>
+            </FormField>
             <DialogFooter>
               <Button
                 type="button"
@@ -375,7 +354,7 @@ export function AdminRedemptionCodes({ users }: AdminRedemptionCodesProps) {
         onOpenChange={(open) => {
           if (!open && confirmedSaved) {
             setIssued([]);
-            setCopied(false);
+            resetCopied();
             setConfirmedSaved(false);
           }
         }}

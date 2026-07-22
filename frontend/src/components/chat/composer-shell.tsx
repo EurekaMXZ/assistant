@@ -9,11 +9,11 @@ import {
   FileSpreadsheet,
   FileText,
   ImageIcon,
-  Loader2,
   Square,
   Upload,
   X,
 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { useAutosizeTextarea } from "@/hooks/use-autosize-textarea";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -93,21 +93,21 @@ function attachmentPresentation(attachment: ComposerShellAttachment) {
     return {
       label: "电子表格",
       icon: <FileSpreadsheet className="size-5" />,
-      iconClassName: "bg-emerald-500 text-white",
+      iconClassName: "bg-file-spreadsheet text-white",
     };
   }
   if (["7z", "gz", "rar", "tar", "zip"].includes(extension)) {
     return {
       label: "压缩文件",
       icon: <Archive className="size-5" />,
-      iconClassName: "bg-amber-500 text-white",
+      iconClassName: "bg-file-archive text-white",
     };
   }
   if (extension === "pdf") {
     return {
       label: "PDF 文档",
       icon: <FileText className="size-5" />,
-      iconClassName: "bg-red-500 text-white",
+      iconClassName: "bg-file-pdf text-white",
     };
   }
   if (
@@ -117,7 +117,7 @@ function attachmentPresentation(attachment: ComposerShellAttachment) {
     return {
       label: "文档",
       icon: <FileText className="size-5" />,
-      iconClassName: "bg-blue-500 text-white",
+      iconClassName: "bg-file-document text-white",
     };
   }
   return {
@@ -179,10 +179,12 @@ function ComposerAttachmentItem({
       variant="default"
       size="icon-xs"
       aria-label={`移除 ${attachment.name}`}
-      className="absolute right-1 top-1 z-10 size-5 rounded-full bg-foreground p-0 text-background shadow-none hover:bg-foreground/80"
+      className="absolute right-1 top-1 z-10 rounded-full bg-transparent p-0 shadow-none hover:bg-transparent md:size-5"
       onClick={onRemove}
     >
-      <X className="size-3.5" />
+      <span className="flex size-5 items-center justify-center rounded-full bg-foreground text-background hover:bg-foreground/80">
+        <X className="size-3.5" />
+      </span>
     </Button>
   );
 
@@ -215,7 +217,7 @@ function ComposerAttachmentItem({
               {previewFailed ? (
                 <ImageIcon className="size-5 text-muted-foreground" />
               ) : (
-                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                <Spinner className="text-muted-foreground" />
               )}
             </div>
           )}
@@ -225,7 +227,7 @@ function ComposerAttachmentItem({
             className="pointer-events-none absolute inset-0 flex items-center justify-center text-foreground"
             aria-label={`正在上传 ${attachment.name}`}
           >
-            <Loader2 className="size-5 animate-spin" />
+            <Spinner className="size-5" />
           </span>
         ) : null}
         {failed ? (
@@ -269,7 +271,7 @@ function ComposerAttachmentItem({
         }
       >
         {uploading ? (
-          <Loader2 className="size-5 animate-spin" />
+          <Spinner className="size-5" />
         ) : failed ? (
           <CircleAlert className="size-5" />
         ) : (
@@ -437,7 +439,7 @@ export function ComposerShell({
         onClick={() => fileInputRef.current?.click()}
         style={{ left: 12, bottom: 10 }}
       >
-        <Upload className="h-4 w-4" />
+        <Upload className="size-4" />
         <span className="sr-only">上传文件</span>
       </Button>
 
@@ -467,13 +469,13 @@ export function ComposerShell({
         style={{ right: 12, bottom: 10 }}
       >
         {streaming && cancelling ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Spinner />
         ) : streaming ? (
-          <Square className="h-3.5 w-3.5 fill-current" />
+          <Square className="size-3.5 fill-current" />
         ) : busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Spinner />
         ) : (
-          <ArrowUp className="h-4 w-4" />
+          <ArrowUp className="size-4" />
         )}
         <span className="sr-only">
           {streaming ? (cancelling ? "正在停止生成" : "停止生成") : "发送"}

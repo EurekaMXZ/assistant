@@ -9,7 +9,7 @@ export function PublicAuthShell({ title, children }: { title: string; children: 
           <AssistantLogo className="size-5" />
           Assistant
         </Link>
-        <div className="mt-7 border-t pt-7">
+        <div className="mt-7">
           <h1 className="mb-6 text-2xl font-semibold">{title}</h1>
           {children}
         </div>

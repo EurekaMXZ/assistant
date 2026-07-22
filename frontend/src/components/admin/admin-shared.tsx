@@ -1,6 +1,4 @@
-import type { LucideIcon } from "lucide-react";
-import { Loader2, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/shared/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AdminPageHeader({ title, action }: { title: string; action?: React.ReactNode }) {
@@ -23,44 +21,9 @@ export function AdminLoading() {
   );
 }
 
-export function AdminEmpty({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
-  return (
-    <div className="flex min-h-64 flex-col items-center justify-center border-y text-center">
-      <Icon className="size-5 text-muted-foreground" />
-      <p className="mt-3 text-sm font-medium">{title}</p>
-    </div>
-  );
-}
-
-export function AdminError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="flex min-h-64 flex-col items-center justify-center border-y text-center">
-      <p className="text-sm font-medium">{message}</p>
-      <Button type="button" variant="outline" size="sm" className="mt-4" onClick={onRetry}>
-        <RefreshCw className="size-4" />
-        重新加载
-      </Button>
-    </div>
-  );
-}
-
 export function SavingIcon({ saving }: { saving: boolean }) {
-  return saving ? <Loader2 className="size-4 animate-spin" /> : null;
+  return saving ? <Spinner /> : null;
 }
 
-export function formatAdminDate(value?: string | null) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-export const adminSelectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
-
-export const adminTableScrollClass = "max-h-[min(65vh,40rem)] overflow-auto border-y";
-export const adminTableHeadClass = "sticky top-0 z-10 bg-background text-xs text-muted-foreground";
+export const adminTableScrollClass =
+  "max-h-none overflow-visible border-y sm:max-h-[min(65vh,40rem)] sm:overflow-auto";

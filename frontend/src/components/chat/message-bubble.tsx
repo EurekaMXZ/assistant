@@ -8,16 +8,17 @@ import {
   CircleAlert,
   ExternalLink,
   Info,
-  Loader2,
   Pencil,
   RotateCcw,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MarkdownRenderer } from "./markdown-renderer";
-import { CopyButton } from "./copy-button";
+import { CopyButton } from "@/components/shared/copy-button";
 import { TurnTimeline } from "./turn-timeline";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { Spinner } from "@/components/shared/spinner";
 import { getConversationAttachmentUrl } from "@/lib/api";
 import { parseSafeAskUserActionURL } from "@/lib/ask-user-action";
 import { assistantInteractionFromMessage } from "@/lib/chat-state";
@@ -159,7 +160,7 @@ function AttachmentImagePreview({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border bg-background/60">
+    <Card className="overflow-hidden bg-background/60">
       {src ? (
         <ImagePreview
           src={src}
@@ -173,7 +174,7 @@ function AttachmentImagePreview({
       ) : (
         <div className="h-32 w-48 animate-pulse bg-muted" />
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -232,7 +233,7 @@ export function AskUserInteractionView({
         className="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-2 font-medium text-muted-foreground"
       >
         <span className="flex h-5 items-center" aria-hidden="true">
-          <Info className="h-4 w-4" />
+          <Info className="size-4" />
         </span>
         <p className="min-w-0 break-words leading-5">已取消</p>
       </div>
@@ -248,7 +249,7 @@ export function AskUserInteractionView({
         className="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-2 font-medium text-muted-foreground"
       >
         <span className="flex h-5 items-center" aria-hidden="true">
-          <StatusIcon className="h-4 w-4" />
+          <StatusIcon className="size-4" />
         </span>
         <p className="min-w-0 break-words leading-5">
           询问用户「{clippedInteractionPrompt(interaction.prompt)}」：
@@ -271,7 +272,7 @@ export function AskUserInteractionView({
   };
 
   return (
-    <div className="min-w-0 rounded-xl border bg-muted/20 p-4 shadow-xs">
+    <Card className="min-w-0 rounded-xl bg-muted/20 p-4 shadow-xs">
       <p className="min-w-0 break-words font-medium leading-6">{interaction.prompt}</p>
       {action ? (
         <div className="mt-3 space-y-1.5">
@@ -329,12 +330,12 @@ export function AskUserInteractionView({
             aria-busy={submittingOptionId === option.id}
             onClick={() => void answer(option.id)}
           >
-            {submittingOptionId === option.id ? <Loader2 className="size-4 animate-spin" /> : null}
+            {submittingOptionId === option.id ? <Spinner /> : null}
             <span className="min-w-0 break-words">{option.label}</span>
           </Button>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -377,7 +378,7 @@ function MessageBody({
           className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 font-medium text-destructive"
         >
           <span className="flex h-5 items-center" aria-hidden="true">
-            <CircleAlert className="h-4 w-4" />
+            <CircleAlert className="size-4" />
           </span>
           <p className="min-w-0 break-words leading-5">
             {message.content_text || "Request failed"}
@@ -461,11 +462,9 @@ export function MessageBubble({
         </div>
 
         {!showActions || isThinkingBlock ? null : isUser ? (
-          <div className="mt-1 flex w-full justify-end gap-1 opacity-0 transition-opacity group-hover/message:opacity-100">
+          <div className="mt-1 flex w-full justify-end gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover/message:opacity-100 md:group-focus-within/message:opacity-100">
             <Tooltip>
-              <TooltipTrigger
-                render={<CopyButton text={message.content_text || ""} className="h-7 w-7" />}
-              />
+              <TooltipTrigger render={<CopyButton text={message.content_text || ""} />} />
               <TooltipContent>
                 <p>复制</p>
               </TooltipContent>
@@ -477,12 +476,11 @@ export function MessageBubble({
                   render={
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
+                      size="icon-md"
                       aria-label="编辑消息"
                       onClick={() => onEdit?.(message)}
                     >
-                      <Pencil className="h-4 w-4" />
+                      <Pencil className="size-4" />
                       <span className="sr-only">编辑</span>
                     </Button>
                   }
@@ -496,9 +494,7 @@ export function MessageBubble({
         ) : (
           <div className="mt-1 flex w-full items-center justify-start gap-1">
             <Tooltip>
-              <TooltipTrigger
-                render={<CopyButton text={message.content_text || ""} className="h-7 w-7" />}
-              />
+              <TooltipTrigger render={<CopyButton text={message.content_text || ""} />} />
               <TooltipContent>
                 <p>复制</p>
               </TooltipContent>
@@ -509,12 +505,11 @@ export function MessageBubble({
                 render={
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
+                    size="icon-md"
                     disabled={isStreaming}
                     onClick={() => onRetry?.(message)}
                   >
-                    <RotateCcw className="h-4 w-4" />
+                    <RotateCcw className="size-4" />
                     <span className="sr-only">重试</span>
                   </Button>
                 }
@@ -598,7 +593,7 @@ export function AssistantTurnBubble({
           <div className="mt-1 flex w-full items-center justify-start gap-1">
             {copyText ? (
               <Tooltip>
-                <TooltipTrigger render={<CopyButton text={copyText} className="h-7 w-7" />} />
+                <TooltipTrigger render={<CopyButton text={copyText} />} />
                 <TooltipContent>
                   <p>复制</p>
                 </TooltipContent>
@@ -611,12 +606,11 @@ export function AssistantTurnBubble({
                   render={
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
+                      size="icon-md"
                       disabled={isStreaming}
                       onClick={() => onRetry?.(lastOutput)}
                     >
-                      <RotateCcw className="h-4 w-4" />
+                      <RotateCcw className="size-4" />
                       <span className="sr-only">重试</span>
                     </Button>
                   }
@@ -632,13 +626,12 @@ export function AssistantTurnBubble({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
+                  size="icon-md"
                   aria-label="上一个回复版本"
                   disabled={variantIndex === 0}
                   onClick={() => onVariantChange?.(variantIndex - 1)}
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronLeft className="size-4" />
                 </Button>
                 <span className="min-w-9 text-center tabular-nums">
                   {variantIndex + 1} / {variantCount}
@@ -646,13 +639,12 @@ export function AssistantTurnBubble({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
+                  size="icon-md"
                   aria-label="下一个回复版本"
                   disabled={variantIndex >= variantCount - 1}
                   onClick={() => onVariantChange?.(variantIndex + 1)}
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="size-4" />
                 </Button>
               </div>
             ) : null}

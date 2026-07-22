@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -101,7 +102,7 @@ export function CursorTableScroll({
         <div className="sticky bottom-0 left-0 z-20 flex h-10 w-full items-center justify-center gap-2 border-t bg-background/95 px-3 text-xs backdrop-blur-sm">
           {loadingMore ? (
             <>
-              <Loader2 className="size-3.5 animate-spin" />
+              <Spinner className="size-3.5" />
               <span role="status">正在加载</span>
             </>
           ) : (

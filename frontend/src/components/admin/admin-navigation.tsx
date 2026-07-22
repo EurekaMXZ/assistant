@@ -6,20 +6,20 @@ import { Button } from "@/components/ui/button";
 import { AssistantLogo } from "@/components/assistant-logo";
 import { cn } from "@/lib/utils";
 import type { User } from "@/lib/types";
-import { adminSectionsForRole, type AdminSection } from "./admin-sections";
+import type { AdminSection, AdminSectionDefinition } from "./admin-sections";
 export type { AdminSection } from "./admin-sections";
 
 export function AdminNavigation({
   section,
+  sections,
   user,
   onSelect,
 }: {
   section: AdminSection;
+  sections: readonly AdminSectionDefinition[];
   user: User;
   onSelect: (section: AdminSection) => void;
 }) {
-  const visibleSections = adminSectionsForRole(user.role);
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-16 shrink-0 items-center gap-3 border-b border-sidebar-border px-5">
@@ -28,18 +28,18 @@ export function AdminNavigation({
       </div>
 
       <nav className="min-h-0 flex-1 space-y-1 p-3 pt-5" aria-label="管理导航">
-        {visibleSections.map((item) => {
+        {sections.map((item) => {
           const Icon = item.icon;
           const active = section === item.id;
           return (
             <Button
               key={item.id}
               type="button"
-              variant="ghost"
+              variant="nav"
               size="sm"
               data-active={active}
               className={cn(
-                "h-9 w-full justify-start rounded-md px-2.5 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                "h-9 w-full justify-start rounded-md px-2.5 text-muted-foreground",
                 "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
               )}
               onClick={() => onSelect(item.id)}

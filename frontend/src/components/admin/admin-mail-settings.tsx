@@ -3,16 +3,18 @@
 import { useEffect, useState } from "react";
 import { Send } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AdminError,
-  AdminLoading,
-  AdminPageHeader,
-  SavingIcon,
-  adminSelectClass,
-} from "@/components/admin/admin-shared";
+import { AdminLoading, AdminPageHeader, SavingIcon } from "@/components/admin/admin-shared";
+import { ErrorState } from "@/components/shared/error-state";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { getAdminMailSettings, testAdminMailSettings, updateAdminMailSettings } from "@/lib/api";
 import type { MailSettings } from "@/lib/types";
 
@@ -105,7 +107,7 @@ export function AdminMailSettings() {
     <div>
       <AdminPageHeader title="发信邮箱" />
       {loading ? <AdminLoading /> : null}
-      {!loading && error ? <AdminError message={error} onRetry={load} /> : null}
+      {!loading && error ? <ErrorState message={error} onRetry={load} /> : null}
       {!loading && !error ? (
         <div className="mt-7 max-w-3xl space-y-8">
           <section className="grid gap-5 sm:grid-cols-2">
@@ -118,17 +120,15 @@ export function AdminMailSettings() {
               />
               <span className="text-sm font-medium">启用发信</span>
             </label>
-            <div className="space-y-2">
-              <Label htmlFor="mail-host">SMTP 主机</Label>
+            <FormField label="SMTP 主机" htmlFor="mail-host">
               <Input
                 id="mail-host"
                 value={form.host}
                 onChange={(event) => update("host", event.target.value)}
               />
-            </div>
+            </FormField>
             <div className="grid grid-cols-[1fr_1.25fr] gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="mail-port">端口</Label>
+              <FormField label="端口" htmlFor="mail-port">
                 <Input
                   id="mail-port"
                   type="number"
@@ -137,32 +137,37 @@ export function AdminMailSettings() {
                   value={form.port}
                   onChange={(event) => update("port", Number(event.target.value))}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mail-security">安全连接</Label>
-                <select
-                  id="mail-security"
-                  className={adminSelectClass}
+              </FormField>
+              <FormField label="安全连接" htmlFor="mail-security">
+                <Select
+                  items={[
+                    { value: "none", label: "无" },
+                    { value: "starttls", label: "STARTTLS" },
+                    { value: "tls", label: "TLS" },
+                  ]}
                   value={form.security}
-                  onChange={(event) => update("security", event.target.value)}
+                  onValueChange={(value) => value && update("security", value)}
                 >
-                  <option value="none">无</option>
-                  <option value="starttls">STARTTLS</option>
-                  <option value="tls">TLS</option>
-                </select>
-              </div>
+                  <SelectTrigger id="mail-security">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">无</SelectItem>
+                    <SelectItem value="starttls">STARTTLS</SelectItem>
+                    <SelectItem value="tls">TLS</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormField>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="mail-username">用户名</Label>
+            <FormField label="用户名" htmlFor="mail-username">
               <Input
                 id="mail-username"
                 value={form.username}
                 onChange={(event) => update("username", event.target.value)}
                 autoComplete="username"
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mail-password">密码</Label>
+            </FormField>
+            <FormField label="密码" htmlFor="mail-password">
               <Input
                 id="mail-password"
                 type="password"
@@ -171,24 +176,22 @@ export function AdminMailSettings() {
                 placeholder={passwordConfigured ? "已配置" : undefined}
                 autoComplete="new-password"
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mail-from-email">发件邮箱</Label>
+            </FormField>
+            <FormField label="发件邮箱" htmlFor="mail-from-email">
               <Input
                 id="mail-from-email"
                 type="email"
                 value={form.from_email}
                 onChange={(event) => update("from_email", event.target.value)}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mail-from-name">发件人名称</Label>
+            </FormField>
+            <FormField label="发件人名称" htmlFor="mail-from-name">
               <Input
                 id="mail-from-name"
                 value={form.from_name}
                 onChange={(event) => update("from_name", event.target.value)}
               />
-            </div>
+            </FormField>
             <div className="sm:col-span-2">
               <Button
                 disabled={saving || !form.host.trim() || !form.port || !form.from_email.trim()}
@@ -200,17 +203,16 @@ export function AdminMailSettings() {
             </div>
           </section>
 
-          <section className="border-t pt-7">
+          <section>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="flex-1 space-y-2">
-                <Label htmlFor="mail-test-recipient">收件邮箱</Label>
+              <FormField label="收件邮箱" htmlFor="mail-test-recipient" className="flex-1">
                 <Input
                   id="mail-test-recipient"
                   type="email"
                   value={recipient}
                   onChange={(event) => setRecipient(event.target.value)}
                 />
-              </div>
+              </FormField>
               <Button
                 variant="outline"
                 disabled={testing || !recipient.trim()}

@@ -6,9 +6,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { isEmailVerificationRequiredError } from "@/lib/api";
 
 interface LoginFormProps {
@@ -54,8 +54,7 @@ export function LoginForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4">
-      <div className="grid gap-2">
-        <Label htmlFor="email">邮箱</Label>
+      <FormField label="邮箱" htmlFor="email" error={errors.email?.message}>
         <Input
           id="email"
           type="email"
@@ -63,19 +62,23 @@ export function LoginForm({
           autoComplete="email"
           {...register("email")}
         />
-        {errors.email && <p className="text-destructive">{errors.email.message}</p>}
-      </div>
-      <div className="grid gap-2">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="password">密码</Label>
-          <button
+      </FormField>
+      <FormField
+        label="密码"
+        htmlFor="password"
+        error={errors.password?.message}
+        labelAction={
+          <Button
             type="button"
-            className="text-xs text-muted-foreground hover:text-foreground"
+            variant="link"
+            size="xs"
+            className="h-auto min-h-10 px-0 py-0 text-xs text-muted-foreground hover:text-foreground md:min-h-0"
             onClick={onForgotPassword}
           >
             忘记密码
-          </button>
-        </div>
+          </Button>
+        }
+      >
         <Input
           id="password"
           type="password"
@@ -83,13 +86,12 @@ export function LoginForm({
           autoComplete="current-password"
           {...register("password")}
         />
-        {errors.password && <p className="text-destructive">{errors.password.message}</p>}
-      </div>
+      </FormField>
       {error && <p className="text-destructive">{error}</p>}
       <Button type="submit" disabled={isSubmitting} className="w-full">
         {isSubmitting ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Spinner className="mr-2" />
             登录中
           </>
         ) : (
@@ -98,13 +100,14 @@ export function LoginForm({
       </Button>
       <p className="text-center text-muted-foreground">
         还没有账号？{" "}
-        <button
+        <Button
           type="button"
-          className="cursor-pointer underline hover:text-foreground"
+          variant="link"
+          className="h-auto min-h-10 px-0 py-0 align-baseline text-inherit underline hover:text-foreground md:min-h-0"
           onClick={onSwitchToRegister}
         >
           去注册
-        </button>
+        </Button>
       </p>
     </form>
   );

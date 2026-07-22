@@ -4,12 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { z } from "zod";
 import { PublicAuthShell } from "@/components/auth/public-auth-shell";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { resetPassword } from "@/lib/api";
 import { openAuthDialog } from "@/lib/auth-dialog-events";
 
@@ -60,8 +60,7 @@ export function ResetPasswordView({ token }: { token: string }) {
         </div>
       ) : (
         <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4">
-          <div className="grid gap-2">
-            <Label htmlFor="reset-password">新密码</Label>
+          <FormField label="新密码" htmlFor="reset-password" error={errors.password?.message}>
             <Input
               id="reset-password"
               type="password"
@@ -70,12 +69,12 @@ export function ResetPasswordView({ token }: { token: string }) {
               disabled={!token}
               {...register("password")}
             />
-            {errors.password ? (
-              <p className="text-sm text-destructive">{errors.password.message}</p>
-            ) : null}
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="reset-password-confirm">确认新密码</Label>
+          </FormField>
+          <FormField
+            label="确认新密码"
+            htmlFor="reset-password-confirm"
+            error={errors.confirmPassword?.message}
+          >
             <Input
               id="reset-password-confirm"
               type="password"
@@ -84,13 +83,10 @@ export function ResetPasswordView({ token }: { token: string }) {
               disabled={!token}
               {...register("confirmPassword")}
             />
-            {errors.confirmPassword ? (
-              <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
-            ) : null}
-          </div>
+          </FormField>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <Button type="submit" disabled={isSubmitting || !token}>
-            {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}
+            {isSubmitting ? <Spinner /> : null}
             重置密码
           </Button>
         </form>

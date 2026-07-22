@@ -61,10 +61,11 @@ export function SidebarSearchDialog({
                   const title = conversation.title || "新会话";
 
                   return (
-                    <button
+                    <Button
                       key={conversation.id}
                       type="button"
-                      className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left transition-colors hover:bg-muted"
+                      variant="ghost"
+                      className="h-auto w-full justify-between rounded-lg px-3 py-2 text-left"
                       onClick={() => onSelectConversation(conversation.id)}
                     >
                       <div className="min-w-0 flex-1">
@@ -73,7 +74,7 @@ export function SidebarSearchDialog({
                       {conversation.archived_at ? (
                         <span className="ml-3 shrink-0 text-xs text-muted-foreground">已归档</span>
                       ) : null}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>

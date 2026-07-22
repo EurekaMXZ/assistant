@@ -6,9 +6,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { changePassword, isSessionUnauthorizedError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { toast } from "sonner";
 
 const schema = z
@@ -53,8 +53,7 @@ export function ChangePasswordForm() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="grid max-w-md gap-5">
-      <div className="grid gap-2">
-        <Label htmlFor="currentPassword">当前密码</Label>
+      <FormField label="当前密码" htmlFor="currentPassword" error={errors.currentPassword?.message}>
         <Input
           id="currentPassword"
           type="password"
@@ -62,12 +61,8 @@ export function ChangePasswordForm() {
           autoComplete="current-password"
           {...register("currentPassword")}
         />
-        {errors.currentPassword && (
-          <p className="text-destructive">{errors.currentPassword.message}</p>
-        )}
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="newPassword">新密码</Label>
+      </FormField>
+      <FormField label="新密码" htmlFor="newPassword" error={errors.newPassword?.message}>
         <Input
           id="newPassword"
           type="password"
@@ -75,10 +70,12 @@ export function ChangePasswordForm() {
           autoComplete="new-password"
           {...register("newPassword")}
         />
-        {errors.newPassword && <p className="text-destructive">{errors.newPassword.message}</p>}
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="confirmPassword">确认新密码</Label>
+      </FormField>
+      <FormField
+        label="确认新密码"
+        htmlFor="confirmPassword"
+        error={errors.confirmPassword?.message}
+      >
         <Input
           id="confirmPassword"
           type="password"
@@ -86,14 +83,11 @@ export function ChangePasswordForm() {
           autoComplete="new-password"
           {...register("confirmPassword")}
         />
-        {errors.confirmPassword && (
-          <p className="text-destructive">{errors.confirmPassword.message}</p>
-        )}
-      </div>
+      </FormField>
       <Button type="submit" className="w-fit" disabled={isSubmitting}>
         {isSubmitting ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Spinner className="mr-2" />
             保存中
           </>
         ) : (

@@ -6,6 +6,7 @@ import type { BillingAccount } from "@/lib/types";
 import { getBillingAccount, isSessionUnauthorizedError } from "@/lib/api";
 import { subscribeBillingAccountUpdated } from "@/lib/billing-account-events";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -91,23 +92,20 @@ export function SidebarUserPanel({
     <div className="mt-auto shrink-0 px-2 py-2">
       {authLoading ? (
         <Skeleton
-          className={cn(collapsed ? "mx-auto h-8 w-8 rounded-lg" : "h-20 w-full rounded-xl")}
+          className={cn(collapsed ? "mx-auto size-8 rounded-lg" : "h-20 w-full rounded-xl")}
         />
       ) : user ? (
         <DropdownMenu onOpenChange={(open) => open && void refreshBalance()}>
           <DropdownMenuTrigger
             render={
               <Button
-                variant="ghost"
+                variant="nav"
                 size={collapsed ? "icon-sm" : "sm"}
-                className={cn(
-                  "rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground",
-                  collapsed ? "mx-auto" : "min-h-12 w-full justify-start px-2 py-2",
-                )}
+                className={cn(collapsed ? "mx-auto" : "min-h-12 w-full justify-start px-2 py-2")}
               />
             }
           >
-            <UserIcon className={cn("h-4 w-4", !collapsed && "mr-2")} />
+            <UserIcon className={cn("size-4", !collapsed && "mr-2")} />
             {!collapsed ? (
               <span className="min-w-0 text-left leading-tight">
                 <span className="block truncate text-sm">{user.username}</span>
@@ -127,51 +125,46 @@ export function SidebarUserPanel({
               <span className="text-xs text-muted-foreground">{user.email}</span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenSettings}>
-              <Settings className="mr-2 h-4 w-4" />
+              <Settings className="mr-2 size-4" />
               设置
             </DropdownMenuItem>
             {showAdmin ? (
               <DropdownMenuItem onClick={onOpenAdmin}>
-                <Shield className="mr-2 h-4 w-4" />
+                <Shield className="mr-2 size-4" />
                 管理员
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem onClick={onLogout}>
-              <LogOut className="mr-2 h-4 w-4" />
+              <LogOut className="mr-2 size-4" />
               退出登录
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : collapsed ? (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="mx-auto rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          onClick={onOpenLogin}
-        >
-          <UserIcon className="h-4 w-4" />
+        <Button variant="nav" size="icon-sm" className="mx-auto" onClick={onOpenLogin}>
+          <UserIcon className="size-4" />
           <span className="sr-only">登录</span>
         </Button>
       ) : (
-        <div className="rounded-xl border bg-background/80 p-3 backdrop-blur-sm">
+        <Card className="rounded-xl bg-background/80 p-3 backdrop-blur-sm">
           <p className="font-medium text-foreground">登录后继续</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             发送消息、搜索会话和查看历史都需要登录。
           </p>
           <div className="mt-3 flex items-center gap-2">
-            <Button size="sm" className="min-h-9 flex-1 py-2" onClick={onOpenLogin}>
+            <Button size="sm" className="min-h-10 flex-1 py-2 md:min-h-9" onClick={onOpenLogin}>
               登录
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="min-h-9 flex-1 py-2"
+              className="min-h-10 flex-1 py-2 md:min-h-9"
               onClick={onOpenRegister}
             >
               注册
             </Button>
           </div>
-        </div>
+        </Card>
       )}
     </div>
   );

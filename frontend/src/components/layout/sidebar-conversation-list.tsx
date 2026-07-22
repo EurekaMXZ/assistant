@@ -13,6 +13,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import {
   Archive,
   ChevronDown,
@@ -23,7 +24,6 @@ import {
   Pin,
   Trash2,
 } from "lucide-react";
-import { toast } from "sonner";
 
 const PINNED_CONVERSATIONS_KEY = "assistant_pinned_conversations";
 
@@ -74,6 +74,10 @@ export function SidebarConversationList({
 }: SidebarConversationListProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [pinnedConversationIds, setPinnedConversationIds] = useState(readPinnedConversationIds);
+  const { copyToClipboard } = useCopyToClipboard({
+    successMessage: "私有链接已复制",
+    errorMessage: "复制私有链接失败",
+  });
   const sortedConversations = useMemo(() => {
     return [...conversations].sort((a, b) => {
       const aPinned = pinnedConversationIds.has(a.id);
@@ -103,31 +107,28 @@ export function SidebarConversationList({
   };
 
   const copyPrivateLink = async (conversationId: string) => {
-    try {
-      await window.navigator.clipboard.writeText(`${window.location.origin}/c/${conversationId}`);
-      toast.success("私有链接已复制");
-    } catch {
-      toast.error("复制私有链接失败");
-    }
+    await copyToClipboard(`${window.location.origin}/c/${conversationId}`);
   };
 
   return (
     <ScrollArea className="min-h-0 flex-1 px-2 py-2">
       <div className="space-y-2">
-        <button
+        <Button
           type="button"
+          variant="nav"
+          size="sm"
           aria-expanded={!collapsed}
-          className="group/recent flex w-full items-center rounded-lg py-2 pl-2.5 pr-2 text-left text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          className="group/recent w-full justify-start bg-transparent! py-2 pl-2.5 pr-2 text-left hover:bg-transparent! aria-expanded:bg-transparent!"
           onClick={() => setCollapsed((prev) => !prev)}
         >
           <span className="text-xs font-bold">最近对话</span>
           {collapsed ? (
-            <ChevronRight className="h-4 w-4 shrink-0" />
+            <ChevronRight className="size-4 shrink-0" />
           ) : (
-            <ChevronDown className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/recent:opacity-100 group-focus-visible/recent:opacity-100" />
+            <ChevronDown className="size-4 shrink-0 opacity-0 transition-opacity group-hover/recent:opacity-100 group-focus-visible/recent:opacity-100" />
           )}
           <span className="min-w-0 flex-1" />
-        </button>
+        </Button>
 
         {!collapsed ? (
           isLoading ? (
@@ -171,18 +172,18 @@ export function SidebarConversationList({
                     </Link>
 
                     <Button
-                      variant="ghost"
+                      variant="nav"
                       size="icon-xs"
                       aria-pressed={pinned}
                       title={pinned ? "取消置顶" : "置顶"}
                       className={cn(
-                        "shrink-0 rounded-lg text-sidebar-foreground/70 opacity-0 transition-opacity hover:bg-sidebar-accent hover:text-sidebar-accent-foreground group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100",
+                        "hidden shrink-0 text-sidebar-foreground/70 transition-opacity md:inline-flex md:opacity-0 md:group-hover/conversation:opacity-100 md:group-focus-within/conversation:opacity-100",
                         pinned && "text-sidebar-accent-foreground",
                       )}
                       disabled={authLoading}
                       onClick={() => togglePinned(conversation.id)}
                     >
-                      <Pin className="h-3.5 w-3.5" />
+                      <Pin className="size-3.5" />
                       <span className="sr-only">{pinned ? "取消置顶" : "置顶"}</span>
                     </Button>
 
@@ -190,34 +191,41 @@ export function SidebarConversationList({
                       <DropdownMenuTrigger
                         render={
                           <Button
-                            variant="ghost"
+                            variant="nav"
                             size="icon-sm"
-                            className="ml-1 shrink-0 rounded-lg text-sidebar-foreground/70 opacity-0 transition-opacity hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground aria-expanded:opacity-100 group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100"
+                            className="ml-1 shrink-0 text-sidebar-foreground/70 opacity-100 transition-opacity aria-expanded:opacity-100 md:opacity-0 md:group-hover/conversation:opacity-100 md:group-focus-within/conversation:opacity-100"
                             disabled={authLoading}
                           />
                         }
                       >
-                        <MoreHorizontal className="h-4 w-4" />
+                        <MoreHorizontal className="size-4" />
                         <span className="sr-only">更多</span>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="md:hidden"
+                          onClick={() => togglePinned(conversation.id)}
+                        >
+                          <Pin className="mr-2 size-4" />
+                          {pinned ? "取消置顶" : "置顶"}
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => void copyPrivateLink(conversation.id)}>
-                          <Link2 className="mr-2 h-4 w-4" />
+                          <Link2 className="mr-2 size-4" />
                           复制私有链接
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => onOpenRename(conversation)}>
-                          <Pencil className="mr-2 h-4 w-4" />
+                          <Pencil className="mr-2 size-4" />
                           重命名
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => onOpenArchive(conversation)}>
-                          <Archive className="mr-2 h-4 w-4" />
+                          <Archive className="mr-2 size-4" />
                           归档
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           variant="destructive"
                           onClick={() => onOpenDelete(conversation)}
                         >
-                          <Trash2 className="mr-2 h-4 w-4" />
+                          <Trash2 className="mr-2 size-4" />
                           删除
                         </DropdownMenuItem>
                       </DropdownMenuContent>
