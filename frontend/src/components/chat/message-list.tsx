@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
@@ -212,11 +212,11 @@ export function MessageList({
     >
       <ScrollArea className="h-full">
         <div
-          className="mx-auto min-w-0 w-full max-w-2xl px-4 pt-4 sm:px-6"
+          className="mx-auto min-w-0 w-full max-w-2xl space-y-8 px-4 pt-4 sm:px-6"
           style={{ paddingBottom: bottomInset }}
         >
           {hasOlderMessages ? (
-            <div className="mb-4 flex justify-center">
+            <div className="flex justify-center">
               <Button
                 type="button"
                 variant="ghost"
@@ -255,7 +255,7 @@ export function MessageList({
                 const canRetry =
                   entry.rootTurnId === editableRootTurnId && !streamingTurnId && terminal;
                 return (
-                  <Fragment key={`turn-${entry.rootTurnId}`}>
+                  <div key={`turn-${entry.rootTurnId}`} className="space-y-3">
                     {variant.userMessage ? (
                       <MessageBubble
                         key={variant.userMessage.id}
@@ -287,7 +287,7 @@ export function MessageList({
                         }}
                       />
                     ) : null}
-                  </Fragment>
+                  </div>
                 );
               }
               return (
