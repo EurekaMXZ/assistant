@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -56,6 +57,10 @@ func TestAskUserDefinitionIsStrictSchemaCompatible(t *testing.T) {
 	if !definition.Strict {
 		t.Fatal("ask_user definition must remain strict")
 	}
+	if !strings.Contains(definition.Description, "Never embed a deeplink in Markdown") ||
+		!strings.Contains(definition.Description, "external_action") {
+		t.Fatal("ask_user definition must direct deeplinks through external_action")
+	}
 	var schema struct {
 		Properties           map[string]json.RawMessage `json:"properties"`
 		Required             []string                   `json:"required"`
@@ -91,8 +96,15 @@ func TestAskUserHandlerRestrictsExternalActionTargets(t *testing.T) {
 	valid := []string{
 		"https://pay.example.com/checkout",
 		"weixin://wap/pay?prepayid=example",
+		"weixin://wxpay/bizpayurl?pr=example",
+		"weixin://dl/business/?ticket=example",
+		"alipays://platformapi/startapp?appId=20000067",
+		"my-company.app://orders/123",
+		"intent://scan/#Intent;scheme=zxing;package=com.example;end",
+		"mailto:support@example.com",
 	}
 	invalid := []string{
+		"http://pay.example.com/checkout",
 		"https://localhost/pay",
 		"https://127.0.0.1/pay",
 		"https://127.1/pay",
@@ -101,8 +113,12 @@ func TestAskUserHandlerRestrictsExternalActionTargets(t *testing.T) {
 		"https://169.254.169.254/latest/meta-data",
 		"https://[::1]/pay",
 		"https://metadata.google.internal/computeMetadata/v1/",
-		"weixin://pay/example",
-		"weixin://dl/business/?ticket=example",
+		"javascript:alert(1)",
+		"data:text/html,<script>alert(1)</script>",
+		"file:///etc/passwd",
+		"vbscript:msgbox(1)",
+		"not-a-url",
+		"custom:",
 	}
 	arguments := func(target string) json.RawMessage {
 		payload, err := json.Marshal(map[string]any{

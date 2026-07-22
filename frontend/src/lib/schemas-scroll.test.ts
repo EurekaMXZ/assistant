@@ -66,7 +66,7 @@ describe("runtime schemas", () => {
     ).toBeNull();
   });
 
-  it("accepts cancelled interactions with answers and rejects unsafe action targets", () => {
+  it("accepts arbitrary deeplinks and rejects unsafe action targets", () => {
     const base = {
       id: "ask-user:tool-1",
       tool_call_id: "tool-1",
@@ -84,18 +84,32 @@ describe("runtime schemas", () => {
         user_reported: false,
       },
     };
-    expect(
-      askUserInteractionSchema.safeParse({
-        ...base,
-        action: { label: "Pay", url: "weixin://wap/pay?prepayid=example" },
-      }).success,
-    ).toBe(true);
     for (const url of [
+      "weixin://wxpay/bizpayurl?pr=example",
+      "weixin://dl/business/?ticket=example",
+      "alipays://platformapi/startapp?appId=20000067",
+      "my-company.app://orders/123",
+      "intent://scan/#Intent;scheme=zxing;package=com.example;end",
+      "mailto:support@example.com",
+    ]) {
+      expect(
+        askUserInteractionSchema.safeParse({
+          ...base,
+          action: { label: "Pay", url },
+        }).success,
+      ).toBe(true);
+    }
+    for (const url of [
+      "http://example.com/pay",
       "https://localhost/pay",
       "https://10.0.0.1/pay",
       "https://2130706433/pay",
       "https://169.254.169.254/latest/meta-data",
-      "weixin://dl/business/?ticket=example",
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "file:///etc/passwd",
+      "vbscript:msgbox(1)",
+      "not-a-url",
     ]) {
       expect(
         askUserInteractionSchema.safeParse({

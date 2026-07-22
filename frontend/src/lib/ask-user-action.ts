@@ -1,8 +1,11 @@
 export interface SafeAskUserActionURL {
-  protocol: "https" | "weixin";
-  host: string;
+  kind: "https" | "deeplink";
+  scheme: string;
+  target: string;
   url: string;
 }
+
+const blockedActionSchemes = new Set(["data", "file", "javascript", "vbscript"]);
 
 function unsafeHTTPSHostname(value: string) {
   const hostname = value.trim().toLowerCase().replace(/\.$/, "");
@@ -36,22 +39,19 @@ function unsafeHTTPSHostname(value: string) {
 
 export function parseSafeAskUserActionURL(value: string): SafeAskUserActionURL | null {
   try {
-    const parsed = new URL(value);
-    if (parsed.username || parsed.password || parsed.hash) return null;
+    const raw = value.trim();
+    if (!raw || raw.length > 2048) return null;
+    const parsed = new URL(raw);
+    const scheme = parsed.protocol.slice(0, -1).toLowerCase();
+    if (!scheme || !raw.slice(raw.indexOf(":") + 1).trim()) return null;
     if (parsed.protocol === "https:") {
-      if (unsafeHTTPSHostname(parsed.hostname)) return null;
-      return { protocol: "https", host: parsed.host, url: parsed.toString() };
+      if (parsed.username || parsed.password || unsafeHTTPSHostname(parsed.hostname)) return null;
+      return { kind: "https", scheme, target: parsed.host, url: parsed.toString() };
     }
-    if (
-      parsed.protocol === "weixin:" &&
-      parsed.hostname.toLowerCase() === "wap" &&
-      !parsed.port &&
-      parsed.pathname === "/pay"
-    ) {
-      return { protocol: "weixin", host: parsed.hostname, url: parsed.toString() };
-    }
+    if (parsed.protocol === "http:" || blockedActionSchemes.has(scheme)) return null;
+    const target = parsed.host ? `${scheme}://${parsed.host}` : `${scheme}:`;
+    return { kind: "deeplink", scheme, target, url: parsed.toString() };
   } catch {
     return null;
   }
-  return null;
 }

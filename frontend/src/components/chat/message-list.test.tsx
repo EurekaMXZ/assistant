@@ -180,6 +180,7 @@ describe("ask user interaction", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.restoreAllMocks();
   });
 
   it("renders pending options and submits the selected option", async () => {
@@ -232,6 +233,36 @@ describe("ask user interaction", () => {
     expect(markup).toContain("已取消");
     expect(markup).toContain("text-muted-foreground");
     expect(markup).not.toContain("<button");
+  });
+
+  it("warns before opening an arbitrary deeplink", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const deeplink = "weixin://wxpay/bizpayurl?pr=example";
+    await act(async () => {
+      root.render(
+        <AskUserInteractionView
+          interaction={{
+            ...pendingInteraction,
+            action: { label: "Open payment", url: deeplink },
+          }}
+          onAnswer={vi.fn(async () => false)}
+        />,
+      );
+    });
+
+    expect(container.querySelector(`a[href^="weixin:"]`)).toBeNull();
+    expect(container.textContent).toContain("目标：weixin://wxpay");
+    const externalAction = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Open payment"),
+    );
+    await act(async () => externalAction?.click());
+    expect(document.body.textContent).toContain("即将通过 weixin: 协议唤起外部应用");
+
+    const confirm = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "继续打开",
+    );
+    await act(async () => confirm?.click());
+    expect(open).toHaveBeenCalledWith(deeplink, "_blank", "noopener,noreferrer");
   });
 
   it("renders completed and cancelled interactions as button-free status messages", () => {

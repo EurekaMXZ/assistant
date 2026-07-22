@@ -25,6 +25,13 @@ const (
 
 var askUserOptionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+var blockedAskUserActionSchemes = map[string]struct{}{
+	"data":       {},
+	"file":       {},
+	"javascript": {},
+	"vbscript":   {},
+}
+
 type AskUserHandler struct{}
 
 func (AskUserHandler) ToolName() string { return AskUser }
@@ -105,20 +112,21 @@ func validateAskUserAction(action *AskUserAction) error {
 		return domain.NewValidationError("ask_user action is invalid")
 	}
 	parsed, err := url.Parse(action.URL)
-	if err != nil || parsed.User != nil || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme == "" || strings.TrimSpace(strings.TrimPrefix(action.URL, parsed.Scheme+":")) == "" {
 		return domain.NewValidationError("ask_user action URL is invalid")
 	}
-	switch parsed.Scheme {
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
 	case "https":
-		if parsed.Host == "" || unsafeAskUserHTTPSHost(parsed.Hostname()) {
+		if parsed.User != nil || parsed.Host == "" || unsafeAskUserHTTPSHost(parsed.Hostname()) {
 			return domain.NewValidationError("ask_user action URL is invalid")
 		}
-	case "weixin":
-		if !strings.EqualFold(parsed.Hostname(), "wap") || parsed.Port() != "" || parsed.EscapedPath() != "/pay" {
-			return domain.NewValidationError("ask_user action URL is invalid")
-		}
+	case "http":
+		return domain.NewValidationError("ask_user action URL must use https or a deeplink")
 	default:
-		return domain.NewValidationError("ask_user action URL must use https or weixin")
+		if _, blocked := blockedAskUserActionSchemes[scheme]; blocked {
+			return domain.NewValidationError("ask_user action URL scheme is unsafe")
+		}
 	}
 	return nil
 }

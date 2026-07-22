@@ -45,7 +45,7 @@ func askUserDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        askUserName,
-		Description: "Pause the current turn for a user decision. Use this tool primarily for binary yes-or-no confirmation. For a simple everyday task such as ordering, first select the single best complete option yourself from context, distance, availability, price, and coupons; then call ask_user once with exactly two options to confirm or reject it. If rejected, select one materially different next-best option and confirm once more instead of interviewing the user. Avoid multi-option questionnaires; use more than two options only when a fixed non-binary choice is genuinely necessary. For ordinary confirmation use single_choice with action null. The tool may accompany independent tool calls and completes only after the user chooses an option.",
+		Description: "Pause the current turn for a user decision. Use this tool primarily for binary yes-or-no confirmation. For a simple everyday task such as ordering, first select the single best complete option yourself from context, distance, availability, price, and coupons; then call ask_user once with exactly two options to confirm or reject it. If rejected, select one materially different next-best option and confirm once more instead of interviewing the user. Avoid multi-option questionnaires; use more than two options only when a fixed non-binary choice is genuinely necessary. For ordinary confirmation use single_choice with action null. Use external_action when the user must open an external website or deeplink to continue. Never embed a deeplink in Markdown or ordinary assistant text; pass the exact URL in action.url. The tool may accompany independent tool calls and completes only after the user chooses an option.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -67,7 +67,7 @@ func askUserDefinition() llm.ModelTool {
 				},
 				"action":{
 					"type":["object","null"],
-					"description":"Required for external_action; use null for single_choice.",
+					"description":"Required for external_action; use null for single_choice. The URL may be a secure HTTPS URL or any deeplink returned by a trusted tool.",
 					"properties":{"label":{"type":"string"},"url":{"type":"string"}},
 					"required":["label","url"],
 					"additionalProperties":false

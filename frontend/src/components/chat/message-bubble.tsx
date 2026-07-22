@@ -277,47 +277,32 @@ export function AskUserInteractionView({
       <p className="min-w-0 break-words font-medium leading-6">{interaction.prompt}</p>
       {action ? (
         <div className="mt-3 space-y-1.5">
-          {action.protocol === "https" ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={submitting}
-              onClick={() => setConfirmActionOpen(true)}
-            >
-              {action.label}
-              <ExternalLink className="size-3.5" />
-            </Button>
-          ) : (
-            <Button
-              render={
-                <a href={action.url} onClick={(event) => submitting && event.preventDefault()} />
-              }
-              nativeButton={false}
-              type={undefined}
-              variant="secondary"
-              size="sm"
-              disabled={submitting}
-              aria-disabled={submitting}
-            >
-              {action.label}
-              <ExternalLink className="size-3.5" />
-            </Button>
-          )}
-          <p className="break-all text-xs text-muted-foreground">目标：{action.host}</p>
-          {action.protocol === "https" ? (
-            <ConfirmDialog
-              open={confirmActionOpen}
-              onOpenChange={setConfirmActionOpen}
-              title="打开外部网站？"
-              description={`即将打开 ${action.host}，请确认这是你信任的支付目标。`}
-              confirmText="继续打开"
-              onConfirm={() => {
-                const opened = window.open(action.url, "_blank", "noopener,noreferrer");
-                if (opened) opened.opener = null;
-              }}
-            />
-          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={submitting}
+            onClick={() => setConfirmActionOpen(true)}
+          >
+            {action.label}
+            <ExternalLink className="size-3.5" />
+          </Button>
+          <p className="break-all text-xs text-muted-foreground">目标：{action.target}</p>
+          <ConfirmDialog
+            open={confirmActionOpen}
+            onOpenChange={setConfirmActionOpen}
+            title="打开外部链接？"
+            description={
+              action.kind === "deeplink"
+                ? `即将通过 ${action.scheme}: 协议唤起外部应用。链接由助手或外部工具提供，请确认后继续。`
+                : `即将打开 ${action.target}。链接由助手或外部工具提供，请确认后继续。`
+            }
+            confirmText="继续打开"
+            onConfirm={() => {
+              const opened = window.open(action.url, "_blank", "noopener,noreferrer");
+              if (opened) opened.opener = null;
+            }}
+          />
         </div>
       ) : null}
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
