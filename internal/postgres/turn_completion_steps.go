@@ -23,7 +23,12 @@ func prepareAssistantDrafts(drafts []domain.AssistantMessageDraft) []domain.Assi
 	prepared := make([]domain.AssistantMessageDraft, 0, len(drafts))
 	for _, draft := range drafts {
 		if strings.TrimSpace(draft.ContentText) == "" {
-			continue
+			var metadata struct {
+				AttachmentIDs []string `json:"attachment_ids"`
+			}
+			if json.Unmarshal(draft.Metadata, &metadata) != nil || len(metadata.AttachmentIDs) == 0 {
+				continue
+			}
 		}
 		prepared = append(prepared, draft)
 	}

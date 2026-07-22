@@ -188,7 +188,7 @@ func (r *TurnRunner) generatedImageDraft(ctx context.Context, turn *domain.Turn,
 		return domain.AssistantMessageDraft{}, fmt.Errorf("marshal generated image message metadata: %w", err)
 	}
 
-	return domain.AssistantMessageDraft{ContentText: "已生成图片", Metadata: draftMetadata}, nil
+	return domain.AssistantMessageDraft{Metadata: draftMetadata}, nil
 }
 
 func generatedImageSHA256(data []byte) string {
