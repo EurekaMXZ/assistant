@@ -38,12 +38,13 @@ import type {
   Message,
   Turn,
 } from "@/lib/types";
-import { askUserInteractionSchema, messageSchema, turnSchema } from "@/lib/api-schemas";
+import { turnSchema } from "@/lib/api-schemas";
 import {
   assistantInteractionFromMessage,
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
   ensureStreamingThinkingMessage,
+  messagesFromConversationEvents,
   upsertAssistantInteraction,
 } from "@/lib/chat-state";
 import type { ComposerShellAttachment } from "@/components/chat/composer-shell";
@@ -130,62 +131,6 @@ async function inspectUnresolvedTurns(
   };
 }
 
-function messagesFromConversationEvents(
-  events: Awaited<ReturnType<typeof listConversationEvents>>["events"],
-): Message[] {
-  let messages: Message[] = [];
-  for (const event of events) {
-    if (event.event_type === "message.completed") {
-      const parsed = messageSchema.safeParse(event.payload.message);
-      if (parsed.success) messages.push(parsed.data);
-      continue;
-    }
-    if (
-      !event.turn_id ||
-      !["interaction.awaiting_input", "interaction.completed", "interaction.cancelled"].includes(
-        event.event_type,
-      )
-    ) {
-      continue;
-    }
-    const parsed = askUserInteractionSchema.safeParse(event.payload);
-    if (!parsed.success) continue;
-    messages = upsertAssistantInteraction(messages, event.turn_id, event.conversation_id, {
-      ...parsed.data,
-      type: "interaction",
-      created_at: event.created_at,
-    });
-  }
-
-  return orderConversationMessages(messages);
-}
-
-function orderConversationMessages(source: Message[]) {
-  const messages = source.map((message) =>
-    assistantInteractionFromMessage(message) ? { ...message } : message,
-  );
-  const interactionsByTurn = new Map<string, Message[]>();
-  for (const message of messages) {
-    if (!message.turn_id || !assistantInteractionFromMessage(message)) continue;
-    const interactions = interactionsByTurn.get(message.turn_id) || [];
-    interactions.push(message);
-    interactionsByTurn.set(message.turn_id, interactions);
-  }
-  for (const [turnId, interactions] of interactionsByTurn) {
-    const turnMessages = messages.filter((message) => message.turn_id === turnId);
-    const userSequence = turnMessages.find((message) => message.role === "user")?.seq ?? 0;
-    const assistantSequence = turnMessages.find(
-      (message) => message.role === "assistant" && !assistantInteractionFromMessage(message),
-    )?.seq;
-    const upperSequence = assistantSequence ?? userSequence + 1;
-    interactions.forEach((interaction, index) => {
-      interaction.seq =
-        userSequence + ((upperSequence - userSequence) * (index + 1)) / (interactions.length + 1);
-    });
-  }
-  return messages.sort((left, right) => left.seq - right.seq);
-}
-
 function turnsFromConversationEvents(
   events: Awaited<ReturnType<typeof listConversationEvents>>["events"],
 ): Turn[] {
@@ -212,7 +157,7 @@ function mergeMessages(...groups: Message[][]) {
   for (const group of groups) {
     for (const message of group) messages.set(message.id, message);
   }
-  return orderConversationMessages(Array.from(messages.values()));
+  return Array.from(messages.values());
 }
 
 async function loadConversationMessages(conversationId: string) {

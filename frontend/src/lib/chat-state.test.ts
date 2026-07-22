@@ -4,11 +4,12 @@ import {
   assistantTextMessageId,
   assistantTimelineThinkingState,
   ensureStreamingThinkingMessage,
+  messagesFromConversationEvents,
   thinkingMessageId,
   upsertAssistantInteraction,
   upsertAssistantTextContent,
 } from "./chat-state";
-import type { InteractionTimelineItem, Message, TimelineItem } from "./types";
+import type { ConversationEvent, InteractionTimelineItem, Message, TimelineItem } from "./types";
 
 const userMessage = {
   id: "message-1",
@@ -36,6 +37,80 @@ const pendingInteraction: InteractionTimelineItem = {
 };
 
 describe("chat state transformations", () => {
+  it("projects persisted assistant messages and ask_user interactions in event order", () => {
+    const assistantMessage = (
+      id: string,
+      seq: number,
+      itemId: string,
+      content: string,
+    ): Message => ({
+      id,
+      conversation_id: "conversation-1",
+      turn_id: "turn-1",
+      seq,
+      role: "assistant",
+      content_text: content,
+      metadata: { display_kind: "assistant_text", model_item_id: itemId },
+      created_at: "2026-01-01T00:00:06Z",
+    });
+    const event = (
+      id: string,
+      sequence: number,
+      eventType: string,
+      payload: Record<string, unknown>,
+    ): ConversationEvent => ({
+      id,
+      conversation_id: "conversation-1",
+      turn_id: "turn-1",
+      event_seq: String(sequence),
+      event_key: id,
+      schema_version: 1,
+      event_type: eventType,
+      payload,
+      context_included: false,
+      created_at: `2026-01-01T00:00:0${sequence}Z`,
+    });
+    const awaitingInteraction = {
+      id: pendingInteraction.id,
+      tool_call_id: pendingInteraction.tool_call_id,
+      prompt: pendingInteraction.prompt,
+      kind: pendingInteraction.kind,
+      options: pendingInteraction.options,
+      status: pendingInteraction.status,
+    };
+    const completedInteraction = {
+      ...awaitingInteraction,
+      status: "completed" as const,
+      answer: {
+        status: "answered" as const,
+        option_id: "yes",
+        label: "Yes",
+        user_reported: true,
+      },
+    };
+    const preamble = assistantMessage("assistant-preamble", 2, "output-preamble", "First.");
+    const final = assistantMessage("assistant-final", 3, "output-final", "Last.");
+    const events = [
+      event("assistant-final-message", 7, "message.completed", { message: final }),
+      event("assistant-preamble-message", 6, "message.completed", { message: preamble }),
+      event("output-final", 5, "output_text.completed", { item_id: "output-final" }),
+      event("interaction-completed", 4, "interaction.completed", completedInteraction),
+      event("interaction-awaiting", 3, "interaction.awaiting_input", awaitingInteraction),
+      event("output-preamble", 2, "output_text.completed", { item_id: "output-preamble" }),
+      event("user-message", 1, "message.completed", { message: userMessage }),
+    ];
+
+    const projected = messagesFromConversationEvents(events);
+
+    expect(projected.map((message) => message.id)).toEqual([
+      userMessage.id,
+      preamble.id,
+      pendingInteraction.id,
+      final.id,
+    ]);
+    expect(projected[2]?.metadata.interaction).toMatchObject({ status: "completed" });
+  });
+
   it("inserts one thinking marker per turn", () => {
     const once = ensureStreamingThinkingMessage([userMessage], "turn-1", "conversation-1");
     const twice = ensureStreamingThinkingMessage(once, "turn-1", "conversation-1");
@@ -107,6 +182,47 @@ describe("chat state transformations", () => {
       userMessage.id,
       pendingInteraction.id,
       thinkingMessageId("turn-1"),
+    ]);
+  });
+
+  it("reorders existing assistant projections to match an authoritative snapshot", () => {
+    const interactionFirst = upsertAssistantInteraction(
+      [userMessage],
+      "turn-1",
+      "conversation-1",
+      pendingInteraction,
+    );
+    const outOfOrder = upsertAssistantTextContent(
+      interactionFirst,
+      "turn-1",
+      "conversation-1",
+      "commentary-1",
+      "Checking first.",
+      "replace",
+    );
+    const snapshot: TimelineItem[] = [
+      {
+        id: "commentary-1",
+        type: "output_text",
+        status: "completed",
+        content_text: "Checking first.",
+        metadata: { phase: "commentary" },
+        created_at: "2026-01-01T00:00:01Z",
+      },
+      pendingInteraction,
+    ];
+
+    const reordered = applyAssistantTimelineSnapshot(
+      outOfOrder,
+      "turn-1",
+      "conversation-1",
+      snapshot,
+    );
+
+    expect(reordered.map((message) => message.id)).toEqual([
+      userMessage.id,
+      assistantTextMessageId("turn-1", "commentary-1"),
+      pendingInteraction.id,
     ]);
   });
 

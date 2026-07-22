@@ -1,5 +1,6 @@
 import type { PendingHomeTurn } from "./pending-home-turn";
-import type { InteractionTimelineItem, Message, TimelineItem } from "./types";
+import { askUserInteractionSchema, messageSchema } from "./api-schemas";
+import type { ConversationEvent, InteractionTimelineItem, Message, TimelineItem } from "./types";
 import {
   isAssistantInteractionItem,
   isAssistantOutputItem,
@@ -16,6 +17,26 @@ export function assistantTextMessageId(turnId: string, timelineItemId: string) {
 
 function assistantErrorMessageId(turnId: string) {
   return `assistant-${turnId}-error`;
+}
+
+const assistantOutputEventTypes = new Set(["output_text.completed", "output_text.interrupted"]);
+
+function assistantOutputKey(turnId: string, itemId: string) {
+  return `${turnId}\u0000${itemId}`;
+}
+
+function assistantOutputKeyFromEvent(event: ConversationEvent) {
+  const itemId = event.payload.item_id;
+  return event.turn_id && typeof itemId === "string" && itemId
+    ? assistantOutputKey(event.turn_id, itemId)
+    : null;
+}
+
+function assistantOutputKeyFromMessage(message: Message) {
+  const itemId = message.metadata?.model_item_id;
+  return message.role === "assistant" && message.turn_id && typeof itemId === "string" && itemId
+    ? assistantOutputKey(message.turn_id, itemId)
+    : null;
 }
 
 function buildAssistantMessage(
@@ -201,6 +222,77 @@ export function upsertAssistantInteraction(
   return interaction.status === "awaiting_input" ? removeThinkingMessage(next, turnId) : next;
 }
 
+export function messagesFromConversationEvents(source: ConversationEvent[]) {
+  const events = [...source].sort((left, right) => {
+    const leftSequence = BigInt(left.event_seq);
+    const rightSequence = BigInt(right.event_seq);
+    return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
+  });
+  const parsedMessages = new Map<string, Message>();
+  const outputKeys = new Set<string>();
+
+  for (const event of events) {
+    if (event.event_type === "message.completed") {
+      const parsed = messageSchema.safeParse(event.payload.message);
+      if (parsed.success) parsedMessages.set(event.id, parsed.data);
+    }
+    if (assistantOutputEventTypes.has(event.event_type)) {
+      const key = assistantOutputKeyFromEvent(event);
+      if (key) outputKeys.add(key);
+    }
+  }
+
+  const assistantMessagesByOutput = new Map<string, Message>();
+  for (const message of parsedMessages.values()) {
+    const key = assistantOutputKeyFromMessage(message);
+    if (key && outputKeys.has(key) && !assistantMessagesByOutput.has(key)) {
+      assistantMessagesByOutput.set(key, message);
+    }
+  }
+
+  let messages: Message[] = [];
+  const placedMessageIds = new Set<string>();
+  for (const event of events) {
+    if (assistantOutputEventTypes.has(event.event_type)) {
+      const key = assistantOutputKeyFromEvent(event);
+      const message = key ? assistantMessagesByOutput.get(key) : undefined;
+      if (message && !placedMessageIds.has(message.id)) {
+        messages.push(message);
+        placedMessageIds.add(message.id);
+      }
+      continue;
+    }
+
+    if (event.event_type === "message.completed") {
+      const message = parsedMessages.get(event.id);
+      if (!message || placedMessageIds.has(message.id)) continue;
+      const outputKey = assistantOutputKeyFromMessage(message);
+      if (outputKey && assistantMessagesByOutput.has(outputKey)) continue;
+      messages.push(message);
+      placedMessageIds.add(message.id);
+      continue;
+    }
+
+    if (
+      !event.turn_id ||
+      !["interaction.awaiting_input", "interaction.completed", "interaction.cancelled"].includes(
+        event.event_type,
+      )
+    ) {
+      continue;
+    }
+    const parsed = askUserInteractionSchema.safeParse(event.payload);
+    if (!parsed.success) continue;
+    messages = upsertAssistantInteraction(messages, event.turn_id, event.conversation_id, {
+      ...parsed.data,
+      type: "interaction",
+      created_at: event.created_at,
+    });
+  }
+
+  return messages;
+}
+
 export function upsertAssistantTextContent(
   messages: Message[],
   turnId: string,
@@ -307,6 +399,44 @@ export function assistantTimelineThinkingState(turnId: string, items: TimelineIt
   return { afterMessageId, awaitingInput, pendingMessageId };
 }
 
+function reorderAssistantTimelineMessages(
+  messages: Message[],
+  turnId: string,
+  items: TimelineItem[],
+) {
+  const itemRanks = new Map<string, number>();
+  for (const item of items) {
+    if (isAssistantOutputItem(item) || isAssistantInteractionItem(item)) {
+      itemRanks.set(item.id, itemRanks.size);
+    }
+  }
+  const itemIdFromMessage = (message: Message) => {
+    if (message.turn_id !== turnId) return null;
+    if (message.metadata?.display_kind === "ask_user") return message.id;
+    const timelineItemId = message.metadata?.timeline_item_id;
+    return message.metadata?.display_kind === "assistant_text" && typeof timelineItemId === "string"
+      ? timelineItemId
+      : null;
+  };
+  const ordered = messages
+    .filter((message) => {
+      const itemId = itemIdFromMessage(message);
+      return itemId !== null && itemRanks.has(itemId);
+    })
+    .sort((left, right) => {
+      const leftRank = itemRanks.get(itemIdFromMessage(left) as string) as number;
+      const rightRank = itemRanks.get(itemIdFromMessage(right) as string) as number;
+      return leftRank - rightRank;
+    });
+  if (ordered.length < 2) return messages;
+
+  let orderedIndex = 0;
+  return messages.map((message) => {
+    const itemId = itemIdFromMessage(message);
+    return itemId !== null && itemRanks.has(itemId) ? ordered[orderedIndex++] : message;
+  });
+}
+
 export function applyAssistantTimelineSnapshot(
   messages: Message[],
   turnId: string,
@@ -330,21 +460,25 @@ export function applyAssistantTimelineSnapshot(
     }
     return true;
   });
-  const projected = items.reduce((next, item) => {
-    if (isAssistantInteractionItem(item)) {
-      return upsertAssistantInteraction(next, turnId, conversationId, item);
-    }
-    return isAssistantOutputItem(item) && item.content_text != null
-      ? upsertAssistantTextContent(
-          next,
-          turnId,
-          conversationId,
-          item.id,
-          item.content_text,
-          "replace",
-        )
-      : next;
-  }, retained);
+  const projected = reorderAssistantTimelineMessages(
+    items.reduce((next, item) => {
+      if (isAssistantInteractionItem(item)) {
+        return upsertAssistantInteraction(next, turnId, conversationId, item);
+      }
+      return isAssistantOutputItem(item) && item.content_text != null
+        ? upsertAssistantTextContent(
+            next,
+            turnId,
+            conversationId,
+            item.id,
+            item.content_text,
+            "replace",
+          )
+        : next;
+    }, retained),
+    turnId,
+    items,
+  );
   const { afterMessageId, awaitingInput } = assistantTimelineThinkingState(turnId, items);
   if (awaitingInput) return removeThinkingMessage(projected, turnId);
   return afterMessageId ? moveThinkingAfter(projected, turnId, afterMessageId) : projected;
