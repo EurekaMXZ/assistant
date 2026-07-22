@@ -41,6 +41,26 @@ func NewHandler(settings Settings) http.Handler {
 		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("/files", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			file, size, err := OpenFile(settings, r.URL.Query().Get("path"))
+			if err != nil {
+				status := http.StatusInternalServerError
+				if errors.Is(err, errInvalidFileRequest) {
+					status = http.StatusBadRequest
+				} else if errors.Is(err, os.ErrNotExist) {
+					status = http.StatusNotFound
+				} else if errors.Is(err, errFileTooLarge) {
+					status = http.StatusRequestEntityTooLarge
+				}
+				writeError(w, status, err.Error())
+				return
+			}
+			defer file.Close()
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+			_, _ = io.Copy(w, file)
+			return
+		}
 		if r.Method != http.MethodPut {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -279,6 +299,67 @@ func WriteFile(ctx context.Context, settings Settings, requestedPath string, rea
 		return fmt.Errorf("replace sandbox file: %w", err)
 	}
 	return nil
+}
+
+func OpenFile(settings Settings, requestedPath string) (*os.File, int64, error) {
+	root, target, err := resolveWorkspaceFile(settings.Workdir, requestedPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return nil, 0, fmt.Errorf("resolve sandbox file: %w", err)
+	}
+	if !pathWithinRoot(root, resolved) {
+		return nil, 0, fmt.Errorf("%w: file path must be inside the sandbox workspace", errInvalidFileRequest)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("%w: file path must reference a regular file", errInvalidFileRequest)
+	}
+	maxBytes := settings.MaxFileBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxFileBytes
+	}
+	if info.Size() > maxBytes {
+		return nil, 0, fmt.Errorf("%w: file exceeds %d bytes", errFileTooLarge, maxBytes)
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return nil, 0, err
+	}
+	return file, info.Size(), nil
+}
+
+func resolveWorkspaceFile(workdir string, requestedPath string) (string, string, error) {
+	root := strings.TrimSpace(workdir)
+	if root == "" {
+		root = defaultWorkdir
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve sandbox workdir: %w", err)
+	}
+	target := strings.TrimSpace(requestedPath)
+	if target == "" {
+		return "", "", fmt.Errorf("%w: file path is required", errInvalidFileRequest)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(root, target)
+	}
+	target = filepath.Clean(target)
+	if !pathWithinRoot(root, target) || target == root {
+		return "", "", fmt.Errorf("%w: file path must be inside the sandbox workspace", errInvalidFileRequest)
+	}
+	return root, target, nil
+}
+
+func pathWithinRoot(root string, target string) bool {
+	relative, err := filepath.Rel(root, target)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 var (

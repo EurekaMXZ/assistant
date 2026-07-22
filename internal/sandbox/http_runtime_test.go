@@ -19,7 +19,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer bridge-token" {
 			t.Fatalf("Authorization = %q, want bearer token", r.Header.Get("Authorization"))
 		}
-		if r.Header.Get("Idempotency-Key") == "" {
+		if r.Method != http.MethodGet && r.Header.Get("Idempotency-Key") == "" {
 			t.Fatal("missing Idempotency-Key header")
 		}
 		calls = append(calls, r.Method+" "+r.URL.Path)
@@ -54,6 +54,13 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 				t.Fatalf("unexpected file request: path=%q data=%q content-type=%q", r.URL.Query().Get("path"), data, r.Header.Get("Content-Type"))
 			}
 			w.WriteHeader(http.StatusNoContent)
+		case "GET /sandboxes/runtime-1/files":
+			if r.URL.Query().Get("path") != "/workspace/output file.txt" {
+				t.Fatalf("unexpected read path: %q", r.URL.Query().Get("path"))
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Length", "11")
+			_, _ = io.WriteString(w, "output-data")
 		case "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume":
 			_ = json.NewEncoder(w).Encode(domain.SandboxHandle{Provider: "firecracker", RuntimeID: "runtime-1"})
 		case "DELETE /sandboxes/runtime-1":
@@ -93,6 +100,15 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 	if err := runtime.WriteSandboxFile(context.Background(), *handle, "/workspace/input file.txt", strings.NewReader("file-data"), int64(len("file-data")), "write-key"); err != nil {
 		t.Fatalf("write sandbox file: %v", err)
 	}
+	reader, size, err := runtime.ReadSandboxFile(context.Background(), *handle, "/workspace/output file.txt")
+	if err != nil {
+		t.Fatalf("read sandbox file: %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || size != 11 || string(data) != "output-data" {
+		t.Fatalf("unexpected sandbox file: size=%d data=%q err=%v", size, data, err)
+	}
 
 	destroyed, err := runtime.DestroySandbox(context.Background(), *handle, "destroy-key")
 	if err != nil {
@@ -102,7 +118,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 		t.Fatalf("unexpected destroyed handle: %#v", destroyed)
 	}
 
-	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "PUT /sandboxes/runtime-1/files", "DELETE /sandboxes/runtime-1"}
+	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "PUT /sandboxes/runtime-1/files", "GET /sandboxes/runtime-1/files", "DELETE /sandboxes/runtime-1"}
 	if strings.Join(calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}

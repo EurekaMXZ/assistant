@@ -700,6 +700,11 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		TotalTokens: outcome.Model.Usage.TotalTokens, ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,
 	}
 	assistantDrafts := assistantMessageDraftsFromRun(toolRun, outcome.Model)
+	attachmentDrafts, err := assistantAttachmentDraftsFromItems(outcome.ContextItems, turn.ConversationID, turn.ID)
+	if err != nil {
+		return r.failTurn(ctx, turn, summary.RequestBlobKey, summary.StreamBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	assistantDrafts = append(assistantDrafts, attachmentDrafts...)
 	assistantDrafts = append(assistantDrafts, outcome.GeneratedImageDrafts...)
 	compactTriggerTokens := r.compactTriggerTokens(ctx, turn.ID, outcome.ContextWindowTokens)
 	completedTurn, assistantMessages, updatedHead, _, err := r.store.FinalizeTurnSuccess(ctx, turn.ID, assistantDrafts, summary, compactTriggerTokens)

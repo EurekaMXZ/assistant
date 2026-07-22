@@ -36,6 +36,9 @@ type stubCubeRuntimeClient struct {
 	writtenPath   string
 	writtenData   []byte
 	writeErr      error
+	readPath      string
+	readData      []byte
+	readErr       error
 }
 
 func (s *stubCubeRuntimeClient) Create(_ context.Context, opts cubeCreateOptions) (*cubeSandbox, error) {
@@ -79,6 +82,15 @@ func (s *stubCubeRuntimeClient) WriteFile(_ context.Context, _ *cubeSandbox, pat
 	}
 	s.writtenData = append([]byte(nil), data...)
 	return s.writeErr
+}
+
+func (s *stubCubeRuntimeClient) ReadFile(_ context.Context, _ *cubeSandbox, path string) (io.ReadCloser, int64, error) {
+	s.readPath = path
+	if s.readErr != nil {
+		return nil, 0, s.readErr
+	}
+	data := append([]byte(nil), s.readData...)
+	return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 }
 
 func TestCubeRuntimeCreateUsesNeverTimeoutPolicyAndSafeMetadata(t *testing.T) {
@@ -229,8 +241,8 @@ func TestCubeRuntimeExecReturnsNonzeroExitAsCommandResult(t *testing.T) {
 	}
 }
 
-func TestCubeRuntimeWritesFileThroughConnectedEnvdSession(t *testing.T) {
-	client := &stubCubeRuntimeClient{connected: &cubeSandbox{ID: "cube-1", TemplateID: "tpl-1"}}
+func TestCubeRuntimeReadsAndWritesFilesThroughConnectedEnvdSession(t *testing.T) {
+	client := &stubCubeRuntimeClient{connected: &cubeSandbox{ID: "cube-1", TemplateID: "tpl-1"}, readData: []byte("result\n")}
 	runtime := mustCubeRuntime(t, client)
 	handle := domain.SandboxHandle{Provider: ProviderCubeSandbox, RuntimeID: "cube-1"}
 	if err := runtime.WriteSandboxFile(t.Context(), handle, "/workspace/input.csv", strings.NewReader("a,b\n"), 4, "write-key"); err != nil {
@@ -238,6 +250,15 @@ func TestCubeRuntimeWritesFileThroughConnectedEnvdSession(t *testing.T) {
 	}
 	if client.connectCalls != 1 || client.writtenPath != "/workspace/input.csv" || string(client.writtenData) != "a,b\n" {
 		t.Fatalf("unexpected file write: %#v", client)
+	}
+	reader, size, err := runtime.ReadSandboxFile(t.Context(), handle, "/workspace/result.txt")
+	if err != nil {
+		t.Fatalf("read sandbox file: %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || size != 7 || string(data) != "result\n" || client.readPath != "/workspace/result.txt" {
+		t.Fatalf("unexpected file read: size=%d data=%q path=%q err=%v", size, data, client.readPath, err)
 	}
 }
 

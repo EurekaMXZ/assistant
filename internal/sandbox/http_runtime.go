@@ -133,6 +133,37 @@ func (r *HTTPRuntime) WriteSandboxFile(ctx context.Context, handle domain.Sandbo
 	return nil
 }
 
+func (r *HTTPRuntime) ReadSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string) (io.ReadCloser, int64, error) {
+	if r == nil || r.client == nil {
+		return nil, 0, fmt.Errorf("sandbox http runtime is not configured")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, 0, fmt.Errorf("sandbox file path is required")
+	}
+	target := r.baseURL + "/sandboxes/" + pathEscape(handle.RuntimeID) + "/files?path=" + url.QueryEscape(path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create sandbox bridge file request: %w", err)
+	}
+	if r.token != "" {
+		req.Header.Set("Authorization", "Bearer "+r.token)
+	}
+	res, err := r.client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send sandbox bridge file request: %w", err)
+	}
+	if res.StatusCode >= http.StatusBadRequest {
+		defer res.Body.Close()
+		return nil, 0, errors.New(readBridgeError(res))
+	}
+	if res.ContentLength < 0 || res.ContentLength > domain.SandboxFileMaxBytes {
+		res.Body.Close()
+		return nil, 0, fmt.Errorf("sandbox file size must be between 0 and %d bytes", domain.SandboxFileMaxBytes)
+	}
+	return res.Body, res.ContentLength, nil
+}
+
 func (r *HTTPRuntime) doJSON(ctx context.Context, method string, path string, input any, output any, requestKey string) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("sandbox http runtime is not configured")

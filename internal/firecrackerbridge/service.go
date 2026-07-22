@@ -227,6 +227,21 @@ func (s *Service) handleSandbox(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "files" && r.Method == http.MethodGet {
+		started, err := s.serveFile(r.Context(), w, runtimeID, r.URL.Query().Get("path"))
+		if err != nil && !started {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errSandboxNotFound) {
+				status = http.StatusNotFound
+			} else if errors.Is(err, errRequestEntityTooLarge) {
+				status = http.StatusRequestEntityTooLarge
+			} else if errors.Is(err, errBadRequest) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err.Error())
+		}
+		return
+	}
 
 	if len(parts) == 2 && parts[1] == "stop" && r.Method == http.MethodPost {
 		handle, err := s.stopSandboxRuntime(r.Context(), runtimeID)
@@ -944,6 +959,55 @@ func (s *Service) writeFile(ctx context.Context, runtimeID string, targetPath st
 	}
 	_, _ = io.Copy(io.Discard, res.Body)
 	return nil
+}
+
+func (s *Service) serveFile(ctx context.Context, w http.ResponseWriter, runtimeID string, targetPath string) (bool, error) {
+	targetPath = strings.TrimSpace(targetPath)
+	if targetPath == "" {
+		return false, fmt.Errorf("%w: file path is required", errBadRequest)
+	}
+	s.mu.Lock()
+	sb := s.sandboxes[runtimeID]
+	s.mu.Unlock()
+	if sb == nil {
+		return false, errSandboxNotFound
+	}
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.resumeSandboxResources(ctx, sb); err != nil {
+		return false, fmt.Errorf("resume sandbox before file read: %w", err)
+	}
+	client := newVsockHTTPClient(sb.vsockPath, sb.agentPort, 5*time.Minute)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://sandbox/files?path="+url.QueryEscape(targetPath), nil)
+	if err != nil {
+		return false, err
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("send sandbox agent file request: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= http.StatusBadRequest {
+		message := readErrorMessage(res.Body)
+		if res.StatusCode == http.StatusRequestEntityTooLarge {
+			return false, fmt.Errorf("%w: %s", errRequestEntityTooLarge, message)
+		}
+		if res.StatusCode == http.StatusBadRequest {
+			return false, fmt.Errorf("%w: %s", errBadRequest, message)
+		}
+		if res.StatusCode == http.StatusNotFound {
+			return false, errSandboxNotFound
+		}
+		return false, errors.New(message)
+	}
+	if res.ContentLength < 0 || res.ContentLength > domain.SandboxFileMaxBytes {
+		return false, fmt.Errorf("%w: invalid sandbox file size", errRequestEntityTooLarge)
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", res.ContentLength))
+	w.WriteHeader(http.StatusOK)
+	_, err = io.CopyN(w, res.Body, res.ContentLength)
+	return true, err
 }
 
 func (sb *sandbox) metadata(extra map[string]any) (json.RawMessage, error) {

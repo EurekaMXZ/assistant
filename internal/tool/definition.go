@@ -13,20 +13,24 @@ const (
 	askUserName           = "ask_user"
 
 	conversationRenameTitleName = "rename_title"
+	conversationExportTextName  = "export_text"
 	sandboxCreateName           = "create"
 	sandboxDestroyName          = "destroy"
 	sandboxExecName             = "exec"
 	sandboxImportAttachmentName = "import_attachment"
+	sandboxExportFileName       = "export_file"
 	internetSearchName          = "search"
 	internetExtractName         = "extract"
 )
 
 const (
 	ConversationRenameTitle = conversationNamespace + "." + conversationRenameTitleName
+	ConversationExportText  = conversationNamespace + "." + conversationExportTextName
 	SandboxCreate           = sandboxNamespace + "." + sandboxCreateName
 	SandboxDestroy          = sandboxNamespace + "." + sandboxDestroyName
 	SandboxExec             = sandboxNamespace + "." + sandboxExecName
 	SandboxImportAttachment = sandboxNamespace + "." + sandboxImportAttachmentName
+	SandboxExportFileTool   = sandboxNamespace + "." + sandboxExportFileName
 	WebSearch               = internetNamespace + "." + internetSearchName
 	WebExtract              = internetNamespace + "." + internetExtractName
 	AskUser                 = askUserName
@@ -90,6 +94,7 @@ func conversationNamespaceDefinition() llm.ModelTool {
 		conversationNamespace,
 		"Tools for managing the current conversation.",
 		conversationRenameTitleDefinition(),
+		conversationExportTextDefinition(),
 	)
 }
 
@@ -101,6 +106,7 @@ func sandboxNamespaceDefinition() llm.ModelTool {
 		sandboxDestroyDefinition(),
 		sandboxExecDefinition(),
 		sandboxImportAttachmentDefinition(),
+		sandboxExportFileDefinition(),
 	)
 }
 
@@ -138,6 +144,24 @@ func conversationRenameTitleDefinition() llm.ModelTool {
 				}
 			},
 			"required":["title"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
+	}
+}
+
+func conversationExportTextDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        conversationExportTextName,
+		Description: "Create a UTF-8 text file and attach it to the assistant response. Use this for short text, Markdown, CSV, JSON, XML, code, or configuration files that do not need sandbox processing. The attachment is delivered automatically; do not include a download URL.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"filename":{"type":"string","description":"Download filename, including a useful extension."},
+				"content":{"type":"string","description":"Complete UTF-8 file content."}
+			},
+			"required":["filename","content"],
 			"additionalProperties":false
 		}`),
 		Strict: true,
@@ -218,6 +242,24 @@ func sandboxImportAttachmentDefinition() llm.ModelTool {
 				}
 			},
 			"required":["attachment_id"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
+	}
+}
+
+func sandboxExportFileDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxExportFileName,
+		Description: "Attach an existing regular file from the active sandbox workspace to the assistant response. Use this after creating a file in /workspace. The attachment is delivered automatically; do not include a download URL.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{"type":"string","description":"Absolute path inside /workspace, or a path relative to /workspace."},
+				"filename":{"type":["string","null"],"description":"Optional download filename. Use null to preserve the sandbox filename."}
+			},
+			"required":["path","filename"],
 			"additionalProperties":false
 		}`),
 		Strict: true,

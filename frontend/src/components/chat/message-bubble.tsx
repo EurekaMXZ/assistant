@@ -125,6 +125,39 @@ function isImageAttachment(attachment: MessageAttachment) {
   return attachment.category === "image" || attachment.content_type?.startsWith("image/");
 }
 
+function assistantFileAttachments(message: Message): ComposerShellAttachment[] {
+  return attachmentsFromMetadata(message.metadata || {})
+    .filter((attachment) => !isImageAttachment(attachment))
+    .map((attachment) => ({
+      attachmentId: attachment.id,
+      category: attachment.category,
+      contentType: attachment.content_type,
+      conversationId: message.conversation_id,
+      key: attachment.id,
+      name: attachment.filename || "附件",
+      size: attachment.size_bytes || 0,
+      status: "ready",
+    }));
+}
+
+function AssistantFileAttachmentList({ messages }: { messages: Message[] }) {
+  const seen = new Set<string>();
+  const attachments = messages.flatMap(assistantFileAttachments).filter((attachment) => {
+    if (seen.has(attachment.key)) return false;
+    seen.add(attachment.key);
+    return true;
+  });
+  if (attachments.length === 0) return null;
+
+  return (
+    <ComposerAttachmentList
+      attachments={attachments}
+      className="mt-2 max-w-full"
+      previewImages={false}
+    />
+  );
+}
+
 function AttachmentImagePreview({
   attachment,
   conversationId,
@@ -357,7 +390,6 @@ function MessageBody({
   const attachments = attachmentsFromMetadata(metadata);
   const imageAttachments = allowAttachmentPreviews ? attachments.filter(isImageAttachment) : [];
   const attachmentCount = attachmentCountFromMetadata(metadata);
-  const hiddenAttachmentCount = Math.max(0, attachmentCount - imageAttachments.length);
 
   return (
     <div
@@ -389,24 +421,14 @@ function MessageBody({
             conversationId={message.conversation_id}
           />
           <MarkdownRenderer content={message.content_text} isStreaming={isStreaming} />
-          {hiddenAttachmentCount > 0 ? (
-            <p className="mt-2 text-muted-foreground">已附加 {hiddenAttachmentCount} 个文件</p>
-          ) : null}
         </>
       ) : attachmentCount > 0 ? (
         imageAttachments.length > 0 ? (
-          <>
-            <AttachmentImagePreviews
-              attachments={imageAttachments}
-              conversationId={message.conversation_id}
-            />
-            {hiddenAttachmentCount > 0 ? (
-              <span className="text-muted-foreground">已发送 {hiddenAttachmentCount} 个文件</span>
-            ) : null}
-          </>
-        ) : (
-          <span className="text-muted-foreground">已发送 {attachmentCount} 个文件</span>
-        )
+          <AttachmentImagePreviews
+            attachments={imageAttachments}
+            conversationId={message.conversation_id}
+          />
+        ) : null
       ) : isStreaming ? (
         <span className="inline-block h-4 w-1 animate-pulse bg-current" />
       ) : (
@@ -482,6 +504,8 @@ export function MessageBubble({
             previewImages={allowAttachmentPreviews}
           />
         ) : null}
+
+        {!isUser ? <AssistantFileAttachmentList messages={[message]} /> : null}
 
         {!showActions || isThinkingBlock ? null : isUser ? (
           <div
@@ -575,6 +599,11 @@ export function AssistantTurnBubble({
     (message) => message.metadata?.display_kind !== "thinking",
   );
   const lastOutput = outputMessages.at(-1);
+  const lastTimelineOutput = outputMessages.findLast(
+    (message) =>
+      message.metadata?.display_kind !== "assistant_attachment" &&
+      message.metadata?.display_kind !== "assistant_image",
+  );
   const copyText = outputMessages
     .filter((message) => message.metadata?.display_kind !== "ask_user")
     .map((message) => message.content_text?.trim() || "")
@@ -598,12 +627,15 @@ export function AssistantTurnBubble({
       <div className="flex w-full flex-col items-start">
         <div className="relative w-full text-foreground">
           <div className="space-y-4">
+            {!hasThinkingMarker && !lastTimelineOutput ? timelineControl : null}
             {messages.map((message) =>
               message.metadata?.display_kind === "thinking" ? (
                 <div key={message.id}>{timelineControl}</div>
               ) : (
                 <div key={message.id} className="space-y-4">
-                  {!hasThinkingMarker && message.id === lastOutput?.id ? timelineControl : null}
+                  {!hasThinkingMarker && message.id === lastTimelineOutput?.id
+                    ? timelineControl
+                    : null}
                   <MessageBody
                     isStreaming={isStreaming}
                     message={message}
@@ -617,6 +649,7 @@ export function AssistantTurnBubble({
                 </div>
               ),
             )}
+            <AssistantFileAttachmentList messages={outputMessages} />
           </div>
         </div>
 

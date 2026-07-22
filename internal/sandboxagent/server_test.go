@@ -3,6 +3,8 @@ package sandboxagent
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -103,6 +105,35 @@ func TestWriteFileRejectsTraversalAndOversizedContent(t *testing.T) {
 	err = WriteFile(t.Context(), Settings{Workdir: workdir, MaxFileBytes: 4}, filepath.Join(workdir, "large"), strings.NewReader("12345"))
 	if err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
 		t.Fatalf("oversize error = %v", err)
+	}
+}
+
+func TestOpenFileReadsRegularWorkspaceFileAndRejectsEscapingSymlink(t *testing.T) {
+	workdir := t.TempDir()
+	target := filepath.Join(workdir, "result.txt")
+	if err := os.WriteFile(target, []byte("result-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file, size, err := OpenFile(Settings{Workdir: workdir, MaxFileBytes: 1024}, target)
+	if err != nil {
+		t.Fatalf("open workspace file: %v", err)
+	}
+	data, readErr := io.ReadAll(file)
+	file.Close()
+	if readErr != nil || size != 11 || string(data) != "result-data" {
+		t.Fatalf("unexpected workspace file: size=%d data=%q err=%v", size, data, readErr)
+	}
+
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(workdir, "link.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := OpenFile(Settings{Workdir: workdir}, link); !errors.Is(err, errInvalidFileRequest) {
+		t.Fatalf("escaping symlink error = %v, want invalid file request", err)
 	}
 }
 

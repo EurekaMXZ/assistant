@@ -89,6 +89,22 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 				"Sandbox path: " + rawStringField(attachment, "sandbox_path"),
 			})
 		}
+	case SandboxExportFileTool:
+		presentation.Title = statusSummary(status, "正在导出文件", "文件已附加", "导出文件失败")
+		presentation.InputLabel = "File"
+		presentation.InputText = stringField(args, "path")
+		if reference := nestedObject(result, "assistant_attachment"); reference != nil {
+			if attachment := nestedObject(reference, "attachment"); attachment != nil {
+				presentation.Details = compactDetails([]string{
+					"File: " + rawStringField(attachment, "filename"),
+					"Size: " + fmt.Sprint(attachment["size_bytes"]),
+				})
+			}
+		}
+	case ConversationExportText:
+		presentation.Title = statusSummary(status, "正在创建附件", "文本文件已附加", "创建附件失败")
+		presentation.InputLabel = "File"
+		presentation.InputText = stringField(args, "filename")
 	}
 }
 

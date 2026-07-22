@@ -332,6 +332,18 @@ func classifyAttachment(contentType string, filename string) string {
 	return domain.AttachmentCategoryBinary
 }
 
+func SanitizeFilename(filename string) string {
+	return sanitizeFilename(filename)
+}
+
+func NormalizeContentType(filename string, provided string) string {
+	return normalizeContentType(filename, provided)
+}
+
+func ClassifyAttachment(contentType string, filename string) string {
+	return classifyAttachment(contentType, filename)
+}
+
 func isDocumentType(contentType string, ext string) bool {
 	if _, ok := documentExtensions[ext]; ok {
 		return true

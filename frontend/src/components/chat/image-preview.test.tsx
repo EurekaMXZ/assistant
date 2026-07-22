@@ -54,9 +54,12 @@ describe("image preview", () => {
     await act(async () => trigger?.click());
 
     const viewer = document.querySelector<HTMLElement>('[aria-label="可缩放图片预览"]');
+    const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
     const transform = document.querySelector<HTMLElement>(".image-preview-transform");
     const zoomIn = document.querySelector<HTMLButtonElement>('[aria-label="放大"]');
     expect(viewer).not.toBeNull();
+    expect(dialog?.className).toContain("max-h-none");
+    expect(dialog?.className).toContain("overflow-hidden");
     expect(transform?.style.transform).toContain("scale(1)");
     expect(zoomIn).not.toBeNull();
 
@@ -109,6 +112,24 @@ describe("image preview", () => {
       dispatchTouch("touchend", []);
     });
     expect(transform?.style.transform).toContain("scale(0.8)");
+  });
+
+  it("uses granular wheel deltas for continuous fullscreen zoom", async () => {
+    await act(async () => {
+      root.render(<ImagePreview src="/image.png" alt="滚轮图片" />);
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="预览 滚轮图片"]')?.click();
+    });
+
+    const viewer = document.querySelector<HTMLElement>('[aria-label="可缩放图片预览"]');
+    const transform = document.querySelector<HTMLElement>(".image-preview-transform");
+    await act(async () => {
+      viewer?.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 }),
+      );
+    });
+    expect(transform?.style.transform).toContain("scale(1.1)");
   });
 
   it("uses the same preview for composer image attachments", async () => {

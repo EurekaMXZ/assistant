@@ -101,6 +101,7 @@ type cubeRuntimeClient interface {
 	Kill(context.Context, string) error
 	RunCommand(context.Context, *cubeSandbox, string, cubeCommandOptions) (*cubeCommandResult, error)
 	WriteFile(context.Context, *cubeSandbox, string, io.Reader, int64) error
+	ReadFile(context.Context, *cubeSandbox, string) (io.ReadCloser, int64, error)
 }
 
 type cubeSDKClient struct {
@@ -367,6 +368,28 @@ func (r *CubeRuntime) WriteSandboxFile(ctx context.Context, handle domain.Sandbo
 		return fmt.Errorf("write cube sandbox file %q: %w", path, err)
 	}
 	return nil
+}
+
+func (r *CubeRuntime) ReadSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string) (io.ReadCloser, int64, error) {
+	if err := r.validateHandle(handle); err != nil {
+		return nil, 0, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, 0, errors.New("cube sandbox file path is required")
+	}
+	sandbox, err := r.client.Connect(ctx, handle.RuntimeID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("connect cube sandbox %q for file read: %w", handle.RuntimeID, err)
+	}
+	reader, size, err := r.client.ReadFile(ctx, sandbox, path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read cube sandbox file %q: %w", path, err)
+	}
+	if size < 0 || size > domain.SandboxFileMaxBytes {
+		reader.Close()
+		return nil, 0, fmt.Errorf("cube sandbox file exceeds %d bytes", domain.SandboxFileMaxBytes)
+	}
+	return reader, size, nil
 }
 
 func (r *CubeRuntime) validateHandle(handle domain.SandboxHandle) error {
@@ -679,6 +702,45 @@ func (c *cubeSDKClient) WriteFile(ctx context.Context, sandbox *cubeSandbox, fil
 	}
 	_, _ = io.Copy(io.Discard, response.Body)
 	return nil
+}
+
+func (c *cubeSDKClient) ReadFile(ctx context.Context, sandbox *cubeSandbox, filePath string) (io.ReadCloser, int64, error) {
+	if sandbox == nil || strings.TrimSpace(sandbox.ID) == "" {
+		return nil, 0, errors.New("cube sandbox file session is not connected")
+	}
+	if c == nil || c.data == nil {
+		return nil, 0, errors.New("cube sandbox data client is not configured")
+	}
+	domainName := strings.TrimSpace(sandbox.Domain)
+	if domainName == "" {
+		domainName = c.sandboxDomain
+	}
+	target := url.URL{Scheme: c.proxyScheme, Host: "49983-" + sandbox.ID + "." + domainName, Path: "/files"}
+	query := target.Query()
+	query.Set("path", strings.TrimSpace(filePath))
+	target.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create cube sandbox file request: %w", err)
+	}
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("root:")))
+	if sandbox.EnvdAccessToken != "" {
+		req.Header.Set("X-Access-Token", sandbox.EnvdAccessToken)
+	}
+	response, err := c.data.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("send cube sandbox file request: %w", err)
+	}
+	if response.StatusCode >= http.StatusBadRequest {
+		defer response.Body.Close()
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		return nil, 0, fmt.Errorf("cube sandbox file request failed: status=%d body=%s", response.StatusCode, strings.TrimSpace(string(message)))
+	}
+	if response.ContentLength < 0 || response.ContentLength > domain.SandboxFileMaxBytes {
+		response.Body.Close()
+		return nil, 0, fmt.Errorf("cube sandbox file size must be between 0 and %d bytes", domain.SandboxFileMaxBytes)
+	}
+	return response.Body, response.ContentLength, nil
 }
 
 type cubeOutputBuffer struct {

@@ -49,6 +49,10 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	if err != nil {
 		return nil, err
 	}
+	sandboxFileReader, ok := sandboxRuntime.(tool.SandboxFileReader)
+	if !ok {
+		return nil, fmt.Errorf("sandbox runtime does not support file reads")
+	}
 	tavilyEnabled := strings.TrimSpace(settings.Tavily.APIKey) != ""
 	toolHandlers := []tool.LocalToolHandler{
 		tool.AskUserHandler{},
@@ -87,6 +91,22 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 				Sandboxes:   workflows.Sandboxes,
 				Runtime:     sandboxRuntime,
 				Locker:      workflows.Locker,
+			},
+		},
+		tool.SandboxExportFileHandler{
+			UseCase: tool.ExportSandboxFile{
+				Attachments: workflows.GeneratedAttachments,
+				Blobs:       artifactStore,
+				Sandboxes:   workflows.Sandboxes,
+				Runtime:     sandboxRuntime,
+				Files:       sandboxFileReader,
+				Locker:      workflows.Locker,
+			},
+		},
+		tool.ConversationExportTextHandler{
+			UseCase: tool.ExportTextAttachment{
+				Attachments: workflows.GeneratedAttachments,
+				Blobs:       artifactStore,
 			},
 		},
 	}

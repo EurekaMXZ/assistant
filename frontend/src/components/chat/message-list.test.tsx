@@ -161,6 +161,63 @@ describe("user message presentation", () => {
 });
 
 describe("assistant message alignment", () => {
+  it("renders assistant file attachments as downloadable file items", () => {
+    const markup = renderToStaticMarkup(
+      <AssistantTurnBubble
+        turnId="turn-1"
+        messages={[
+          {
+            ...message("assistant-text", "assistant", 1, "turn-1"),
+            content_text: "附件已生成",
+            metadata: { display_kind: "assistant_text", phase: "final_answer" },
+          },
+          {
+            ...message("assistant-file-1", "assistant", 2, "turn-1"),
+            content_text: "",
+            metadata: {
+              display_kind: "assistant_attachment",
+              attachment_ids: ["file-1"],
+              attachments: [
+                {
+                  id: "file-1",
+                  filename: "report.md",
+                  content_type: "text/plain",
+                  category: "text",
+                  size_bytes: 512,
+                },
+              ],
+            },
+          },
+          {
+            ...message("assistant-file-2", "assistant", 3, "turn-1"),
+            content_text: "",
+            metadata: {
+              display_kind: "assistant_attachment",
+              attachment_ids: ["file-2"],
+              attachments: [
+                {
+                  id: "file-2",
+                  filename: "data.csv",
+                  content_type: "text/csv",
+                  category: "text",
+                  size_bytes: 1024,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup.match(/data-slot="attachment-list"/g)).toHaveLength(1);
+    expect(markup).toContain("report.md");
+    expect(markup).toContain("data.csv");
+    expect(markup).toContain('aria-label="下载 report.md"');
+    expect(markup).toContain('aria-label="下载 data.csv"');
+    expect(markup).not.toContain("已附加 1 个文件");
+    expect(markup.indexOf("Thinking...")).toBeLessThan(markup.indexOf("附件已生成"));
+  });
+
   it("uses the same visual inset for timeline controls and status messages", () => {
     const errorMarkup = renderToStaticMarkup(
       <MessageBubble

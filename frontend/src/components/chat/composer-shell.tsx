@@ -5,6 +5,7 @@ import {
   Archive,
   ArrowUp,
   CircleAlert,
+  Download,
   FileIcon,
   FileSpreadsheet,
   FileText,
@@ -143,6 +144,33 @@ function ComposerAttachmentItem({
   const failed = attachment.status === "failed";
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const downloadable =
+    !onRemove &&
+    attachment.status === "ready" &&
+    Boolean(attachment.conversationId && attachment.attachmentId);
+  const download = async () => {
+    if (!downloadable || downloading) return;
+    setDownloading(true);
+    try {
+      const url = await getConversationAttachmentUrl(
+        attachment.conversationId as string,
+        attachment.attachmentId as string,
+        true,
+      );
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = attachment.name;
+      anchor.rel = "noopener noreferrer";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch {
+      // The user can retry; attachment URLs are fetched fresh on every click.
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   useEffect(() => {
     if (!image || !previewImages) return;
@@ -189,6 +217,19 @@ function ComposerAttachmentItem({
       <span className="flex size-5 items-center justify-center rounded-full bg-foreground text-background hover:bg-foreground/80">
         <X className="size-3.5" />
       </span>
+    </Button>
+  ) : null;
+  const downloadButton = downloadable ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label={`下载 ${attachment.name}`}
+      className="absolute right-1 top-1"
+      disabled={downloading}
+      onClick={() => void download()}
+    >
+      {downloading ? <Spinner className="size-3.5" /> : <Download className="size-3.5" />}
     </Button>
   ) : null;
 
@@ -247,6 +288,7 @@ function ComposerAttachmentItem({
           </span>
         ) : null}
         {removeButton}
+        {downloadButton}
       </div>
     );
   }
@@ -302,6 +344,7 @@ function ComposerAttachmentItem({
         </span>
       </span>
       {removeButton}
+      {downloadButton}
     </div>
   );
 }
@@ -317,24 +360,124 @@ export function ComposerAttachmentList({
   onRemoveAttachment?: (key: string) => void;
   previewImages?: boolean;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const targetScrollRef = useRef(0);
+  const [overflowEdges, setOverflowEdges] = useState({ left: false, right: false });
+
+  useEffect(() => {
+    const list = scrollRef.current;
+    if (!list) return;
+
+    const updateOverflowEdges = () => {
+      const maximum = Math.max(0, list.scrollWidth - list.clientWidth);
+      const next = {
+        left: list.scrollLeft > 2,
+        right: list.scrollLeft < maximum - 2,
+      };
+      setOverflowEdges((current) =>
+        current.left === next.left && current.right === next.right ? current : next,
+      );
+    };
+    const finishAnimation = () => {
+      animationFrameRef.current = null;
+      updateOverflowEdges();
+    };
+    const animate = () => {
+      const distance = targetScrollRef.current - list.scrollLeft;
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      if (reduceMotion || Math.abs(distance) < 0.75) {
+        list.scrollLeft = targetScrollRef.current;
+        finishAnimation();
+        return;
+      }
+      list.scrollLeft += distance * 0.24;
+      updateOverflowEdges();
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+    const startAnimation = () => {
+      if (animationFrameRef.current === null) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+      }
+    };
+    const stopAnimation = () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      targetScrollRef.current = list.scrollLeft;
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const maximum = Math.max(0, list.scrollWidth - list.clientWidth);
+      if (maximum <= 2) return;
+      event.preventDefault();
+      const edge = event.deltaY > 0 ? "right" : "left";
+      const atEdge = edge === "right" ? list.scrollLeft >= maximum - 1 : list.scrollLeft <= 1;
+      if (atEdge) return;
+      const deltaScale =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? list.clientWidth
+            : 1;
+      targetScrollRef.current = Math.max(
+        0,
+        Math.min(maximum, targetScrollRef.current + event.deltaY * deltaScale),
+      );
+      startAnimation();
+    };
+    const handleScroll = () => {
+      if (animationFrameRef.current === null) targetScrollRef.current = list.scrollLeft;
+      updateOverflowEdges();
+    };
+    const measurementFrame = requestAnimationFrame(() => {
+      if (animationFrameRef.current === null) targetScrollRef.current = list.scrollLeft;
+      updateOverflowEdges();
+    });
+    const resizeObserver = new ResizeObserver(updateOverflowEdges);
+    resizeObserver.observe(list);
+    list.addEventListener("wheel", handleWheel, { passive: false });
+    list.addEventListener("scroll", handleScroll, { passive: true });
+    list.addEventListener("pointerdown", stopAnimation, { passive: true });
+    return () => {
+      cancelAnimationFrame(measurementFrame);
+      stopAnimation();
+      resizeObserver.disconnect();
+      list.removeEventListener("wheel", handleWheel);
+      list.removeEventListener("scroll", handleScroll);
+      list.removeEventListener("pointerdown", stopAnimation);
+    };
+  }, [attachments.length]);
+
   if (attachments.length === 0) return null;
 
   return (
-    <div
-      className={cn(
-        "flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-        className,
-      )}
-      data-slot="attachment-list"
-    >
-      {attachments.map((attachment) => (
-        <ComposerAttachmentItem
-          key={attachment.key}
-          attachment={attachment}
-          onRemove={onRemoveAttachment ? () => onRemoveAttachment(attachment.key) : undefined}
-          previewImages={previewImages}
-        />
-      ))}
+    <div className={cn("relative min-w-0", className)}>
+      <div
+        ref={scrollRef}
+        className="flex min-w-0 touch-pan-x gap-2 overflow-x-auto overscroll-x-contain pl-px pr-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        data-slot="attachment-list"
+      >
+        {attachments.map((attachment) => (
+          <ComposerAttachmentItem
+            key={attachment.key}
+            attachment={attachment}
+            onRemove={onRemoveAttachment ? () => onRemoveAttachment(attachment.key) : undefined}
+            previewImages={previewImages}
+          />
+        ))}
+      </div>
+      <div
+        aria-hidden="true"
+        className="attachment-overflow-mask attachment-overflow-mask-left"
+        data-visible={overflowEdges.left}
+      />
+      <div
+        aria-hidden="true"
+        className="attachment-overflow-mask attachment-overflow-mask-right"
+        data-visible={overflowEdges.right}
+      />
     </div>
   );
 }

@@ -129,9 +129,10 @@ function ImagePanZoom({ alt, src }: { alt: string; src: string }) {
         limitToBounds
         maxScale={maxScale}
         minScale={minScale}
+        smooth
         doubleClick={{ disabled: true }}
         pinch={{ allowPanning: true }}
-        wheel={{ step: 0.015 }}
+        wheel={{ step: 0.001 }}
       >
         <ImagePanZoomControls />
         <TransformComponent
@@ -169,7 +170,7 @@ function ImagePreviewDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="inset-0 left-0 top-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 gap-0 rounded-none bg-background/95 p-0 ring-0 backdrop-blur-sm sm:max-w-none"
+        className="inset-0 left-0 top-0 h-dvh max-h-none w-screen max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none bg-background/95 p-0 ring-0 backdrop-blur-sm sm:max-w-none"
       >
         <DialogTitle className="sr-only">{alt || "图片预览"}</DialogTitle>
         <Button

@@ -16,6 +16,7 @@ const (
 )
 
 var _ tool.SandboxManager = (*Manager)(nil)
+var _ tool.SandboxFileReader = (*Manager)(nil)
 
 type RuntimeSettings struct {
 	Provider string
@@ -133,6 +134,18 @@ func (m *Manager) WriteSandboxFile(ctx context.Context, handle domain.SandboxHan
 		return err
 	}
 	return runtime.WriteSandboxFile(ctx, handle, path, reader, size, requestKey)
+}
+
+func (m *Manager) ReadSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string) (io.ReadCloser, int64, error) {
+	runtime, err := m.runtime(handle.Provider)
+	if err != nil {
+		return nil, 0, err
+	}
+	reader, ok := runtime.(tool.SandboxFileReader)
+	if !ok {
+		return nil, 0, fmt.Errorf("sandbox provider %q does not support file reads", normalizeProvider(handle.Provider))
+	}
+	return reader.ReadSandboxFile(ctx, handle, path)
 }
 
 func (m *Manager) runtime(provider string) (tool.SandboxManager, error) {
