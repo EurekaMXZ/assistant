@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function ChatSkeleton() {
   return (
-    <div className="flex flex-1 flex-col overflow-hidden px-4 py-6">
+    <div className="flex w-full min-w-0 flex-1 flex-col overflow-hidden px-4 py-6">
       <div className="mx-auto w-full max-w-3xl space-y-6">
         <div className="flex gap-3">
           <Skeleton className="size-8 rounded-full" />

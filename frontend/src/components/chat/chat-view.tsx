@@ -73,7 +73,7 @@ export function ChatView({ controller }: { controller: ChatController }) {
       <div
         data-stream-state={streamConnectionState}
         className={cn(
-          "grid h-full min-h-0 w-full grid-cols-1 overflow-hidden transition-[grid-template-columns] duration-500 ease-in-out",
+          "grid h-full min-h-0 w-full min-w-0 grid-cols-1 overflow-hidden transition-[grid-template-columns] duration-500 ease-in-out",
           timelineTurnId
             ? "md:grid-cols-[minmax(0,42rem)_minmax(0,1fr)]"
             : "md:grid-cols-[minmax(0,1fr)_minmax(0,0fr)]",

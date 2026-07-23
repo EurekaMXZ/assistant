@@ -166,7 +166,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           setTitleAction: setMobileHeaderTitleAction,
         }}
       >
-        <div className="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
+        <div className="flex h-dvh w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
           <header className="grid h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b px-4 pt-[env(safe-area-inset-top)] md:hidden">
             <MobileHeaderTitle title={mobileHeaderTitle} />
             {mobileHeaderStatus ? (
@@ -176,20 +176,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </span>
             ) : null}
           </header>
-          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         </div>
       </MobileHeaderContext.Provider>
     );
   }
 
   if (pathname.startsWith("/admin")) {
-    return <main className="h-dvh min-h-0 overflow-hidden">{children}</main>;
+    return <main className="h-dvh min-h-0 w-full min-w-0 overflow-hidden">{children}</main>;
   }
 
   if (isAuthRoute) {
     return (
       <>
-        <main className="h-dvh overflow-y-auto">{children}</main>
+        <main className="h-dvh w-full min-w-0 overflow-y-auto">{children}</main>
         <AuthDialog mode={authMode} onModeChange={setAuthMode} />
       </>
     );
@@ -204,7 +204,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         setTitleAction: setMobileHeaderTitleAction,
       }}
     >
-      <div className="flex h-dvh w-full overflow-hidden">
+      <div className="flex h-dvh w-full min-w-0 overflow-hidden">
         <aside
           className={cn(
             "hidden h-full shrink-0 border-r bg-sidebar transition-[width] duration-200 ease-in-out md:block",
@@ -227,7 +227,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           />
         </aside>
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="grid h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center border-b px-2 pt-[env(safe-area-inset-top)] md:hidden">
             <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen}>
               <DialogTrigger
@@ -317,7 +317,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </header>
 
-          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+          <main className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
+            {children}
+          </main>
         </div>
 
         <SettingsDialog

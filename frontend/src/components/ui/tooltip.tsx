@@ -1,19 +1,51 @@
 "use client";
 
+import { createContext, useContext, useId, useState } from "react";
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
 import { cn } from "@/lib/utils";
+
+const TooltipHandleContext = createContext<TooltipPrimitive.Handle<unknown> | null>(null);
 
 function TooltipProvider({ delay = 0, ...props }: TooltipPrimitive.Provider.Props) {
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delay={delay} {...props} />;
 }
 
-function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
+function Tooltip({ handle: handleProp, ...props }: TooltipPrimitive.Root.Props) {
+  const [fallbackHandle] = useState(() => TooltipPrimitive.createHandle<unknown>());
+  const handle = handleProp || fallbackHandle;
+
+  return (
+    <TooltipHandleContext.Provider value={handle}>
+      <TooltipPrimitive.Root data-slot="tooltip" handle={handle} {...props} />
+    </TooltipHandleContext.Provider>
+  );
 }
 
-function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+function TooltipTrigger({
+  openOnClick = false,
+  closeOnClick,
+  id: idProp,
+  onClick,
+  ...props
+}: TooltipPrimitive.Trigger.Props & { openOnClick?: boolean }) {
+  const handle = useContext(TooltipHandleContext);
+  const generatedId = useId();
+  const id = idProp || generatedId;
+
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot="tooltip-trigger"
+      handle={handle || undefined}
+      id={id}
+      closeOnClick={openOnClick ? false : closeOnClick}
+      onClick={(event) => {
+        onClick?.(event);
+        if (openOnClick && !event.defaultPrevented) handle?.open(id);
+      }}
+      {...props}
+    />
+  );
 }
 
 function TooltipContent({

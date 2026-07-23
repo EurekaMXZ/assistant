@@ -35,6 +35,7 @@ function BillingUsageTooltip({
   return (
     <Tooltip>
       <TooltipTrigger
+        openOnClick
         render={
           <Button
             type="button"

@@ -43,7 +43,7 @@ export function WelcomePanel({
   reasoningEfforts = {},
 }: WelcomePanelProps) {
   return (
-    <div className="relative flex flex-1 items-center justify-center px-6">
+    <div className="relative flex w-full min-w-0 flex-1 items-center justify-center overflow-hidden px-6">
       {actions ? (
         <div className="absolute right-4 top-0 z-10 hidden h-14 items-center md:flex">
           {actions}

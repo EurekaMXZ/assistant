@@ -50,8 +50,8 @@ export function EditorLoading() {
   return (
     <div className="min-h-0 flex-1 overflow-hidden">
       <div className="flex h-16 items-center justify-between border-b px-4 sm:px-7">
-        <Skeleton className="h-5 w-36" />
-        <Skeleton className="h-8 w-44" />
+        <Skeleton className="h-5 w-28 sm:w-36" />
+        <Skeleton className="h-8 w-28 sm:w-44" />
       </div>
       <div className="mx-auto max-w-4xl space-y-7 px-4 py-7 sm:px-7 lg:px-10">
         <Skeleton className="h-5 w-24" />
@@ -96,7 +96,7 @@ export function EditorHeader({
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="md:hidden"
+          className="lg:hidden"
           disabled={busy}
           onClick={onBack}
         >

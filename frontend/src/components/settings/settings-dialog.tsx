@@ -117,8 +117,8 @@ export function SettingsDialog({
             </nav>
           </aside>
 
-          <div className="min-h-0 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[720px] px-5 py-6 sm:px-8 sm:py-8">
+          <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto">
+            <div className="mx-auto w-full min-w-0 max-w-[720px] px-5 py-6 sm:px-8 sm:py-8">
               {section === "user/profile" ? <AccountSettings user={user} /> : null}
               {section === "user/personalization" ? <PersonalizationSettings /> : null}
               {section === "user/security" ? <SecuritySettings user={user} /> : null}

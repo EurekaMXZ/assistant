@@ -289,10 +289,10 @@ export function MCPWorkspace() {
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
+    <div className="grid h-full min-h-0 w-full min-w-0 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
       <aside
         className={cn(
-          "min-h-0 flex-col border-r bg-sidebar/40 md:flex",
+          "min-h-0 min-w-0 flex-col bg-sidebar/40 lg:flex lg:border-r",
           mobilePane === "list" ? "flex" : "hidden",
         )}
       >
@@ -361,7 +361,7 @@ export function MCPWorkspace() {
 
       <main
         className={cn(
-          "min-h-0 min-w-0 flex-col bg-background md:flex",
+          "min-h-0 min-w-0 flex-col bg-background lg:flex",
           mobilePane === "editor" ? "flex" : "hidden",
         )}
       >

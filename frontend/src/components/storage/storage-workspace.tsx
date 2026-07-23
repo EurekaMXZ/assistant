@@ -100,8 +100,8 @@ export function StorageWorkspace() {
     : 0;
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto">
-      <div className="mx-auto min-w-0 w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
+    <div className="h-full min-h-0 min-w-0 w-full overflow-x-hidden overflow-y-auto">
+      <div className="mx-auto w-full min-w-0 max-w-[1440px] px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
         <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-semibold">存储空间</h1>
           <Button
@@ -181,7 +181,7 @@ export function StorageWorkspace() {
                 />
               ) : (
                 <div className="overflow-x-auto border-b" aria-label="附件列表" tabIndex={0}>
-                  <div className="divide-y sm:hidden">
+                  <div className="divide-y xl:hidden">
                     {items.map((item) => (
                       <StorageAttachmentRow
                         key={item.id}
@@ -192,7 +192,7 @@ export function StorageWorkspace() {
                       />
                     ))}
                   </div>
-                  <table className="hidden w-full min-w-[52rem] table-fixed text-left text-sm sm:table">
+                  <table className="hidden w-full min-w-[52rem] table-fixed text-left text-sm xl:table">
                     <colgroup>
                       <col className="w-[35%]" />
                       <col className="w-[35%]" />
