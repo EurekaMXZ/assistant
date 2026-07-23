@@ -33,6 +33,7 @@ const user: User = {
   updated_at: "2026-07-23T00:00:00Z",
   storage_quota_bytes: 1024,
   storage_used_bytes: 0,
+  sandbox_quota: 3,
 };
 
 describe("sidebar user panel", () => {

@@ -6,11 +6,13 @@ import (
 )
 
 const (
-	SandboxStatusActive    = "active"
-	SandboxStatusStopped   = "stopped"
-	SandboxStatusReleasing = "releasing"
-	SandboxStatusDestroyed = "destroyed"
-	SandboxFileMaxBytes    = int64(128 << 20)
+	SandboxStatusActive      = "active"
+	SandboxStatusStopped     = "stopped"
+	SandboxStatusReleasing   = "releasing"
+	SandboxStatusDestroyed   = "destroyed"
+	SandboxFileMaxBytes      = int64(128 << 20)
+	SandboxShellStatusActive = "active"
+	SandboxShellStatusClosed = "closed"
 )
 
 type SandboxHandle struct {
@@ -57,4 +59,31 @@ type SandboxCommandResult struct {
 	Stderr   string `json:"stderr,omitempty"`
 	ExitCode int    `json:"exit_code"`
 	TimedOut bool   `json:"timed_out,omitempty"`
+}
+
+type SandboxShellCreateRequest struct {
+	SessionID        string `json:"session_id"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+}
+
+type SandboxShellSession struct {
+	RuntimeID        string `json:"runtime_id"`
+	SessionID        string `json:"session_id"`
+	Status           string `json:"status"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+}
+
+type SandboxShellCommandRequest struct {
+	SessionID      string `json:"session_id"`
+	Command        string `json:"command"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+}
+
+type SandboxShellCommandResult struct {
+	RuntimeID string `json:"runtime_id"`
+	SessionID string `json:"session_id"`
+	Output    string `json:"output,omitempty"`
+	ExitCode  int    `json:"exit_code"`
+	TimedOut  bool   `json:"timed_out,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }

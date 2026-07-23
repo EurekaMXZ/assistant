@@ -17,6 +17,11 @@ const (
 	sandboxCreateName           = "create"
 	sandboxDestroyName          = "destroy"
 	sandboxExecName             = "exec"
+	sandboxShellCreateName      = "shell_create"
+	sandboxShellConnectName     = "shell_connect"
+	sandboxShellDestroyName     = "shell_destroy"
+	sandboxWriteFileName        = "write_file"
+	sandboxEditFileName         = "edit_file"
 	sandboxImportAttachmentName = "import_attachment"
 	sandboxExportFileName       = "export_file"
 	internetSearchName          = "search"
@@ -29,6 +34,11 @@ const (
 	SandboxCreate           = sandboxNamespace + "." + sandboxCreateName
 	SandboxDestroy          = sandboxNamespace + "." + sandboxDestroyName
 	SandboxExec             = sandboxNamespace + "." + sandboxExecName
+	SandboxShellCreate      = sandboxNamespace + "." + sandboxShellCreateName
+	SandboxShellConnect     = sandboxNamespace + "." + sandboxShellConnectName
+	SandboxShellDestroy     = sandboxNamespace + "." + sandboxShellDestroyName
+	SandboxWriteFile        = sandboxNamespace + "." + sandboxWriteFileName
+	SandboxEditFile         = sandboxNamespace + "." + sandboxEditFileName
 	SandboxImportAttachment = sandboxNamespace + "." + sandboxImportAttachmentName
 	SandboxExportFileTool   = sandboxNamespace + "." + sandboxExportFileName
 	WebSearch               = internetNamespace + "." + internetSearchName
@@ -104,7 +114,11 @@ func sandboxNamespaceDefinition() llm.ModelTool {
 		"Tools for managing the current conversation sandbox.",
 		sandboxCreateDefinition(),
 		sandboxDestroyDefinition(),
-		sandboxExecDefinition(),
+		sandboxShellCreateDefinition(),
+		sandboxShellConnectDefinition(),
+		sandboxShellDestroyDefinition(),
+		sandboxWriteFileDefinition(),
+		sandboxEditFileDefinition(),
 		sandboxImportAttachmentDefinition(),
 		sandboxExportFileDefinition(),
 	)
@@ -172,7 +186,7 @@ func sandboxCreateDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        sandboxCreateName,
-		Description: "Create a sandbox for the current conversation when the user needs an isolated execution environment.",
+		Description: "Create a sandbox only when the current conversation has none and needs isolated execution. Existing conversation sandboxes must be reused because each user has a concurrent sandbox quota.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{},
@@ -196,35 +210,54 @@ func sandboxDestroyDefinition() llm.ModelTool {
 	}
 }
 
-func sandboxExecDefinition() llm.ModelTool {
+func sandboxShellCreateDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
-		Name:        sandboxExecName,
-		Description: "Execute one command inside the active sandbox for the current conversation.",
+		Name:        sandboxShellCreateName,
+		Description: "Create a persistent bash session in the active sandbox. Retries of the same tool call are idempotent. The session preserves its working directory, environment variables, shell functions, and background processes across shell_connect calls. Retain and reuse the returned session_id for subsequent commands.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"command":{
-					"type":"string",
-					"description":"The executable to run inside the sandbox."
-				},
-				"args":{
-					"type":"array",
-					"items":{"type":"string"},
-					"description":"Optional command-line arguments."
-				},
-				"working_directory":{
-					"type":"string",
-					"description":"Optional relative working directory inside the sandbox."
-				},
-				"timeout_seconds":{
-					"type":"integer",
-					"description":"Optional timeout for the command."
-				}
+				"working_directory":{"type":"string","description":"Initial directory inside /workspace. Use /workspace unless a specific existing project directory is needed."}
 			},
-			"required":["command"],
+			"required":["working_directory"],
 			"additionalProperties":false
 		}`),
+		Strict: true,
+	}
+}
+
+func sandboxShellConnectDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxShellConnectName,
+		Description: "Connect to an existing persistent sandbox shell and run one focused, single-line command. Shell state from prior calls is preserved. Do not send a multi-line shell script; create scripts with sandbox.write_file and then run them here.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"session_id":{"type":"string","description":"Session ID returned by sandbox.shell_create."},
+				"command":{"type":"string","maxLength":16384,"description":"One focused, single-line shell command."},
+				"timeout_seconds":{"type":"integer","minimum":0,"maximum":300,"description":"Maximum wait time. Use 0 for the default."}
+			},
+			"required":["session_id","command","timeout_seconds"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
+	}
+}
+
+func sandboxShellDestroyDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxShellDestroyName,
+		Description: "Close a persistent sandbox shell session when it is no longer needed. This does not destroy the sandbox or its files.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{"session_id":{"type":"string","description":"Session ID returned by sandbox.shell_create."}},
+			"required":["session_id"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
 	}
 }
 
@@ -242,6 +275,68 @@ func sandboxImportAttachmentDefinition() llm.ModelTool {
 				}
 			},
 			"required":["attachment_id"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
+	}
+}
+
+func sandboxWriteFileDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxWriteFileName,
+		Description: "Write complete UTF-8 text content directly to a file in the active sandbox workspace. Use this instead of shell heredocs, printf, echo, or base64 when placing your own generated text, code, Markdown, JSON, CSV, configuration, or scripts into /workspace. Existing files are replaced atomically. For binary input, use sandbox.import_attachment instead.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"maxLength":1024,
+					"description":"Absolute path inside /workspace, or a path relative to /workspace. Parent directories are created automatically."
+				},
+				"content":{
+					"type":"string",
+					"maxLength":1048576,
+					"description":"Complete UTF-8 file content, limited to 1 MiB when encoded."
+				}
+			},
+			"required":["path","content"],
+			"additionalProperties":false
+		}`),
+		Strict: true,
+	}
+}
+
+func sandboxEditFileDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxEditFileName,
+		Description: "Edit an existing UTF-8 text file in the active sandbox by replacing exact text, then save it atomically. Use this for focused changes instead of reading and rewriting the complete file. By default old_text must occur exactly once; provide more surrounding context when it is ambiguous, or set replace_all only when every occurrence should change. Files are limited to 1 MiB.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"maxLength":1024,
+					"description":"Absolute path inside /workspace, or a path relative to /workspace. The file must already exist."
+				},
+				"old_text":{
+					"type":"string",
+					"minLength":1,
+					"maxLength":1048576,
+					"description":"Exact UTF-8 text to replace. Include enough unchanged surrounding text to make the match unique."
+				},
+				"new_text":{
+					"type":"string",
+					"maxLength":1048576,
+					"description":"UTF-8 replacement text. Use an empty string to delete the matched text."
+				},
+				"replace_all":{
+					"type":"boolean",
+					"description":"Replace every exact occurrence of old_text. Use false for a focused edit."
+				}
+			},
+			"required":["path","old_text","new_text","replace_all"],
 			"additionalProperties":false
 		}`),
 		Strict: true,

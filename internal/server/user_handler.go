@@ -69,6 +69,7 @@ func (a *API) handleUpdateManagedUser(c *gin.Context) {
 		Role              *string `json:"role"`
 		Status            *string `json:"status"`
 		StorageQuotaBytes *int64  `json:"storage_quota_bytes"`
+		SandboxQuota      *int    `json:"sandbox_quota"`
 	}
 
 	if err := bindJSON(c, &request); err != nil {
@@ -83,6 +84,7 @@ func (a *API) handleUpdateManagedUser(c *gin.Context) {
 		Role:              request.Role,
 		Status:            request.Status,
 		StorageQuotaBytes: request.StorageQuotaBytes,
+		SandboxQuota:      request.SandboxQuota,
 	})
 	if err != nil {
 		writeAPIError(c, err)

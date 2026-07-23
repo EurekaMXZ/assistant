@@ -65,6 +65,7 @@ export function AdminUsers({ actor }: { actor: User }) {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Exclude<UserRole, "system">>("user");
   const [storageQuotaMB, setStorageQuotaMB] = useState("512");
+  const [sandboxQuota, setSandboxQuota] = useState("3");
   const [saving, setSaving] = useState(false);
   const manageableRoles = manageableUserRoles(actor);
 
@@ -76,13 +77,19 @@ export function AdminUsers({ actor }: { actor: User }) {
     setStorageQuotaMB(
       item === "create" ? "512" : String(Math.round(item.storage_quota_bytes / (1024 * 1024))),
     );
+    setSandboxQuota(item === "create" ? "3" : String(item.sandbox_quota));
     setPassword("");
   };
 
   const save = async () => {
     const quotaMB = Number(storageQuotaMB);
+    const parsedSandboxQuota = Number(sandboxQuota);
     if (editor !== "create" && (!Number.isFinite(quotaMB) || quotaMB < 0)) {
       toast.error("存储配额必须是非负数");
+      return;
+    }
+    if (editor !== "create" && (!Number.isInteger(parsedSandboxQuota) || parsedSandboxQuota < 0)) {
+      toast.error("沙箱配额必须是非负整数");
       return;
     }
     setSaving(true);
@@ -102,6 +109,7 @@ export function AdminUsers({ actor }: { actor: User }) {
                 username: username.trim(),
                 role,
                 storage_quota_bytes: Math.round(quotaMB * 1024 * 1024),
+                sandbox_quota: parsedSandboxQuota,
               })
             : null;
       if (!saved) return;
@@ -182,11 +190,12 @@ export function AdminUsers({ actor }: { actor: User }) {
         onLoadMore={loadMore}
         onRetry={reload}
       >
-        <table className="admin-responsive-table w-[72rem] min-w-full table-fixed text-left text-sm">
+        <table className="admin-responsive-table w-[84rem] min-w-full table-fixed text-left text-sm">
           <colgroup>
             <col className="w-[26rem]" />
             <col className="w-[9rem]" />
             <col className="w-[11rem]" />
+            <col className="w-[9rem]" />
             <col className="w-[13rem]" />
             <col className="w-[9rem]" />
             <col className="w-[7rem]" />
@@ -196,6 +205,7 @@ export function AdminUsers({ actor }: { actor: User }) {
               <th className={tableClasses.headStart}>用户</th>
               <th className={tableClasses.head}>角色</th>
               <th className={tableClasses.head}>存储空间</th>
+              <th className={tableClasses.head}>并发沙箱</th>
               <th className={tableClasses.head}>最近登录</th>
               <th className={tableClasses.head}>状态</th>
               <th className={tableClasses.headEnd}>操作</th>
@@ -233,6 +243,12 @@ export function AdminUsers({ actor }: { actor: User }) {
                   >
                     {formatStorageBytes(item.storage_used_bytes)} /{" "}
                     {formatStorageBytes(item.storage_quota_bytes)}
+                  </td>
+                  <td
+                    className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
+                    data-label="并发沙箱"
+                  >
+                    {item.sandbox_quota} 个
                   </td>
                   <td
                     className={`${tableClasses.cell} whitespace-nowrap text-xs text-muted-foreground`}
@@ -299,7 +315,10 @@ export function AdminUsers({ actor }: { actor: User }) {
           !email.trim() ||
           !username.trim() ||
           (editor !== "create" &&
-            (!Number.isFinite(Number(storageQuotaMB)) || Number(storageQuotaMB) < 0)) ||
+            (!Number.isFinite(Number(storageQuotaMB)) ||
+              Number(storageQuotaMB) < 0 ||
+              !Number.isInteger(Number(sandboxQuota)) ||
+              Number(sandboxQuota) < 0)) ||
           (editor === "create" && password.length < 8)
         }
         onSubmit={save}
@@ -340,16 +359,28 @@ export function AdminUsers({ actor }: { actor: User }) {
           </FormField>
         ) : null}
         {editor !== "create" ? (
-          <FormField label="存储配额（MB）" htmlFor="admin-user-storage-quota">
-            <Input
-              id="admin-user-storage-quota"
-              type="number"
-              min="0"
-              step="1"
-              value={storageQuotaMB}
-              onChange={(event) => setStorageQuotaMB(event.target.value)}
-            />
-          </FormField>
+          <>
+            <FormField label="存储配额（MB）" htmlFor="admin-user-storage-quota">
+              <Input
+                id="admin-user-storage-quota"
+                type="number"
+                min="0"
+                step="1"
+                value={storageQuotaMB}
+                onChange={(event) => setStorageQuotaMB(event.target.value)}
+              />
+            </FormField>
+            <FormField label="并发沙箱配额" htmlFor="admin-user-sandbox-quota">
+              <Input
+                id="admin-user-sandbox-quota"
+                type="number"
+                min="0"
+                step="1"
+                value={sandboxQuota}
+                onChange={(event) => setSandboxQuota(event.target.value)}
+              />
+            </FormField>
+          </>
         ) : null}
         {editor === "create" ? (
           <FormField label="初始密码" htmlFor="admin-user-password">

@@ -165,19 +165,19 @@ func TestExportTextAttachmentRejectsOversizedContent(t *testing.T) {
 	}
 }
 
-func TestNormalizeSandboxExportPath(t *testing.T) {
+func TestNormalizeSandboxWorkspacePath(t *testing.T) {
 	for input, want := range map[string]string{
 		"results/output.csv": "/workspace/results/output.csv",
 		"/workspace/a.txt":   "/workspace/a.txt",
 		"./report.md":        "/workspace/report.md",
 	} {
-		got, err := normalizeSandboxExportPath(input)
+		got, err := normalizeSandboxWorkspacePath(input)
 		if err != nil || got != want {
 			t.Fatalf("normalize %q = %q, %v; want %q", input, got, err, want)
 		}
 	}
 	for _, input := range []string{"", "/workspace", "../secret", "/etc/passwd", "/workspace/../../etc/passwd"} {
-		if _, err := normalizeSandboxExportPath(input); !errors.Is(err, domain.ErrInvalidInput) {
+		if _, err := normalizeSandboxWorkspacePath(input); !errors.Is(err, domain.ErrInvalidInput) {
 			t.Fatalf("normalize %q should fail validation, got %v", input, err)
 		}
 	}

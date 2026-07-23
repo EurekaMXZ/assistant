@@ -20,6 +20,7 @@ import (
 
 func NewHandler(settings Settings) http.Handler {
 	mux := http.NewServeMux()
+	shells := NewShellManager(settings)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -83,6 +84,7 @@ func NewHandler(settings Settings) http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	shells.RegisterHandlers(mux)
 	mux.HandleFunc("/network/configure", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")

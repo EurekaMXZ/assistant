@@ -208,6 +208,47 @@ func (s *Service) handleSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "shells" && r.Method == http.MethodPost {
+		var request domain.SandboxShellCreateRequest
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		session, err := s.createShell(r.Context(), runtimeID, request)
+		if err != nil {
+			writeSandboxShellError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, session)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "shells" && parts[3] == "connect" && r.Method == http.MethodPost {
+		var request domain.SandboxShellCommandRequest
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		request.SessionID = parts[2]
+		result, err := s.execShell(r.Context(), runtimeID, request)
+		if err != nil {
+			writeSandboxShellError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	if len(parts) == 3 && parts[1] == "shells" && r.Method == http.MethodDelete {
+		session, err := s.destroyShell(r.Context(), runtimeID, parts[2])
+		if err != nil {
+			writeSandboxShellError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, session)
+		return
+	}
+
 	if len(parts) == 2 && parts[1] == "files" && r.Method == http.MethodPut {
 		if r.ContentLength > domain.SandboxFileMaxBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds %d bytes", domain.SandboxFileMaxBytes))
@@ -911,6 +952,73 @@ func (s *Service) execCommand(ctx context.Context, runtimeID string, request dom
 	}
 	result.RuntimeID = runtimeID
 	return &result, nil
+}
+
+func (s *Service) createShell(ctx context.Context, runtimeID string, request domain.SandboxShellCreateRequest) (*domain.SandboxShellSession, error) {
+	var session domain.SandboxShellSession
+	if err := s.withSandboxAgent(ctx, runtimeID, func(sb *sandbox) error {
+		return s.doAgentJSON(ctx, sb, http.MethodPost, "/shells", request, &session, 30*time.Second)
+	}); err != nil {
+		return nil, err
+	}
+	session.RuntimeID = runtimeID
+	return &session, nil
+}
+
+func (s *Service) execShell(ctx context.Context, runtimeID string, request domain.SandboxShellCommandRequest) (*domain.SandboxShellCommandResult, error) {
+	timeout := 35 * time.Second
+	if request.TimeoutSeconds > 0 {
+		timeout = time.Duration(request.TimeoutSeconds+5) * time.Second
+	}
+	var result domain.SandboxShellCommandResult
+	path := "/shells/" + url.PathEscape(request.SessionID) + "/connect"
+	if err := s.withSandboxAgent(ctx, runtimeID, func(sb *sandbox) error {
+		return s.doAgentJSON(ctx, sb, http.MethodPost, path, request, &result, timeout)
+	}); err != nil {
+		return nil, err
+	}
+	result.RuntimeID = runtimeID
+	return &result, nil
+}
+
+func (s *Service) destroyShell(ctx context.Context, runtimeID string, sessionID string) (*domain.SandboxShellSession, error) {
+	var session domain.SandboxShellSession
+	path := "/shells/" + url.PathEscape(strings.TrimSpace(sessionID))
+	if err := s.withSandboxAgent(ctx, runtimeID, func(sb *sandbox) error {
+		return s.doAgentJSON(ctx, sb, http.MethodDelete, path, nil, &session, 10*time.Second)
+	}); err != nil {
+		return nil, err
+	}
+	session.RuntimeID = runtimeID
+	return &session, nil
+}
+
+func (s *Service) withSandboxAgent(ctx context.Context, runtimeID string, operation func(*sandbox) error) error {
+	s.mu.Lock()
+	sb := s.sandboxes[runtimeID]
+	s.mu.Unlock()
+	if sb == nil {
+		return errSandboxNotFound
+	}
+	sb.opMu.Lock()
+	defer sb.opMu.Unlock()
+	if err := s.resumeSandboxResources(ctx, sb); err != nil {
+		return fmt.Errorf("resume sandbox for shell session: %w", err)
+	}
+	if err := operation(sb); err != nil {
+		return fmt.Errorf("%w: %v", errBadRequest, err)
+	}
+	return nil
+}
+
+func writeSandboxShellError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, errSandboxNotFound) {
+		status = http.StatusNotFound
+	} else if errors.Is(err, errBadRequest) {
+		status = http.StatusBadRequest
+	}
+	writeError(w, status, err.Error())
 }
 
 func (s *Service) writeFile(ctx context.Context, runtimeID string, targetPath string, body io.Reader, contentLength int64) error {

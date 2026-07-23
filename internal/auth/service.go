@@ -78,6 +78,7 @@ type UpdateUserParams struct {
 	Role                *string
 	Status              *string
 	StorageQuotaBytes   *int64
+	SandboxQuota        *int
 	AllowedCurrentRoles []string
 }
 
@@ -142,6 +143,7 @@ type UpdateManagedUserInput struct {
 	Role              *string
 	Status            *string
 	StorageQuotaBytes *int64
+	SandboxQuota      *int
 }
 
 type ResetManagedPasswordInput struct {
@@ -448,6 +450,12 @@ func (s *Service) UpdateManagedUser(ctx context.Context, actor *domain.User, inp
 			return nil, domain.NewValidationError("storage quota must be non-negative")
 		}
 		params.StorageQuotaBytes = input.StorageQuotaBytes
+	}
+	if input.SandboxQuota != nil {
+		if *input.SandboxQuota < 0 {
+			return nil, domain.NewValidationError("sandbox quota must be non-negative")
+		}
+		params.SandboxQuota = input.SandboxQuota
 	}
 
 	return s.Users.UpdateUser(ctx, params)

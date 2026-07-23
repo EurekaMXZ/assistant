@@ -17,6 +17,7 @@ const (
 
 var _ tool.SandboxManager = (*Manager)(nil)
 var _ tool.SandboxFileReader = (*Manager)(nil)
+var _ tool.SandboxShellManager = (*Manager)(nil)
 
 type RuntimeSettings struct {
 	Provider string
@@ -146,6 +147,42 @@ func (m *Manager) ReadSandboxFile(ctx context.Context, handle domain.SandboxHand
 		return nil, 0, fmt.Errorf("sandbox provider %q does not support file reads", normalizeProvider(handle.Provider))
 	}
 	return reader.ReadSandboxFile(ctx, handle, path)
+}
+
+func (m *Manager) CreateSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCreateRequest, requestKey string) (*domain.SandboxShellSession, error) {
+	runtime, err := m.shellRuntime(handle.Provider)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.CreateSandboxShell(ctx, handle, request, requestKey)
+}
+
+func (m *Manager) ExecSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCommandRequest, requestKey string) (*domain.SandboxShellCommandResult, error) {
+	runtime, err := m.shellRuntime(handle.Provider)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.ExecSandboxShell(ctx, handle, request, requestKey)
+}
+
+func (m *Manager) DestroySandboxShell(ctx context.Context, handle domain.SandboxHandle, sessionID string, requestKey string) (*domain.SandboxShellSession, error) {
+	runtime, err := m.shellRuntime(handle.Provider)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.DestroySandboxShell(ctx, handle, sessionID, requestKey)
+}
+
+func (m *Manager) shellRuntime(provider string) (tool.SandboxShellManager, error) {
+	runtime, err := m.runtime(provider)
+	if err != nil {
+		return nil, err
+	}
+	shells, ok := runtime.(tool.SandboxShellManager)
+	if !ok {
+		return nil, fmt.Errorf("sandbox provider %q does not support shell sessions", normalizeProvider(provider))
+	}
+	return shells, nil
 }
 
 func (m *Manager) runtime(provider string) (tool.SandboxManager, error) {

@@ -72,6 +72,7 @@ func scanUser(row scanRow) (*domain.User, error) {
 		&user.AuthVersion,
 		&user.StorageQuotaBytes,
 		&user.StorageUsedBytes,
+		&user.SandboxQuota,
 		&deletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,

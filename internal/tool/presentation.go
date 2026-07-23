@@ -79,6 +79,53 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 		}
 		presentation.Command = commandLineRaw(commandSource)
 		presentation.WorkingDirectory = strings.TrimSpace(rawStringField(commandSource, "working_directory"))
+	case SandboxShellCreate:
+		presentation.Title = statusSummary(status, "正在创建 Shell 会话", "Shell 会话已创建", "创建 Shell 会话失败")
+		presentation.InputLabel = "Directory"
+		presentation.InputText = stringField(args, "working_directory")
+		if session := nestedObject(result, "session"); session != nil {
+			presentation.Details = compactDetails([]string{
+				"Session: " + rawStringField(session, "session_id"),
+				"Working directory: " + rawStringField(session, "working_directory"),
+			})
+		}
+	case SandboxShellConnect:
+		presentation.Title = statusSummary(status, "正在运行 Shell 命令", "Shell 命令执行完成", "Shell 命令执行失败")
+		presentation.InputLabel = "Session"
+		presentation.InputText = stringField(args, "session_id")
+		presentation.Command = rawStringField(args, "command")
+		if shellResult := nestedObject(result, "result"); shellResult != nil {
+			presentation.CommandOutput = rawStringField(shellResult, "output")
+			if code, ok := intField(shellResult, "exit_code"); ok {
+				presentation.ExitCode = &code
+			}
+			presentation.TimedOut, _ = shellResult["timed_out"].(bool)
+		}
+	case SandboxShellDestroy:
+		presentation.Title = statusSummary(status, "正在关闭 Shell 会话", "Shell 会话已关闭", "关闭 Shell 会话失败")
+		presentation.InputLabel = "Session"
+		presentation.InputText = stringField(args, "session_id")
+	case SandboxWriteFile:
+		presentation.Title = statusSummary(status, "正在写入文件", "文件已写入沙箱", "写入文件失败")
+		presentation.InputLabel = "File"
+		presentation.InputText = stringField(args, "path")
+		if file := nestedObject(result, "file"); file != nil {
+			presentation.Details = compactDetails([]string{
+				"Sandbox path: " + rawStringField(file, "path"),
+				"Size: " + fmt.Sprint(file["size_bytes"]),
+			})
+		}
+	case SandboxEditFile:
+		presentation.Title = statusSummary(status, "正在修改文件", "沙箱文件已修改", "修改文件失败")
+		presentation.InputLabel = "File"
+		presentation.InputText = stringField(args, "path")
+		if file := nestedObject(result, "file"); file != nil {
+			presentation.Details = compactDetails([]string{
+				"Sandbox path: " + rawStringField(file, "path"),
+				"Size: " + fmt.Sprint(file["size_bytes"]),
+				"Replacements: " + fmt.Sprint(file["replacements"]),
+			})
+		}
 	case SandboxImportAttachment:
 		presentation.Title = statusSummary(status, "正在导入附件", "附件已导入沙箱", "导入附件失败")
 		presentation.InputLabel = "Attachment"

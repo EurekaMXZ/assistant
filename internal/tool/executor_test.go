@@ -233,9 +233,12 @@ type stubSandboxManager struct {
 	destroyedHandle       domain.SandboxHandle
 	execHandle            domain.SandboxHandle
 	execRequest           domain.SandboxCommandRequest
+	execRequests          []domain.SandboxCommandRequest
 	createResult          *domain.SandboxHandle
 	destroyResult         *domain.SandboxHandle
 	execResult            *domain.SandboxCommandResult
+	readlinkResult        *domain.SandboxCommandResult
+	moveResult            *domain.SandboxCommandResult
 	err                   error
 	createErr             error
 	destroyErr            error
@@ -248,6 +251,15 @@ type stubSandboxManager struct {
 	writtenHandle         domain.SandboxHandle
 	writtenPath           string
 	writtenData           []byte
+	readPath              string
+	readData              []byte
+	readSize              int64
+	readErr               error
+	shellCreateRequest    domain.SandboxShellCreateRequest
+	shellCommandRequest   domain.SandboxShellCommandRequest
+	destroyedShellID      string
+	shellSession          *domain.SandboxShellSession
+	shellCommandResult    *domain.SandboxShellCommandResult
 }
 
 type stubSandboxAttachmentStore struct {
@@ -321,6 +333,41 @@ func (s *stubSandboxManager) WriteSandboxFile(_ context.Context, handle domain.S
 	}
 	s.writtenData = append([]byte(nil), data...)
 	return s.err
+}
+
+func (s *stubSandboxManager) ReadSandboxFile(_ context.Context, _ domain.SandboxHandle, path string) (io.ReadCloser, int64, error) {
+	s.readPath = path
+	if s.readErr != nil {
+		return nil, 0, s.readErr
+	}
+	return io.NopCloser(bytes.NewReader(s.readData)), s.readSize, nil
+}
+
+func (s *stubSandboxManager) CreateSandboxShell(_ context.Context, handle domain.SandboxHandle, request domain.SandboxShellCreateRequest, requestKey string) (*domain.SandboxShellSession, error) {
+	s.execHandle = handle
+	s.shellCreateRequest = request
+	s.requestKeys = append(s.requestKeys, requestKey)
+	if s.shellSession != nil {
+		return s.shellSession, s.err
+	}
+	return &domain.SandboxShellSession{RuntimeID: handle.RuntimeID, SessionID: request.SessionID, Status: domain.SandboxShellStatusActive, WorkingDirectory: request.WorkingDirectory}, s.err
+}
+
+func (s *stubSandboxManager) ExecSandboxShell(_ context.Context, handle domain.SandboxHandle, request domain.SandboxShellCommandRequest, requestKey string) (*domain.SandboxShellCommandResult, error) {
+	s.execHandle = handle
+	s.shellCommandRequest = request
+	s.requestKeys = append(s.requestKeys, requestKey)
+	if s.shellCommandResult != nil {
+		return s.shellCommandResult, s.err
+	}
+	return &domain.SandboxShellCommandResult{RuntimeID: handle.RuntimeID, SessionID: request.SessionID}, s.err
+}
+
+func (s *stubSandboxManager) DestroySandboxShell(_ context.Context, handle domain.SandboxHandle, sessionID string, requestKey string) (*domain.SandboxShellSession, error) {
+	s.execHandle = handle
+	s.destroyedShellID = sessionID
+	s.requestKeys = append(s.requestKeys, requestKey)
+	return &domain.SandboxShellSession{RuntimeID: handle.RuntimeID, SessionID: sessionID, Status: domain.SandboxShellStatusClosed}, s.err
 }
 
 func TestCreateSandboxResumesStoppedSandbox(t *testing.T) {
@@ -427,11 +474,24 @@ func (s *stubSandboxManager) ExecSandboxCommand(_ context.Context, handle domain
 	s.requestKeys = append(s.requestKeys, requestKey)
 	s.execHandle = handle
 	s.execRequest = request
+	s.execRequests = append(s.execRequests, request)
 	if s.err != nil {
 		return nil, s.err
 	}
 	if request.Command == "mv" {
+		if s.moveResult != nil {
+			return s.moveResult, nil
+		}
 		return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID, ExitCode: 0}, nil
+	}
+	if request.Command == "mkdir" {
+		return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID, ExitCode: 0}, nil
+	}
+	if request.Command == "readlink" && len(request.Args) > 0 {
+		if s.readlinkResult != nil {
+			return s.readlinkResult, nil
+		}
+		return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID, Output: request.Args[len(request.Args)-1] + "\n", ExitCode: 0}, nil
 	}
 	return s.execResult, nil
 }

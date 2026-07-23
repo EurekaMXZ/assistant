@@ -17,6 +17,7 @@ import (
 )
 
 var _ tool.SandboxManager = (*HTTPRuntime)(nil)
+var _ tool.SandboxShellManager = (*HTTPRuntime)(nil)
 
 type HTTPRuntimeSettings struct {
 	BaseURL           string
@@ -90,6 +91,36 @@ func (r *HTTPRuntime) ExecSandboxCommand(ctx context.Context, handle domain.Sand
 	if err := r.doJSON(ctx, http.MethodPost, "/sandboxes/"+pathEscape(handle.RuntimeID)+"/exec", request, &response, requestKey); err != nil {
 		return nil, err
 	}
+	return &response, nil
+}
+
+func (r *HTTPRuntime) CreateSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCreateRequest, requestKey string) (*domain.SandboxShellSession, error) {
+	var response domain.SandboxShellSession
+	path := "/sandboxes/" + pathEscape(handle.RuntimeID) + "/shells"
+	if err := r.doJSON(ctx, http.MethodPost, path, request, &response, requestKey); err != nil {
+		return nil, err
+	}
+	response.RuntimeID = handle.RuntimeID
+	return &response, nil
+}
+
+func (r *HTTPRuntime) ExecSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCommandRequest, requestKey string) (*domain.SandboxShellCommandResult, error) {
+	var response domain.SandboxShellCommandResult
+	path := "/sandboxes/" + pathEscape(handle.RuntimeID) + "/shells/" + pathEscape(request.SessionID) + "/connect"
+	if err := r.doJSON(ctx, http.MethodPost, path, request, &response, requestKey); err != nil {
+		return nil, err
+	}
+	response.RuntimeID = handle.RuntimeID
+	return &response, nil
+}
+
+func (r *HTTPRuntime) DestroySandboxShell(ctx context.Context, handle domain.SandboxHandle, sessionID string, requestKey string) (*domain.SandboxShellSession, error) {
+	var response domain.SandboxShellSession
+	path := "/sandboxes/" + pathEscape(handle.RuntimeID) + "/shells/" + pathEscape(sessionID)
+	if err := r.doJSON(ctx, http.MethodDelete, path, nil, &response, requestKey); err != nil {
+		return nil, err
+	}
+	response.RuntimeID = handle.RuntimeID
 	return &response, nil
 }
 

@@ -23,24 +23,27 @@ import (
 )
 
 type stubCubeRuntimeClient struct {
-	created       *cubeSandbox
-	connected     *cubeSandbox
-	commandResult *cubeCommandResult
-	createOptions cubeCreateOptions
-	command       string
-	commandOpts   cubeCommandOptions
-	state         string
-	inspectErr    error
-	killErrors    []error
-	pauseCalls    int
-	connectCalls  int
-	killCalls     int
-	writtenPath   string
-	writtenData   []byte
-	writeErr      error
-	readPath      string
-	readData      []byte
-	readErr       error
+	created        *cubeSandbox
+	connected      *cubeSandbox
+	commandResult  *cubeCommandResult
+	createOptions  cubeCreateOptions
+	command        string
+	commandOpts    cubeCommandOptions
+	state          string
+	inspectErr     error
+	killErrors     []error
+	pauseCalls     int
+	connectCalls   int
+	killCalls      int
+	writtenPath    string
+	writtenData    []byte
+	writeErr       error
+	readPath       string
+	readData       []byte
+	readErr        error
+	createdShell   *domain.SandboxShellSession
+	shellResult    *domain.SandboxShellCommandResult
+	destroyedShell *domain.SandboxShellSession
 }
 
 func (s *stubCubeRuntimeClient) Create(_ context.Context, opts cubeCreateOptions) (*cubeSandbox, error) {
@@ -74,6 +77,27 @@ func (s *stubCubeRuntimeClient) RunCommand(_ context.Context, _ *cubeSandbox, co
 	s.command = command
 	s.commandOpts = opts
 	return s.commandResult, nil
+}
+
+func (s *stubCubeRuntimeClient) CreateShell(_ context.Context, _ *cubeSandbox, request domain.SandboxShellCreateRequest) (*domain.SandboxShellSession, error) {
+	if s.createdShell != nil {
+		return s.createdShell, nil
+	}
+	return &domain.SandboxShellSession{SessionID: request.SessionID, Status: domain.SandboxShellStatusActive, WorkingDirectory: request.WorkingDirectory}, nil
+}
+
+func (s *stubCubeRuntimeClient) ExecShell(_ context.Context, _ *cubeSandbox, request domain.SandboxShellCommandRequest, _ int) (*domain.SandboxShellCommandResult, error) {
+	if s.shellResult != nil {
+		return s.shellResult, nil
+	}
+	return &domain.SandboxShellCommandResult{SessionID: request.SessionID}, nil
+}
+
+func (s *stubCubeRuntimeClient) DestroyShell(_ context.Context, _ *cubeSandbox, sessionID string) (*domain.SandboxShellSession, error) {
+	if s.destroyedShell != nil {
+		return s.destroyedShell, nil
+	}
+	return &domain.SandboxShellSession{SessionID: sessionID, Status: domain.SandboxShellStatusClosed}, nil
 }
 
 func (s *stubCubeRuntimeClient) WriteFile(_ context.Context, _ *cubeSandbox, path string, reader io.Reader, _ int64) error {
@@ -327,6 +351,105 @@ func TestCubeSDKClientRunCommandUsesGeneratedEnvdClient(t *testing.T) {
 	}
 	if result.ExitCode != 3 || len(result.Output) > 32 || !strings.HasPrefix(result.Output, "one\ntwo\n") || !strings.Contains(result.Output, "truncated") {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestCubeSDKClientPersistentShellUsesProcessSessionRPCs(t *testing.T) {
+	outputEvents := make(chan []byte, 2)
+	signalSent := false
+	mux := http.NewServeMux()
+	mux.Handle(processconnect.ProcessListProcedure, connect.NewUnaryHandler(
+		processconnect.ProcessListProcedure,
+		func(_ context.Context, request *connect.Request[process.ListRequest]) (*connect.Response[process.ListResponse], error) {
+			if request.Header().Get("X-Access-Token") != "envd-token" {
+				t.Errorf("list request missing access token")
+			}
+			return connect.NewResponse(&process.ListResponse{}), nil
+		},
+	))
+	mux.Handle(processconnect.ProcessStartProcedure, connect.NewServerStreamHandler(
+		processconnect.ProcessStartProcedure,
+		func(_ context.Context, request *connect.Request[process.StartRequest], stream *connect.ServerStream[process.StartResponse]) error {
+			if request.Msg.GetTag() != "assistant-shell-shell-1" || request.Msg.GetProcess().GetCmd() != "/bin/bash" {
+				t.Errorf("unexpected shell start request: %#v", request.Msg)
+			}
+			return stream.Send(&process.StartResponse{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Start{Start: &process.ProcessEvent_StartEvent{Pid: 17}}}})
+		},
+	))
+	mux.Handle(processconnect.ProcessConnectProcedure, connect.NewServerStreamHandler(
+		processconnect.ProcessConnectProcedure,
+		func(ctx context.Context, request *connect.Request[process.ConnectRequest], stream *connect.ServerStream[process.ConnectResponse]) error {
+			if request.Msg.GetProcess().GetTag() != "assistant-shell-shell-1" {
+				t.Errorf("unexpected shell selector: %#v", request.Msg.GetProcess())
+			}
+			if err := stream.Send(&process.ConnectResponse{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Keepalive{Keepalive: &process.ProcessEvent_KeepAlive{}}}}); err != nil {
+				return err
+			}
+			for range 2 {
+				select {
+				case value := <-outputEvents:
+					if err := stream.Send(&process.ConnectResponse{Event: &process.ProcessEvent{Event: &process.ProcessEvent_Data{Data: &process.ProcessEvent_DataEvent{Output: &process.ProcessEvent_DataEvent_Stdout{Stdout: value}}}}}); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		},
+	))
+	mux.Handle(processconnect.ProcessSendInputProcedure, connect.NewUnaryHandler(
+		processconnect.ProcessSendInputProcedure,
+		func(_ context.Context, request *connect.Request[process.SendInputRequest]) (*connect.Response[process.SendInputResponse], error) {
+			value := string(request.Msg.GetInput().GetStdin())
+			markerStart := strings.Index(value, "assistant-shell-")
+			if markerStart < 0 {
+				t.Fatalf("shell input has no marker: %q", value)
+			}
+			marker := value[markerStart:]
+			if markerEnd := strings.Index(marker, "\\037"); markerEnd >= 0 {
+				marker = marker[:markerEnd]
+			}
+			marker = strings.ReplaceAll(marker, "%s", "0")
+			if strings.Contains(marker, "-start") {
+				outputEvents <- []byte("\x1e" + marker + "\x1f")
+			} else {
+				outputEvents <- []byte("persistent output\n\x1e" + marker + "\x1f")
+			}
+			return connect.NewResponse(&process.SendInputResponse{}), nil
+		},
+	))
+	mux.Handle(processconnect.ProcessSendSignalProcedure, connect.NewUnaryHandler(
+		processconnect.ProcessSendSignalProcedure,
+		func(_ context.Context, request *connect.Request[process.SendSignalRequest]) (*connect.Response[process.SendSignalResponse], error) {
+			signalSent = request.Msg.GetSignal() == process.Signal_SIGNAL_SIGTERM && request.Msg.GetProcess().GetTag() == "assistant-shell-shell-1"
+			return connect.NewResponse(&process.SendSignalResponse{}), nil
+		},
+	))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{Timeout: time.Second}
+	transport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	client := &cubeSDKClient{data: &http.Client{Transport: transport}, proxyScheme: "http", sandboxDomain: "cube.test"}
+	sandbox := &cubeSandbox{ID: "cube-1", EnvdAccessToken: "envd-token"}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.CreateShell(ctx, sandbox, domain.SandboxShellCreateRequest{SessionID: "shell-1", WorkingDirectory: "/workspace"})
+	if err != nil || session.Status != domain.SandboxShellStatusActive {
+		t.Fatalf("create cube shell: result=%#v err=%v", session, err)
+	}
+	result, err := client.ExecShell(ctx, sandbox, domain.SandboxShellCommandRequest{SessionID: "shell-1", Command: "pwd"}, 1024)
+	if err != nil || result.Output != "persistent output\n" || result.ExitCode != 0 {
+		t.Fatalf("exec cube shell: result=%#v err=%v", result, err)
+	}
+	closed, err := client.DestroyShell(ctx, sandbox, "shell-1")
+	if err != nil || closed.Status != domain.SandboxShellStatusClosed || !signalSent {
+		t.Fatalf("destroy cube shell: result=%#v signal=%t err=%v", closed, signalSent, err)
 	}
 }
 

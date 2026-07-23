@@ -163,3 +163,71 @@ func TestBuildPublicToolPresentationExposesImportedAttachmentPath(t *testing.T) 
 		t.Fatalf("attachment details = %q", presentation.Details)
 	}
 }
+
+func TestBuildPublicToolPresentationHidesSandboxWriteContent(t *testing.T) {
+	presentation := BuildPublicToolPresentation(
+		"",
+		"",
+		SandboxWriteFile,
+		"completed",
+		json.RawMessage(`{"path":"reports/result.md","content":"private generated content"}`),
+		[]byte(`{"conversation_id":"conv-1","file":{"path":"/workspace/reports/result.md","size_bytes":25,"sha256":"abc123"}}`),
+		"",
+	)
+	encoded, err := json.Marshal(presentation)
+	if err != nil {
+		t.Fatalf("marshal presentation: %v", err)
+	}
+	if presentation.Title != "文件已写入沙箱" || presentation.InputText != "reports/result.md" {
+		t.Fatalf("unexpected write presentation: %#v", presentation)
+	}
+	if details := strings.Join(presentation.Details, "\n"); !strings.Contains(details, "/workspace/reports/result.md") || !strings.Contains(details, "25") {
+		t.Fatalf("write details = %q", presentation.Details)
+	}
+	if strings.Contains(string(encoded), "private generated content") {
+		t.Fatalf("write presentation leaked content: %s", encoded)
+	}
+}
+
+func TestBuildPublicToolPresentationHidesSandboxEditText(t *testing.T) {
+	presentation := BuildPublicToolPresentation(
+		"",
+		"",
+		SandboxEditFile,
+		"completed",
+		json.RawMessage(`{"path":"reports/result.md","old_text":"private old text","new_text":"private new text","replace_all":false}`),
+		[]byte(`{"conversation_id":"conv-1","file":{"path":"/workspace/reports/result.md","size_bytes":42,"sha256":"abc123","replacements":1}}`),
+		"",
+	)
+	encoded, err := json.Marshal(presentation)
+	if err != nil {
+		t.Fatalf("marshal presentation: %v", err)
+	}
+	if presentation.Title != "沙箱文件已修改" || presentation.InputText != "reports/result.md" {
+		t.Fatalf("unexpected edit presentation: %#v", presentation)
+	}
+	if details := strings.Join(presentation.Details, "\n"); !strings.Contains(details, "/workspace/reports/result.md") || !strings.Contains(details, "Replacements: 1") {
+		t.Fatalf("edit details = %q", presentation.Details)
+	}
+	if strings.Contains(string(encoded), "private old text") || strings.Contains(string(encoded), "private new text") {
+		t.Fatalf("edit presentation leaked replacement text: %s", encoded)
+	}
+}
+
+func TestBuildPublicToolPresentationExposesPersistentShellResult(t *testing.T) {
+	presentation := BuildPublicToolPresentation(
+		"",
+		"",
+		SandboxShellConnect,
+		"completed",
+		json.RawMessage(`{"session_id":"shell-1","command":"pwd","timeout_seconds":30}`),
+		[]byte(`{"conversation_id":"conv-1","result":{"runtime_id":"runtime-1","session_id":"shell-1","output":"/workspace/project\n","exit_code":0}}`),
+		"",
+	)
+	if presentation.Title != "Shell 命令执行完成" || presentation.InputText != "shell-1" || presentation.Command != "pwd" {
+		t.Fatalf("unexpected shell presentation: %#v", presentation)
+	}
+	if presentation.CommandOutput != "/workspace/project\n" || presentation.ExitCode == nil || *presentation.ExitCode != 0 {
+		t.Fatalf("unexpected shell output presentation: %#v", presentation)
+	}
+}

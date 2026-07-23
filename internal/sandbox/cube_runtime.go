@@ -3,7 +3,9 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +41,7 @@ var (
 )
 
 var _ tool.SandboxManager = (*CubeRuntime)(nil)
+var _ tool.SandboxShellManager = (*CubeRuntime)(nil)
 
 type CubeRuntimeSettings struct {
 	APIURL              string
@@ -101,6 +104,9 @@ type cubeRuntimeClient interface {
 	Pause(context.Context, string, time.Duration) error
 	Kill(context.Context, string) error
 	RunCommand(context.Context, *cubeSandbox, string, cubeCommandOptions) (*cubeCommandResult, error)
+	CreateShell(context.Context, *cubeSandbox, domain.SandboxShellCreateRequest) (*domain.SandboxShellSession, error)
+	ExecShell(context.Context, *cubeSandbox, domain.SandboxShellCommandRequest, int) (*domain.SandboxShellCommandResult, error)
+	DestroyShell(context.Context, *cubeSandbox, string) (*domain.SandboxShellSession, error)
 	WriteFile(context.Context, *cubeSandbox, string, io.Reader, int64) error
 	ReadFile(context.Context, *cubeSandbox, string) (io.ReadCloser, int64, error)
 }
@@ -346,6 +352,59 @@ func (r *CubeRuntime) ExecSandboxCommand(ctx context.Context, handle domain.Sand
 		ExitCode:         result.ExitCode,
 		TimedOut:         result.TimedOut,
 	}, nil
+}
+
+func (r *CubeRuntime) CreateSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCreateRequest, _ string) (*domain.SandboxShellSession, error) {
+	if err := r.validateHandle(handle); err != nil {
+		return nil, err
+	}
+	sandbox, err := r.client.Connect(ctx, handle.RuntimeID)
+	if err != nil {
+		return nil, fmt.Errorf("connect cube sandbox %q for shell creation: %w", handle.RuntimeID, err)
+	}
+	session, err := r.client.CreateShell(ctx, sandbox, request)
+	if err != nil {
+		return nil, err
+	}
+	session.RuntimeID = handle.RuntimeID
+	return session, nil
+}
+
+func (r *CubeRuntime) ExecSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCommandRequest, _ string) (*domain.SandboxShellCommandResult, error) {
+	if err := r.validateHandle(handle); err != nil {
+		return nil, err
+	}
+	if request.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(request.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+	sandbox, err := r.client.Connect(ctx, handle.RuntimeID)
+	if err != nil {
+		return nil, fmt.Errorf("connect cube sandbox %q for shell command: %w", handle.RuntimeID, err)
+	}
+	result, err := r.client.ExecShell(ctx, sandbox, request, r.settings.MaxOutputBytes)
+	if err != nil {
+		return nil, err
+	}
+	result.RuntimeID = handle.RuntimeID
+	return result, nil
+}
+
+func (r *CubeRuntime) DestroySandboxShell(ctx context.Context, handle domain.SandboxHandle, sessionID string, _ string) (*domain.SandboxShellSession, error) {
+	if err := r.validateHandle(handle); err != nil {
+		return nil, err
+	}
+	sandbox, err := r.client.Connect(ctx, handle.RuntimeID)
+	if err != nil {
+		return nil, fmt.Errorf("connect cube sandbox %q for shell destruction: %w", handle.RuntimeID, err)
+	}
+	session, err := r.client.DestroyShell(ctx, sandbox, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	session.RuntimeID = handle.RuntimeID
+	return session, nil
 }
 
 func (r *CubeRuntime) WriteSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string, reader io.Reader, size int64, _ string) error {
@@ -634,6 +693,275 @@ func (c *cubeSDKClient) RunCommand(ctx context.Context, sandbox *cubeSandbox, co
 	}
 	result.Output = output.String()
 	return result, nil
+}
+
+func (c *cubeSDKClient) CreateShell(ctx context.Context, sandbox *cubeSandbox, request domain.SandboxShellCreateRequest) (*domain.SandboxShellSession, error) {
+	processClient, err := c.shellProcessClient(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	sessionID := strings.TrimSpace(request.SessionID)
+	if !validCubeShellSessionID(sessionID) {
+		return nil, errors.New("invalid cube shell session id")
+	}
+	tag := cubeShellTag(sessionID)
+	listRequest := connect.NewRequest(&process.ListRequest{})
+	authorizeCubeProcessRequest(listRequest.Header(), sandbox)
+	listed, err := processClient.List(ctx, listRequest)
+	if err != nil {
+		return nil, fmt.Errorf("list cube shell sessions: %w", err)
+	}
+	for _, running := range listed.Msg.GetProcesses() {
+		if running.GetTag() == tag {
+			return &domain.SandboxShellSession{SessionID: sessionID, Status: domain.SandboxShellStatusActive, WorkingDirectory: shellWorkingDirectory(request.WorkingDirectory)}, nil
+		}
+	}
+
+	workdir := shellWorkingDirectory(request.WorkingDirectory)
+	startRequest := connect.NewRequest(&process.StartRequest{
+		Process: &process.ProcessConfig{Cmd: "/bin/bash", Args: []string{"--noprofile", "--norc"}, Envs: map[string]string{}, Cwd: &workdir},
+		Tag:     &tag,
+	})
+	authorizeCubeProcessRequest(startRequest.Header(), sandbox)
+	stream, err := processClient.Start(ctx, startRequest)
+	if err != nil {
+		return nil, fmt.Errorf("start cube shell session: %w", err)
+	}
+	defer stream.Close()
+	for stream.Receive() {
+		event := stream.Msg().GetEvent()
+		if event == nil {
+			continue
+		}
+		if started := event.GetStart(); started != nil && started.GetPid() != 0 {
+			return &domain.SandboxShellSession{SessionID: sessionID, Status: domain.SandboxShellStatusActive, WorkingDirectory: workdir}, nil
+		}
+		if ended := event.GetEnd(); ended != nil {
+			return nil, fmt.Errorf("cube shell session exited during startup: %s", cubeProcessEndMessage(ended))
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, fmt.Errorf("receive cube shell startup: %w", err)
+	}
+	return nil, errors.New("cube shell startup ended without a process id")
+}
+
+func (c *cubeSDKClient) ExecShell(ctx context.Context, sandbox *cubeSandbox, request domain.SandboxShellCommandRequest, maxOutputBytes int) (*domain.SandboxShellCommandResult, error) {
+	processClient, err := c.shellProcessClient(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	sessionID := strings.TrimSpace(request.SessionID)
+	if !validCubeShellSessionID(sessionID) {
+		return nil, errors.New("invalid cube shell session id")
+	}
+	selector := &process.ProcessSelector{Selector: &process.ProcessSelector_Tag{Tag: cubeShellTag(sessionID)}}
+	connectRequest := connect.NewRequest(&process.ConnectRequest{Process: selector})
+	authorizeCubeProcessRequest(connectRequest.Header(), sandbox)
+	stream, err := processClient.Connect(ctx, connectRequest)
+	if err != nil {
+		return nil, fmt.Errorf("connect cube shell session: %w", err)
+	}
+	defer stream.Close()
+
+	token, err := cubeShellToken()
+	if err != nil {
+		return nil, err
+	}
+	startMarker := []byte("\x1eassistant-shell-" + token + "-start\x1f")
+	if err := sendCubeShellInput(ctx, processClient, sandbox, selector, "builtin printf '\\036assistant-shell-"+token+"-start\\037'\n"); err != nil {
+		return nil, err
+	}
+	handshake := &cubeShellOutputBuffer{limit: 4096}
+	started := false
+	for !started && stream.Receive() {
+		event := stream.Msg().GetEvent()
+		if event == nil {
+			continue
+		}
+		if data := event.GetData(); data != nil {
+			for _, chunk := range [][]byte{data.GetStdout(), data.GetStderr(), data.GetPty()} {
+				handshake.Write(chunk)
+			}
+			started = bytes.Contains(handshake.data, startMarker)
+		}
+		if end := event.GetEnd(); end != nil {
+			return nil, fmt.Errorf("cube shell session is closed: %s", cubeProcessEndMessage(end))
+		}
+	}
+	if !started {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return &domain.SandboxShellCommandResult{SessionID: sessionID, ExitCode: -1, TimedOut: true}, nil
+		}
+		if err := stream.Err(); err != nil {
+			return nil, fmt.Errorf("connect cube shell input stream: %w", err)
+		}
+		return nil, errors.New("cube shell session ended before synchronization")
+	}
+
+	endPrefix := []byte("\x1eassistant-shell-" + token + ":")
+	payload := strings.TrimSpace(request.Command) + "\n" + "builtin printf '\\036assistant-shell-" + token + ":%s\\037' \"$?\"\n"
+	if err := sendCubeShellInput(ctx, processClient, sandbox, selector, payload); err != nil {
+		return nil, err
+	}
+	if maxOutputBytes <= 0 {
+		maxOutputBytes = defaultCubeMaxOutputBytes
+	}
+	output := &cubeShellOutputBuffer{limit: maxOutputBytes + 512}
+	for stream.Receive() {
+		event := stream.Msg().GetEvent()
+		if event == nil {
+			continue
+		}
+		if data := event.GetData(); data != nil {
+			for _, chunk := range [][]byte{data.GetStdout(), data.GetStderr(), data.GetPty()} {
+				output.Write(chunk)
+			}
+			if markerStart := bytes.Index(output.data, endPrefix); markerStart >= 0 {
+				statusStart := markerStart + len(endPrefix)
+				if markerEnd := bytes.IndexByte(output.data[statusStart:], 0x1f); markerEnd >= 0 {
+					markerEnd += statusStart
+					exitCode, parseErr := strconv.Atoi(string(output.data[statusStart:markerEnd]))
+					if parseErr != nil {
+						return nil, fmt.Errorf("parse cube shell exit code: %w", parseErr)
+					}
+					value := strings.ToValidUTF8(string(output.data[:markerStart]), "\ufffd")
+					if len(value) > maxOutputBytes {
+						value = truncateValidUTF8(value, maxOutputBytes)
+						output.truncated = true
+					}
+					return &domain.SandboxShellCommandResult{SessionID: sessionID, Output: value, ExitCode: exitCode, Truncated: output.truncated}, nil
+				}
+			}
+		}
+		if end := event.GetEnd(); end != nil {
+			return nil, fmt.Errorf("cube shell session closed before command completed: %s", cubeProcessEndMessage(end))
+		}
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &domain.SandboxShellCommandResult{SessionID: sessionID, Output: strings.ToValidUTF8(string(output.data), "\ufffd"), ExitCode: -1, TimedOut: true, Truncated: output.truncated}, nil
+	}
+	if err := stream.Err(); err != nil {
+		return nil, fmt.Errorf("receive cube shell output: %w", err)
+	}
+	return nil, errors.New("cube shell output ended before command completion")
+}
+
+func (c *cubeSDKClient) DestroyShell(ctx context.Context, sandbox *cubeSandbox, sessionID string) (*domain.SandboxShellSession, error) {
+	processClient, err := c.shellProcessClient(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if !validCubeShellSessionID(sessionID) {
+		return nil, errors.New("invalid cube shell session id")
+	}
+	request := connect.NewRequest(&process.SendSignalRequest{
+		Process: &process.ProcessSelector{Selector: &process.ProcessSelector_Tag{Tag: cubeShellTag(sessionID)}},
+		Signal:  process.Signal_SIGNAL_SIGTERM,
+	})
+	authorizeCubeProcessRequest(request.Header(), sandbox)
+	if _, err := processClient.SendSignal(ctx, request); err != nil {
+		return nil, fmt.Errorf("destroy cube shell session: %w", err)
+	}
+	return &domain.SandboxShellSession{SessionID: sessionID, Status: domain.SandboxShellStatusClosed}, nil
+}
+
+func (c *cubeSDKClient) shellProcessClient(sandbox *cubeSandbox) (processconnect.ProcessClient, error) {
+	if sandbox == nil || strings.TrimSpace(sandbox.ID) == "" {
+		return nil, errors.New("cube shell session is not connected")
+	}
+	if c == nil || c.data == nil {
+		return nil, errors.New("cube sandbox data client is not configured")
+	}
+	domainName := sandbox.Domain
+	if domainName == "" {
+		domainName = c.sandboxDomain
+	}
+	host := "49983-" + sandbox.ID + "." + domainName
+	return processconnect.NewProcessClient(c.data, c.proxyScheme+"://"+host, connect.WithProtoJSON()), nil
+}
+
+func sendCubeShellInput(ctx context.Context, client processconnect.ProcessClient, sandbox *cubeSandbox, selector *process.ProcessSelector, value string) error {
+	request := connect.NewRequest(&process.SendInputRequest{
+		Process: selector,
+		Input:   &process.ProcessInput{Input: &process.ProcessInput_Stdin{Stdin: []byte(value)}},
+	})
+	authorizeCubeProcessRequest(request.Header(), sandbox)
+	if _, err := client.SendInput(ctx, request); err != nil {
+		return fmt.Errorf("send cube shell input: %w", err)
+	}
+	return nil
+}
+
+func authorizeCubeProcessRequest(header http.Header, sandbox *cubeSandbox) {
+	header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("root:")))
+	if sandbox != nil && sandbox.EnvdAccessToken != "" {
+		header.Set("X-Access-Token", sandbox.EnvdAccessToken)
+	}
+}
+
+func shellWorkingDirectory(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "/workspace"
+	}
+	return value
+}
+
+func cubeShellTag(sessionID string) string {
+	return "assistant-shell-" + sessionID
+}
+
+func validCubeShellSessionID(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func cubeShellToken() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("generate cube shell marker: %w", err)
+	}
+	return hex.EncodeToString(value[:]), nil
+}
+
+func cubeProcessEndMessage(end *process.ProcessEvent_EndEvent) string {
+	if end == nil {
+		return "process ended"
+	}
+	for _, value := range []string{end.GetError(), end.GetStatus()} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	if end.GetExited() {
+		return fmt.Sprintf("exit code %d", end.GetExitCode())
+	}
+	return "process ended"
+}
+
+type cubeShellOutputBuffer struct {
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func (b *cubeShellOutputBuffer) Write(value []byte) {
+	b.data = append(b.data, value...)
+	if len(b.data) > b.limit {
+		overflow := len(b.data) - b.limit
+		copy(b.data, b.data[overflow:])
+		b.data = b.data[:b.limit]
+		b.truncated = true
+	}
 }
 
 func cubeCommandExitCode(end *process.ProcessEvent_EndEvent) (int, error) {

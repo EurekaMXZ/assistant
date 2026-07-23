@@ -77,7 +77,7 @@ func (uc ExportSandboxFile) Execute(ctx context.Context, input ExportSandboxFile
 	if uc.Attachments == nil || uc.Blobs == nil || uc.Sandboxes == nil || uc.Runtime == nil || uc.Files == nil {
 		return nil, errors.New("sandbox file export is not configured")
 	}
-	sandboxPath, err := normalizeSandboxExportPath(input.SandboxPath)
+	sandboxPath, err := normalizeSandboxWorkspacePath(input.SandboxPath)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ func persistAssistantAttachment(ctx context.Context, attachments AssistantAttach
 	}, nil
 }
 
-func normalizeSandboxExportPath(value string) (string, error) {
+func normalizeSandboxWorkspacePath(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", domain.NewValidationError("path is required")

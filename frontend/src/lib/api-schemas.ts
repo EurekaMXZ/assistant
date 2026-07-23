@@ -36,6 +36,7 @@ export const userSchema = z.object({
     .nonnegative()
     .default(512 * 1024 * 1024),
   storage_used_bytes: z.number().int().nonnegative().default(0),
+  sandbox_quota: z.number().int().nonnegative().default(3),
   deleted_at: dateTime.optional(),
 });
 

@@ -93,7 +93,18 @@ func (r *ConversationSandboxRepository) GetLatestConversationSandbox(ctx context
 }
 
 func (r *ConversationSandboxRepository) CreateConversationSandbox(ctx context.Context, conversationID string, provider string, runtimeID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
-	row := r.db(ctx).QueryRow(ctx, `
+	conn, releaseQuota, err := r.acquireSandboxQuotaSlot(ctx, `
+		SELECT u.id::text, u.sandbox_quota
+		FROM conversations c
+		JOIN users u ON u.id = c.owner_user_id
+		WHERE c.id = $1::uuid
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseQuota()
+
+	row := conn.QueryRow(ctx, `
 		INSERT INTO sandboxes (conversation_id, provider, runtime_id, status, runtime_metadata)
 		VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
 		RETURNING `+conversationSandboxColumns, conversationID, provider, runtimeID, domain.SandboxStatusActive, normalizedJSON(metadata))
@@ -119,12 +130,91 @@ func (r *ConversationSandboxRepository) StopConversationSandbox(ctx context.Cont
 }
 
 func (r *ConversationSandboxRepository) ResumeConversationSandbox(ctx context.Context, sandboxID string, metadata json.RawMessage) (*domain.ConversationSandbox, error) {
-	row := r.db(ctx).QueryRow(ctx, `
+	conn, releaseQuota, err := r.acquireSandboxQuotaSlot(ctx, `
+		SELECT u.id::text, u.sandbox_quota
+		FROM sandboxes s
+		JOIN conversations c ON c.id = s.conversation_id
+		JOIN users u ON u.id = c.owner_user_id
+		WHERE s.id = $1::uuid AND s.destroyed_at IS NULL
+	`, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseQuota()
+
+	row := conn.QueryRow(ctx, `
 		UPDATE sandboxes
 		SET status = $2, runtime_metadata = $3::jsonb, stopped_at = NULL, last_activity_at = now()
 		WHERE id = $1::uuid AND status = $4 AND destroyed_at IS NULL
 		RETURNING `+conversationSandboxColumns, sandboxID, domain.SandboxStatusActive, normalizedJSON(metadata), domain.SandboxStatusStopped)
 	return scanConversationSandboxMutation(row, "resume conversation sandbox")
+}
+
+func (r *ConversationSandboxRepository) acquireSandboxQuotaSlot(ctx context.Context, ownerQuery string, identifier string) (*pgxpool.Conn, func(), error) {
+	if r == nil || r.pool == nil {
+		return nil, nil, errors.New("conversation sandbox repository is not configured")
+	}
+	conn := lockedConnection(ctx)
+	releaseConnection := false
+	if conn == nil {
+		var err error
+		conn, err = r.pool.Acquire(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("acquire sandbox quota connection: %w", err)
+		}
+		releaseConnection = true
+	}
+	release := func() {
+		if releaseConnection {
+			conn.Release()
+		}
+	}
+
+	var ownerUserID string
+	var quota int
+	if err := conn.QueryRow(ctx, ownerQuery, identifier).Scan(&ownerUserID, &quota); err != nil {
+		release()
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, domain.ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("load sandbox quota owner: %w", err)
+	}
+	lockKey := "sandbox-quota:" + ownerUserID
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", lockKey); err != nil {
+		release()
+		return nil, nil, fmt.Errorf("acquire sandbox quota lock: %w", err)
+	}
+	cleanup := func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock(hashtextextended($1, 0))", lockKey)
+		release()
+	}
+	if err := conn.QueryRow(ctx, `SELECT sandbox_quota FROM users WHERE id = $1::uuid`, ownerUserID).Scan(&quota); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("reload user sandbox quota: %w", err)
+	}
+
+	var running int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*)
+		FROM sandboxes s
+		JOIN conversations c ON c.id = s.conversation_id
+		WHERE c.owner_user_id = $1::uuid
+		  AND s.destroyed_at IS NULL
+		  AND (
+			s.status = $2
+			OR (s.status = $3 AND s.release_previous_status = $2)
+		  )
+	`, ownerUserID, domain.SandboxStatusActive, domain.SandboxStatusReleasing).Scan(&running); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("count running user sandboxes: %w", err)
+	}
+	if running >= quota {
+		cleanup()
+		return nil, nil, domain.NewConflictError(fmt.Sprintf("sandbox quota exceeded: %d running, limit %d", running, quota))
+	}
+	return conn, cleanup, nil
 }
 
 func (r *ConversationSandboxRepository) TouchConversationSandbox(ctx context.Context, sandboxID string) error {

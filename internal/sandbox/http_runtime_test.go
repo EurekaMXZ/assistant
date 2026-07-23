@@ -45,6 +45,20 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 				t.Fatalf("unexpected exec request: %#v", request)
 			}
 			_ = json.NewEncoder(w).Encode(domain.SandboxCommandResult{RuntimeID: "runtime-1", Command: "echo", Output: "hello\n"})
+		case "POST /sandboxes/runtime-1/shells":
+			var request domain.SandboxShellCreateRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode shell create request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(domain.SandboxShellSession{SessionID: request.SessionID, Status: domain.SandboxShellStatusActive, WorkingDirectory: request.WorkingDirectory})
+		case "POST /sandboxes/runtime-1/shells/shell-1/connect":
+			var request domain.SandboxShellCommandRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode shell command request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(domain.SandboxShellCommandResult{SessionID: "shell-1", Output: "persistent\n", ExitCode: 0})
+		case "DELETE /sandboxes/runtime-1/shells/shell-1":
+			_ = json.NewEncoder(w).Encode(domain.SandboxShellSession{SessionID: "shell-1", Status: domain.SandboxShellStatusClosed})
 		case "PUT /sandboxes/runtime-1/files":
 			data, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -97,6 +111,18 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 	if result.Output != "hello\n" {
 		t.Fatalf("Output = %q, want hello", result.Output)
 	}
+	shell, err := runtime.CreateSandboxShell(context.Background(), *handle, domain.SandboxShellCreateRequest{SessionID: "shell-1", WorkingDirectory: "/workspace"}, "shell-create-key")
+	if err != nil || shell.RuntimeID != "runtime-1" || shell.SessionID != "shell-1" {
+		t.Fatalf("create shell: result=%#v err=%v", shell, err)
+	}
+	shellResult, err := runtime.ExecSandboxShell(context.Background(), *handle, domain.SandboxShellCommandRequest{SessionID: "shell-1", Command: "pwd"}, "shell-connect-key")
+	if err != nil || shellResult.Output != "persistent\n" {
+		t.Fatalf("connect shell: result=%#v err=%v", shellResult, err)
+	}
+	closedShell, err := runtime.DestroySandboxShell(context.Background(), *handle, "shell-1", "shell-destroy-key")
+	if err != nil || closedShell.Status != domain.SandboxShellStatusClosed {
+		t.Fatalf("destroy shell: result=%#v err=%v", closedShell, err)
+	}
 	if err := runtime.WriteSandboxFile(context.Background(), *handle, "/workspace/input file.txt", strings.NewReader("file-data"), int64(len("file-data")), "write-key"); err != nil {
 		t.Fatalf("write sandbox file: %v", err)
 	}
@@ -118,7 +144,7 @@ func TestHTTPRuntimeCallsBridge(t *testing.T) {
 		t.Fatalf("unexpected destroyed handle: %#v", destroyed)
 	}
 
-	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "PUT /sandboxes/runtime-1/files", "GET /sandboxes/runtime-1/files", "DELETE /sandboxes/runtime-1"}
+	want := []string{"POST /sandboxes", "POST /sandboxes/runtime-1/stop", "POST /sandboxes/runtime-1/resume", "POST /sandboxes/runtime-1/exec", "POST /sandboxes/runtime-1/shells", "POST /sandboxes/runtime-1/shells/shell-1/connect", "DELETE /sandboxes/runtime-1/shells/shell-1", "PUT /sandboxes/runtime-1/files", "GET /sandboxes/runtime-1/files", "DELETE /sandboxes/runtime-1"}
 	if strings.Join(calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}

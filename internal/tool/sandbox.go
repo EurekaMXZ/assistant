@@ -185,3 +185,9 @@ type SandboxManager interface {
 type SandboxFileReader interface {
 	ReadSandboxFile(ctx context.Context, handle domain.SandboxHandle, path string) (io.ReadCloser, int64, error)
 }
+
+type SandboxShellManager interface {
+	CreateSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCreateRequest, requestKey string) (*domain.SandboxShellSession, error)
+	ExecSandboxShell(ctx context.Context, handle domain.SandboxHandle, request domain.SandboxShellCommandRequest, requestKey string) (*domain.SandboxShellCommandResult, error)
+	DestroySandboxShell(ctx context.Context, handle domain.SandboxHandle, sessionID string, requestKey string) (*domain.SandboxShellSession, error)
+}

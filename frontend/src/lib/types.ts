@@ -13,6 +13,7 @@ export interface User {
   updated_at: string;
   storage_quota_bytes: number;
   storage_used_bytes: number;
+  sandbox_quota: number;
   deleted_at?: string;
 }
 

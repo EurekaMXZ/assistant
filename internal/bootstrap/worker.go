@@ -53,6 +53,10 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	if !ok {
 		return nil, fmt.Errorf("sandbox runtime does not support file reads")
 	}
+	sandboxShells, ok := sandboxRuntime.(tool.SandboxShellManager)
+	if !ok {
+		return nil, fmt.Errorf("sandbox runtime does not support shell sessions")
+	}
 	tavilyEnabled := strings.TrimSpace(settings.Tavily.APIKey) != ""
 	toolHandlers := []tool.LocalToolHandler{
 		tool.AskUserHandler{},
@@ -82,6 +86,47 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 				Locker:         workflows.Locker,
 				DefaultTimeout: settings.SandboxLifecycle.CommandDefault,
 				MaximumTimeout: settings.SandboxLifecycle.CommandMaximum,
+			},
+		},
+		tool.CreateSandboxShellHandler{
+			UseCase: tool.CreateSandboxShell{
+				Sandboxes: workflows.Sandboxes,
+				Runtime:   sandboxRuntime,
+				Shells:    sandboxShells,
+				Locker:    workflows.Locker,
+			},
+		},
+		tool.ConnectSandboxShellHandler{
+			UseCase: tool.ConnectSandboxShell{
+				Sandboxes:      workflows.Sandboxes,
+				Runtime:        sandboxRuntime,
+				Shells:         sandboxShells,
+				Locker:         workflows.Locker,
+				DefaultTimeout: settings.SandboxLifecycle.CommandDefault,
+				MaximumTimeout: settings.SandboxLifecycle.CommandMaximum,
+			},
+		},
+		tool.DestroySandboxShellHandler{
+			UseCase: tool.DestroySandboxShell{
+				Sandboxes: workflows.Sandboxes,
+				Runtime:   sandboxRuntime,
+				Shells:    sandboxShells,
+				Locker:    workflows.Locker,
+			},
+		},
+		tool.WriteSandboxFileHandler{
+			UseCase: tool.WriteSandboxFile{
+				Sandboxes: workflows.Sandboxes,
+				Runtime:   sandboxRuntime,
+				Locker:    workflows.Locker,
+			},
+		},
+		tool.EditSandboxFileHandler{
+			UseCase: tool.EditSandboxFile{
+				Sandboxes: workflows.Sandboxes,
+				Runtime:   sandboxRuntime,
+				Files:     sandboxFileReader,
+				Locker:    workflows.Locker,
 			},
 		},
 		tool.ImportSandboxAttachmentHandler{

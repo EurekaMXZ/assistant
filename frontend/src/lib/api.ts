@@ -477,7 +477,9 @@ export async function createAdminUser(payload: {
 
 export async function updateAdminUser(
   userId: string,
-  payload: Partial<Pick<User, "email" | "username" | "role" | "status" | "storage_quota_bytes">>,
+  payload: Partial<
+    Pick<User, "email" | "username" | "role" | "status" | "storage_quota_bytes" | "sandbox_quota">
+  >,
 ) {
   return apiFetch<{ user: User }>(`/users/${userId}`, {
     method: "PATCH",

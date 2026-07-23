@@ -89,7 +89,7 @@ func (c StaticCatalog) toolEnabledInScope(toolName string, scope ToolScope) bool
 		return !scope.HasSandbox
 	case SandboxDestroy:
 		return scope.HasSandbox
-	case SandboxExec, SandboxImportAttachment, SandboxExportFileTool:
+	case SandboxExec, SandboxShellCreate, SandboxShellConnect, SandboxShellDestroy, SandboxWriteFile, SandboxEditFile, SandboxImportAttachment, SandboxExportFileTool:
 		return scope.HasSandbox && c.EnableSandboxExec
 	default:
 		return true

@@ -52,6 +52,7 @@ func (r *UserRepository) CreateUser(ctx context.Context, params assistantauth.Cr
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
@@ -82,6 +83,7 @@ func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*domai
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
@@ -114,6 +116,7 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (*dom
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
@@ -152,6 +155,7 @@ func (r *UserRepository) ListUsers(ctx context.Context, params assistantauth.Lis
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
@@ -232,6 +236,10 @@ func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.Up
 		setClauses = append(setClauses, fmt.Sprintf("storage_quota_bytes = $%d", len(args)+1))
 		args = append(args, *params.StorageQuotaBytes)
 	}
+	if params.SandboxQuota != nil {
+		setClauses = append(setClauses, fmt.Sprintf("sandbox_quota = $%d", len(args)+1))
+		args = append(args, *params.SandboxQuota)
+	}
 
 	if len(setClauses) == 0 {
 		return r.GetUserByID(ctx, params.UserID)
@@ -258,12 +266,28 @@ func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.Up
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
 	`
 
-	row := r.pool.QueryRow(ctx, query, args...)
+	var tx pgx.Tx
+	var row pgx.Row
+	if params.SandboxQuota != nil {
+		var err error
+		tx, err = r.pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin user sandbox quota update: %w", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "sandbox-quota:"+params.UserID); err != nil {
+			return nil, fmt.Errorf("lock user sandbox quota update: %w", err)
+		}
+		row = tx.QueryRow(ctx, query, args...)
+	} else {
+		row = r.pool.QueryRow(ctx, query, args...)
+	}
 	user, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -273,6 +297,11 @@ func (r *UserRepository) UpdateUser(ctx context.Context, params assistantauth.Up
 			return nil, conflict
 		}
 		return nil, fmt.Errorf("update user: %w", err)
+	}
+	if tx != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit user sandbox quota update: %w", err)
+		}
 	}
 
 	return user, nil
@@ -301,6 +330,7 @@ func (r *UserRepository) UpdateUserPassword(ctx context.Context, userID string, 
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
@@ -335,6 +365,7 @@ func (r *UserRepository) TouchUserLogin(ctx context.Context, userID string) (*do
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
@@ -385,6 +416,7 @@ func (r *UserRepository) EnsureSystemUser(ctx context.Context, params assistanta
 			auth_version,
 			storage_quota_bytes,
 			storage_used_bytes,
+			sandbox_quota,
 			deleted_at,
 			created_at,
 			updated_at
