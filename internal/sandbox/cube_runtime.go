@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -736,11 +737,65 @@ func (c *cubeSDKClient) ReadFile(ctx context.Context, sandbox *cubeSandbox, file
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 		return nil, 0, fmt.Errorf("cube sandbox file request failed: status=%d body=%s", response.StatusCode, strings.TrimSpace(string(message)))
 	}
-	if response.ContentLength < 0 || response.ContentLength > domain.SandboxFileMaxBytes {
+	if response.ContentLength > domain.SandboxFileMaxBytes {
 		response.Body.Close()
 		return nil, 0, fmt.Errorf("cube sandbox file size must be between 0 and %d bytes", domain.SandboxFileMaxBytes)
 	}
+	if response.ContentLength < 0 {
+		return spoolCubeSandboxFile(response.Body)
+	}
 	return response.Body, response.ContentLength, nil
+}
+
+type temporaryCubeSandboxFile struct {
+	file *os.File
+	path string
+}
+
+func (r *temporaryCubeSandboxFile) Read(data []byte) (int, error) {
+	return r.file.Read(data)
+}
+
+func (r *temporaryCubeSandboxFile) Close() error {
+	if r == nil || r.file == nil {
+		return nil
+	}
+	closeErr := r.file.Close()
+	removeErr := os.Remove(r.path)
+	if errors.Is(removeErr, os.ErrNotExist) {
+		removeErr = nil
+	}
+	return errors.Join(closeErr, removeErr)
+}
+
+func spoolCubeSandboxFile(source io.ReadCloser) (io.ReadCloser, int64, error) {
+	if source == nil {
+		return nil, 0, errors.New("cube sandbox file response body is required")
+	}
+	defer source.Close()
+	temporary, err := os.CreateTemp("", "assistant-cube-file-*")
+	if err != nil {
+		return nil, 0, fmt.Errorf("create temporary cube sandbox file: %w", err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = temporary.Close()
+			_ = os.Remove(temporary.Name())
+		}
+	}()
+	size, err := io.Copy(temporary, io.LimitReader(source, domain.SandboxFileMaxBytes+1))
+	if err != nil {
+		return nil, 0, fmt.Errorf("buffer cube sandbox file: %w", err)
+	}
+	if size > domain.SandboxFileMaxBytes {
+		return nil, 0, fmt.Errorf("cube sandbox file exceeds %d bytes", domain.SandboxFileMaxBytes)
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		return nil, 0, fmt.Errorf("rewind temporary cube sandbox file: %w", err)
+	}
+	cleanup = false
+	return &temporaryCubeSandboxFile{file: temporary, path: temporary.Name()}, size, nil
 }
 
 type cubeOutputBuffer struct {

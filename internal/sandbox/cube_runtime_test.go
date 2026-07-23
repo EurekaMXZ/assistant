@@ -358,6 +358,38 @@ func TestCubeSDKClientStreamsFileToEnvd(t *testing.T) {
 	}
 }
 
+func TestCubeSDKClientReadsChunkedFileFromEnvd(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/files" || request.URL.Query().Get("path") != "/workspace/result.txt" {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Basic cm9vdDo=" || request.Header.Get("X-Access-Token") != "envd-token" {
+			t.Errorf("unexpected auth headers: %#v", request.Header)
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("result\n"))
+	}))
+	defer server.Close()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{Timeout: time.Second}
+	transport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	client := &cubeSDKClient{data: &http.Client{Transport: transport}, proxyScheme: "http", sandboxDomain: "cube.test"}
+	reader, size, err := client.ReadFile(t.Context(), &cubeSandbox{ID: "cube-1", EnvdAccessToken: "envd-token"}, "/workspace/result.txt")
+	if err != nil {
+		t.Fatalf("read chunked file: %v", err)
+	}
+	data, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || size != int64(len("result\n")) || string(data) != "result\n" {
+		t.Fatalf("chunked file result: size=%d data=%q readErr=%v closeErr=%v", size, data, readErr, closeErr)
+	}
+}
+
 func TestCubeCommandExitCodeClassifiesProcessExitAndInfrastructureFailure(t *testing.T) {
 	exitStatus := "exit status 1"
 	for _, end := range []*process.ProcessEvent_EndEvent{
