@@ -37,9 +37,15 @@ func assistantAttachmentDraftsFromItems(items []llm.ModelItem, conversationID st
 		if _, ok := exportCalls[callID]; !ok {
 			continue
 		}
-		var output tool.AssistantAttachmentToolOutput
+		var output struct {
+			OK                  *bool                              `json:"ok,omitempty"`
+			AssistantAttachment *tool.AssistantAttachmentReference `json:"assistant_attachment,omitempty"`
+		}
 		if err := json.Unmarshal([]byte(item.Output), &output); err != nil {
 			return nil, fmt.Errorf("decode assistant attachment output for call %s: %w", callID, err)
+		}
+		if output.OK != nil && !*output.OK {
+			continue
 		}
 		reference := output.AssistantAttachment
 		if reference == nil {

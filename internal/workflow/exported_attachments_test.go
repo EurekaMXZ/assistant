@@ -59,6 +59,40 @@ func TestAssistantAttachmentDraftsIgnoreUnmatchedOutput(t *testing.T) {
 	}
 }
 
+func TestAssistantAttachmentDraftsIgnoreFailedExport(t *testing.T) {
+	payload, _ := json.Marshal(tool.AssistantAttachmentToolOutput{AssistantAttachment: &tool.AssistantAttachmentReference{
+		ConversationID: "conversation-1", TurnID: "turn-1", Source: "text_export",
+		Attachment: tool.AssistantAttachmentResult{
+			ID: "11111111-1111-1111-1111-111111111111", Filename: "result.md",
+			ContentType: "text/plain", Category: "text", SizeBytes: 12,
+		},
+	}})
+	items := []llm.ModelItem{
+		{Type: llm.ModelItemFunctionCall, Namespace: "sandbox", Name: "export_file", CallID: "failed-call"},
+		{Type: llm.ModelItemFunctionCallOutput, CallID: "failed-call", Output: `{"ok":false,"error":{"type":"tool_execution_failed"}}`},
+		{Type: llm.ModelItemFunctionCall, Namespace: "conversation", Name: "export_text", CallID: "successful-call"},
+		{Type: llm.ModelItemFunctionCallOutput, CallID: "successful-call", Output: string(payload)},
+	}
+
+	drafts, err := assistantAttachmentDraftsFromItems(items, "conversation-1", "turn-1")
+	if err != nil {
+		t.Fatalf("build attachment drafts after failed export: %v", err)
+	}
+	if len(drafts) != 1 {
+		t.Fatalf("attachment draft count = %d, want 1", len(drafts))
+	}
+}
+
+func TestAssistantAttachmentDraftsRejectSuccessfulExportWithoutReference(t *testing.T) {
+	_, err := assistantAttachmentDraftsFromItems([]llm.ModelItem{
+		{Type: llm.ModelItemFunctionCall, Namespace: "conversation", Name: "export_text", CallID: "call-1"},
+		{Type: llm.ModelItemFunctionCallOutput, CallID: "call-1", Output: `{"ok":true}`},
+	}, "conversation-1", "turn-1")
+	if err == nil {
+		t.Fatal("expected successful export without an attachment reference to fail")
+	}
+}
+
 func TestAssistantAttachmentDraftsRejectWrongScope(t *testing.T) {
 	payload, _ := json.Marshal(tool.AssistantAttachmentToolOutput{AssistantAttachment: &tool.AssistantAttachmentReference{
 		ConversationID: "other-conversation", TurnID: "turn-1", Source: "text_export",
