@@ -60,4 +60,25 @@ describe("markdown renderer", () => {
     expect(markdown).not.toBeNull();
     expect(markdown?.textContent).toContain("100");
   });
+
+  it("renders nested exponents in inline and display math", async () => {
+    await act(async () => {
+      root.render(
+        <MarkdownRenderer
+          content={String.raw`Inline $x^{x^{x^{x}}}$.
+
+$$
+\frac{A^{B^{C^{D}}}}{\sum_{i=1}^{n^{2^k}} x_i}
+$$`}
+        />,
+      );
+    });
+
+    const inlineMath = container.querySelector("p .katex");
+    const displayMath = container.querySelector(".katex-display > .katex");
+    expect(inlineMath).not.toBeNull();
+    expect(displayMath).not.toBeNull();
+    expect(inlineMath?.querySelectorAll(".msupsub").length).toBeGreaterThanOrEqual(3);
+    expect(displayMath?.querySelectorAll(".msupsub").length).toBeGreaterThanOrEqual(4);
+  });
 });

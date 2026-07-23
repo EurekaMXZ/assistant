@@ -174,10 +174,13 @@
 }
 
 .chat-markdown .katex-display {
+  /* KaTeX positions scripts in zero-height vlists; keep their ink inside the scroll clip. */
+  margin-block: 0.75em;
   max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-inline: contain;
+  padding-block: 0.5em;
 }
 
 .chat-markdown .katex-display > .katex {
@@ -190,6 +193,7 @@
   max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
+  padding-block: 0.25em;
   vertical-align: middle;
 }
 
