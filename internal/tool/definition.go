@@ -186,7 +186,7 @@ func sandboxCreateDefinition() llm.ModelTool {
 	return llm.ModelTool{
 		Type:        llm.ModelToolTypeFunction,
 		Name:        sandboxCreateName,
-		Description: "Create a sandbox only when the current conversation has none and needs isolated execution. Existing conversation sandboxes must be reused because each user has a concurrent sandbox quota.",
+		Description: "Create a sandbox only when the current conversation has none and needs isolated execution. Before creation, this is intentionally the only tool in the sandbox namespace; after a successful call, the namespace refreshes on the next model step with shell and file tools. Existing conversation sandboxes must be reused because each user has a concurrent sandbox quota.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{},

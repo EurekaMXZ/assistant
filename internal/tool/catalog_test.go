@@ -149,6 +149,10 @@ func TestStaticCatalogFiltersSandboxToolsByScope(t *testing.T) {
 	if len(withoutSandbox[0].Tools) != 1 || withoutSandbox[0].Tools[0].Name != sandboxCreateName {
 		t.Fatalf("unexpected sandbox children without sandbox: %#v", withoutSandbox[0].Tools)
 	}
+	createDescription := withoutSandbox[0].Tools[0].Description
+	if !strings.Contains(createDescription, "intentionally the only tool") || !strings.Contains(createDescription, "next model step") {
+		t.Fatalf("sandbox create description does not explain staged tool availability: %q", createDescription)
+	}
 
 	withSandbox, err := catalog.ListTools(context.Background(), ToolScope{HasSandbox: true})
 	if err != nil {
