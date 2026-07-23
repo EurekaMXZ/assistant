@@ -773,7 +773,18 @@ func spoolCubeSandboxFile(source io.ReadCloser) (io.ReadCloser, int64, error) {
 		return nil, 0, errors.New("cube sandbox file response body is required")
 	}
 	defer source.Close()
-	temporary, err := os.CreateTemp("", "assistant-cube-file-*")
+	temporaryDir := os.TempDir()
+	if err := os.MkdirAll(temporaryDir, 0o700); err != nil {
+		return nil, 0, fmt.Errorf("create cube sandbox temporary directory: %w", err)
+	}
+	temporaryDirInfo, err := os.Stat(temporaryDir)
+	if err != nil {
+		return nil, 0, fmt.Errorf("inspect cube sandbox temporary directory: %w", err)
+	}
+	if !temporaryDirInfo.IsDir() {
+		return nil, 0, fmt.Errorf("cube sandbox temporary path %q is not a directory", temporaryDir)
+	}
+	temporary, err := os.CreateTemp(temporaryDir, "assistant-cube-file-*")
 	if err != nil {
 		return nil, 0, fmt.Errorf("create temporary cube sandbox file: %w", err)
 	}

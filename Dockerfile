@@ -23,12 +23,17 @@ COPY prompts ./prompts
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 	go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/${SERVICE}
 
+RUN mkdir -p /out/tmp && chmod 0700 /out/tmp
+
 FROM scratch
 
 WORKDIR /app
 
+ENV TMPDIR=/app/tmp
+
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/app /app/app
+COPY --from=builder --chmod=0700 /out/tmp/ /app/tmp/
 COPY --from=builder /src/db /app/db
 COPY --from=builder /src/prompts /app/prompts
 

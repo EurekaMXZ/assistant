@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -359,6 +361,8 @@ func TestCubeSDKClientStreamsFileToEnvd(t *testing.T) {
 }
 
 func TestCubeSDKClientReadsChunkedFileFromEnvd(t *testing.T) {
+	temporaryDir := filepath.Join(t.TempDir(), "missing", "tmp")
+	t.Setenv("TMPDIR", temporaryDir)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/files" || request.URL.Query().Get("path") != "/workspace/result.txt" {
 			t.Errorf("unexpected request: %s %s", request.Method, request.URL.String())
@@ -387,6 +391,14 @@ func TestCubeSDKClientReadsChunkedFileFromEnvd(t *testing.T) {
 	closeErr := reader.Close()
 	if readErr != nil || closeErr != nil || size != int64(len("result\n")) || string(data) != "result\n" {
 		t.Fatalf("chunked file result: size=%d data=%q readErr=%v closeErr=%v", size, data, readErr, closeErr)
+	}
+	temporaryDirInfo, err := os.Stat(temporaryDir)
+	if err != nil || !temporaryDirInfo.IsDir() || temporaryDirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("temporary directory: info=%v err=%v", temporaryDirInfo, err)
+	}
+	entries, err := os.ReadDir(temporaryDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("temporary directory cleanup: entries=%v err=%v", entries, err)
 	}
 }
 
