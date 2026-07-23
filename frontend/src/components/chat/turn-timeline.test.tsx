@@ -1,23 +1,28 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SandboxCommandPayload, TurnTimeline } from "./turn-timeline";
+import { TurnTimeline } from "./turn-timeline";
+import { TimelineToolPayload } from "./turn-timeline-payloads";
 
 describe("sandbox command output", () => {
-  it("renders the ordered command output as one stream", () => {
+  it("renders persistent shell commands and their ordered output", () => {
     const markup = renderToStaticMarkup(
-      <SandboxCommandPayload
+      <TimelineToolPayload
         item={{
           id: "tool-1",
           type: "tool_call",
           status: "completed",
+          metadata: { tool_name: "sandbox.shell_connect" },
           command: "test-command",
           command_output: "first\nsecond\nthird\n",
+          exit_code: 0,
           created_at: "2026-07-14T00:00:00Z",
         }}
       />,
     );
 
     expect(markup).toContain("first\nsecond\nthird\n");
+    expect(markup).toContain("test-command");
+    expect(markup).toContain("exit 0");
     expect(markup.match(/<pre/g)).toHaveLength(2);
     expect(markup).not.toContain("text-destructive");
     expect(markup).not.toContain(">stderr<");

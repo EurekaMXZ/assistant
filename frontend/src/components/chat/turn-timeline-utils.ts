@@ -1,5 +1,11 @@
 import type { TimelineItem } from "@/lib/types";
 
+const sandboxCommandTools = new Set(["sandbox.exec", "sandbox.shell_connect"]);
+
+export function isSandboxCommandTool(toolName: string) {
+  return sandboxCommandTools.has(toolName.trim());
+}
+
 export function reasoningSummary(item: TimelineItem) {
   return item.content_text?.trim() || "";
 }

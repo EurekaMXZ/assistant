@@ -24,6 +24,7 @@ import { TimelineReasoningPayload, TimelineToolPayload } from "./turn-timeline-p
 import {
   clipText,
   getMetadataString,
+  isSandboxCommandTool,
   reasoningSummary,
   splitLeadingReasoningTitle,
 } from "./turn-timeline-utils";
@@ -205,12 +206,11 @@ function TimelineStep({
   isStreaming?: boolean;
 }) {
   const toolName = getMetadataString(item, "tool_name");
-  const Icon =
-    toolName === "sandbox.exec"
-      ? Terminal
-      : toolName.startsWith("sandbox.")
-        ? Box
-        : (timelineIcons[item.type as keyof typeof timelineIcons] ?? Sparkles);
+  const Icon = isSandboxCommandTool(toolName)
+    ? Terminal
+    : toolName.startsWith("sandbox.")
+      ? Box
+      : (timelineIcons[item.type as keyof typeof timelineIcons] ?? Sparkles);
 
   return (
     <div className={cn("relative pl-7", !isLast && "pb-5")}>

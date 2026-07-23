@@ -6,12 +6,13 @@ import type { TimelineItem } from "@/lib/types";
 import { TimelineMarkdownRenderer } from "./markdown-renderer";
 import {
   getMetadataString,
+  isSandboxCommandTool,
   reasoningSummary,
   splitLeadingReasoningTitle,
 } from "./turn-timeline-utils";
 
 export function TimelineToolPayload({ item }: { item: TimelineItem }) {
-  if (getMetadataString(item, "tool_name") === "sandbox.exec") {
+  if (isSandboxCommandTool(getMetadataString(item, "tool_name"))) {
     return <SandboxCommandPayload item={item} />;
   }
 
