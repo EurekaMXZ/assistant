@@ -2,12 +2,12 @@
 
 ## Commit Messages
 
-Every commit must use a multiline Conventional Commit message with a subject, a blank line, and a non-empty body:
+Every commit must use a multiline Conventional Commit message with a subject, a blank line, and a flat unordered-list body:
 
 ```text
 <type>(<scope>): <summary>
 
-<body>
+- <change>
 ```
 
 ### Subject
@@ -20,9 +20,9 @@ Every commit must use a multiline Conventional Commit message with a subject, a 
 ### Body
 
 - Separate the body from the subject with exactly one blank line.
-- Explain the material behavior changed and why the change is needed. Do not merely repeat the subject.
-- Wrap prose at approximately 72 characters when practical.
-- Use multiple paragraphs or a flat bullet list when a commit contains several related changes.
+- Use at least one flat unordered-list bullet. Do not use prose paragraphs or nested bullets.
+- Explain one material behavior, implementation area, or verification change per bullet. Do not merely repeat the subject.
+- Start each bullet with an imperative verb and wrap it at approximately 72 characters when practical.
 - Add issue references or `BREAKING CHANGE:` footers after another blank line when applicable.
 
 A single-line commit message is not acceptable, even for a small change.
@@ -32,14 +32,14 @@ A single-line commit message is not acceptable, even for a small change.
 ```text
 fix(chat): render persistent shell command output
 
-Route sandbox.shell_connect through the terminal timeline presentation while
-adding regression coverage for command output and exit status rendering.
+- route sandbox.shell_connect through the terminal timeline presentation
+- add regression coverage for command output and exit status rendering
 ```
 
-Using multiple `-m` arguments creates the required subject and body paragraphs:
+Using multiple `-m` arguments creates the required subject and bullet-list body:
 
 ```bash
 git commit \
   -m "fix(chat): render persistent shell command output" \
-  -m "Route sandbox.shell_connect through the terminal timeline presentation. Add regression coverage for command output and exit status rendering."
+  -m $'- route sandbox.shell_connect through the terminal timeline presentation\n- add regression coverage for command output and exit status rendering'
 ```
