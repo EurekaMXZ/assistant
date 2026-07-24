@@ -49,11 +49,3 @@ type StaleTurnRepository struct {
 func NewStaleTurnRepository(pool *pgxpool.Pool) *StaleTurnRepository {
 	return &StaleTurnRepository{pool: pool}
 }
-
-type TurnStreamEventRepository struct {
-	pool *pgxpool.Pool
-}
-
-func NewTurnStreamEventRepository(pool *pgxpool.Pool) *TurnStreamEventRepository {
-	return &TurnStreamEventRepository{pool: pool}
-}

@@ -18,7 +18,7 @@ type streamReader interface {
 	Close() error
 }
 
-// StreamRecovery replays retained provider deltas into the complete-event store.
+// StreamRecovery replays retained stream messages into reconstructed terminal events.
 // Its consumer group is separate from the live workflow consumer so recovery can
 // start at the beginning of the configured Kafka retention window.
 type StreamRecovery struct {

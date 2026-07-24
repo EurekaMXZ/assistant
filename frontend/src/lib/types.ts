@@ -445,7 +445,6 @@ export interface Turn {
   status: TurnStatus;
   request_blob_key?: string;
   response_blob_key?: string;
-  stream_blob_key?: string;
   openai_response_id?: string;
   error_code?: string;
   error_message?: string;

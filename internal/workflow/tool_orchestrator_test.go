@@ -101,23 +101,15 @@ func (s *stubToolArtifactStore) GetBytes(_ context.Context, key string) ([]byte,
 }
 
 func (s *stubToolArtifactStore) TurnRunRequestKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-request:%s:%s:%d", conversationID, turnID, stepIndex)
+	return fmt.Sprintf("run-request:%s:%s:%d.json.zst", conversationID, turnID, stepIndex)
 }
 
 func (s *stubToolArtifactStore) TurnRunStateKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-state:%s:%s:%d", conversationID, turnID, stepIndex)
+	return fmt.Sprintf("run-state:%s:%s:%d.json.zst", conversationID, turnID, stepIndex)
 }
 
 func (s *stubToolArtifactStore) TurnRunResultKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-result:%s:%s:%d", conversationID, turnID, stepIndex)
-}
-
-func (s *stubToolArtifactStore) TurnRunResponseKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-response:%s:%s:%d", conversationID, turnID, stepIndex)
-}
-
-func (s *stubToolArtifactStore) TurnRunOutputItemsKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-output-items:%s:%s:%d", conversationID, turnID, stepIndex)
+	return fmt.Sprintf("run-result:%s:%s:%d.json.zst", conversationID, turnID, stepIndex)
 }
 
 func (s *stubToolArtifactStore) ToolCallArgumentsKey(conversationID, turnID, callID string) string {

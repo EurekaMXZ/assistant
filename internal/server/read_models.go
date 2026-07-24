@@ -13,7 +13,6 @@ type TurnExecutionTrace struct {
 	Status           string             `json:"status"`
 	RequestBlobKey   string             `json:"request_blob_key,omitempty"`
 	ResponseBlobKey  string             `json:"response_blob_key,omitempty"`
-	StreamBlobKey    string             `json:"stream_blob_key,omitempty"`
 	OpenAIResponseID string             `json:"openai_response_id,omitempty"`
 	ErrorCode        string             `json:"error_code,omitempty"`
 	ErrorMessage     string             `json:"error_message,omitempty"`
@@ -22,7 +21,6 @@ type TurnExecutionTrace struct {
 	FailedAt         *time.Time         `json:"failed_at,omitempty"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
-	StreamEvents     []StreamEventTrace `json:"stream_events,omitempty"`
 	Runs             []TurnRunTrace     `json:"runs"`
 }
 
@@ -35,7 +33,6 @@ type TurnRunTrace struct {
 	Status                   string          `json:"status"`
 	RequestBlobKey           string          `json:"request_blob_key"`
 	ResponseBlobKey          string          `json:"response_blob_key,omitempty"`
-	OutputItemsBlobKey       string          `json:"output_items_blob_key,omitempty"`
 	ResponseID               string          `json:"response_id,omitempty"`
 	InputTokens              int             `json:"input_tokens,omitempty"`
 	CacheReadInputTokens     int             `json:"cache_read_input_tokens,omitempty"`
@@ -72,19 +69,6 @@ type ToolCallTrace struct {
 	FailedAt     *time.Time `json:"failed_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
-}
-
-type StreamEventTrace struct {
-	Type           string          `json:"type"`
-	ConversationID string          `json:"conversation_id,omitempty"`
-	TurnID         string          `json:"turn_id,omitempty"`
-	ResponseID     string          `json:"response_id,omitempty"`
-	ToolName       string          `json:"tool_name,omitempty"`
-	Delta          string          `json:"delta,omitempty"`
-	Text           string          `json:"text,omitempty"`
-	Error          string          `json:"error,omitempty"`
-	PayloadJSON    json.RawMessage `json:"payload_json,omitempty"`
-	PayloadText    string          `json:"payload_text,omitempty"`
 }
 
 type TurnTimeline struct {

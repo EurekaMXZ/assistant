@@ -61,30 +61,56 @@ func (a *CompleteEventAccumulator) Apply(event stream.Event) ([]domain.Conversat
 		if event.Type == domain.ConversationEventRunCancelled {
 			terminalType, status = domain.ConversationEventRunCancelled, "cancelled"
 		}
-		result = append(result, directSemanticEvent(event, terminalType, status))
+		result = append(result, terminalRunEvent(event, terminalType, status))
 		return result, nil
 	case stream.EventResponseCompleted:
 		result := a.flushRun(event, false)
-		result = append(result, directSemanticEvent(event, domain.ConversationEventRunCompleted, "completed"))
+		result = append(result, terminalRunEvent(event, domain.ConversationEventRunCompleted, "completed"))
 		return result, nil
 	case stream.EventResponseStarted, stream.EventResponseCreated:
-		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventRunStarted, "started")}, nil
+		return nil, nil
 	case stream.EventReasoningSummary:
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventReasoningSummaryDone, "completed")}, nil
 	case stream.EventToolStarted:
-		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventToolCallStarted, "started")}, nil
+		return nil, nil
 	case stream.EventToolCompleted:
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventToolCallCompleted, "completed")}, nil
 	case stream.EventToolFailed:
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventToolCallFailed, "failed")}, nil
 	case stream.EventInteractionAwaiting:
-		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventInteractionAwaiting, domain.TurnStatusAwaitingInput)}, nil
+		return nil, nil
 	case stream.EventInteractionDone:
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventInteractionCompleted, "completed")}, nil
 	case stream.EventInteractionCancelled:
 		return []domain.ConversationEventInput{directSemanticEvent(event, domain.ConversationEventInteractionCancelled, "cancelled")}, nil
 	default:
 		return nil, nil
+	}
+}
+
+func terminalRunEvent(event stream.Event, eventType string, status string) domain.ConversationEventInput {
+	payload, _ := json.Marshal(map[string]string{
+		"response_id": strings.TrimSpace(event.ResponseID),
+		"status":      status,
+		"error_code":  strings.TrimSpace(event.ErrorCode),
+		"error":       strings.TrimSpace(event.Error),
+	})
+	identity := strings.TrimSpace(event.ResponseID)
+	if identity == "" {
+		identity = status
+	}
+	keyPrefix := "run:" + event.RunID
+	if event.RunID == "" {
+		keyPrefix = "turn:" + event.TurnID
+	}
+	return domain.ConversationEventInput{
+		ConversationID: event.ConversationID,
+		TurnID:         event.TurnID,
+		TurnRunID:      event.RunID,
+		EventKey:       fmt.Sprintf("%s:%s:%s", keyPrefix, eventType, identity),
+		SchemaVersion:  1,
+		EventType:      eventType,
+		Payload:        payload,
 	}
 }
 

@@ -28,7 +28,6 @@ func lockTurnInStatuses(ctx context.Context, tx pgx.Tx, turnID string, statuses 
 			status,
 			COALESCE(request_blob_key, ''),
 			COALESCE(response_blob_key, ''),
-			COALESCE(stream_blob_key, ''),
 			COALESCE(openai_response_id, ''),
 			COALESCE(error_code, ''),
 			COALESCE(error_message, ''),

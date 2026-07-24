@@ -417,7 +417,7 @@ func (r *timelineReducer) reduceTool(event stream.Event, createdAt time.Time) ([
 	if err != nil {
 		return nil, err
 	}
-	incoming := newToolTimelineItem(domain.TurnStreamEvent{EventIndex: r.eventIndex, CreatedAt: createdAt}, event, payload)
+	incoming := newToolTimelineItem(createdAt, event, payload)
 	if existing, ok := r.item(incoming.ID); ok {
 		incoming = mergeToolTimelineItem(existing, payload)
 	}

@@ -270,7 +270,7 @@ func getConversationTx(ctx context.Context, tx pgx.Tx, conversationID string) (*
 func getEnqueuedTurnTx(ctx context.Context, tx pgx.Tx, conversationID string, turnID string) (*domain.EnqueuedTurn, error) {
 	turn, err := scanTurn(tx.QueryRow(ctx, `
 		SELECT id::text, conversation_id::text, seq, COALESCE(retry_of_turn_id::text, ''), variant_index, status, COALESCE(request_blob_key, ''),
-		       COALESCE(response_blob_key, ''), COALESCE(stream_blob_key, ''), COALESCE(openai_response_id, ''),
+		       COALESCE(response_blob_key, ''), COALESCE(openai_response_id, ''),
 		       COALESCE(error_code, ''), COALESCE(error_message, ''), metadata, started_at, completed_at, failed_at,
 		       created_at, updated_at
 		FROM turns WHERE id = $1::uuid AND conversation_id = $2::uuid

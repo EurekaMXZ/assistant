@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -54,21 +53,9 @@ func TestTimelineReducerDurableAndLiveContract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stored := make([]domain.TurnStreamEvent, 0, len(tt.events))
-			for index, event := range tt.events {
-				raw, err := json.Marshal(event)
-				if err != nil {
-					t.Fatalf("marshal event %d: %v", index, err)
-				}
-				stored = append(stored, domain.TurnStreamEvent{
-					ID: fmt.Sprintf("contract-event-%d", index+1), EventIndex: int64(index + 1),
-					EventType: event.Type, Payload: raw, CreatedAt: now.Add(time.Duration(index) * time.Millisecond),
-				})
-			}
-
-			durable, _, err := buildTimelineFromEvents(stored, nil)
+			durable, err := buildTimelineFromLiveEvents(tt.events, now)
 			if err != nil {
-				t.Fatalf("durable replay: %v", err)
+				t.Fatalf("live reduction: %v", err)
 			}
 			items := newPresentationItemRegistry()
 			want := items.FilterAll(durable)
@@ -93,6 +80,16 @@ func TestTimelineReducerDurableAndLiveContract(t *testing.T) {
 			}
 		})
 	}
+}
+
+func buildTimelineFromLiveEvents(events []stream.Event, createdAt time.Time) ([]TurnTimelineItem, error) {
+	reducer := newTimelineReducer(nil, nil, nil)
+	for index, event := range events {
+		if _, err := reducer.Apply(normalizedTimelineEvent{Event: event, CreatedAt: createdAt.Add(time.Duration(index) * time.Millisecond)}); err != nil {
+			return nil, err
+		}
+	}
+	return reducer.FinalItems(), nil
 }
 
 type contractLiveTimeline struct {

@@ -44,7 +44,7 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	openaiClient.SetCredentialResolver(credential.NewResolver(workflows.ProviderCredentials, workflows.CredentialCipher))
 	kafkaStreamPublisher := assistantkafka.NewStreamPublisher(settings.Kafka, publisher)
 	streamRecovery := assistantkafka.NewStreamRecovery(settings.Kafka, settings.KafkaReader.ConsumerGroup, workflows.CompleteEvents)
-	streamPublisher := workflow.NewArchivingStreamPublisher(kafkaStreamPublisher, artifactStore, workflows.StreamEvents, workflows.CompleteEvents)
+	streamPublisher := workflow.NewArchivingStreamPublisher(kafkaStreamPublisher, workflows.CompleteEvents)
 	sandboxRuntime, err := buildSandboxRuntime(settings.Sandbox)
 	if err != nil {
 		return nil, err

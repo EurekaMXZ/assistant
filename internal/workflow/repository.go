@@ -24,7 +24,7 @@ type TurnWorkflowRepository interface {
 	GetUserMessageByTurn(ctx context.Context, turnID string) (*domain.Message, error)
 	MarkTurnContextReady(ctx context.Context, turnID string) (*domain.Turn, error)
 	FinalizeTurnSuccess(ctx context.Context, turnID string, assistantMessages []domain.AssistantMessageDraft, summary domain.TurnRunSummary, compactTriggerTokens int) (*domain.Turn, []domain.Message, *domain.ContextHead, bool, error)
-	FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, streamKey string, code string, message string, compactTriggerTokens int) error
+	FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, code string, message string, compactTriggerTokens int) error
 }
 
 type WorkflowContextRepository interface {
@@ -50,6 +50,7 @@ type AttachmentStore interface {
 
 type GeneratedAttachmentStore interface {
 	UpsertAttachment(ctx context.Context, params assistantattachment.CreateAttachmentParams) (*domain.Attachment, error)
+	DeleteGeneratedImageAttachments(ctx context.Context, objectKeyPrefix string) ([]string, error)
 }
 
 type GeneratedImageAssetStore interface {
@@ -114,7 +115,7 @@ type TurnRunWorkflowStore interface {
 	CheckpointScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string) error
 	AwaitScheduledTurnRunInput(ctx context.Context, input AwaitScheduledTurnRunInput) (*domain.TurnRun, error)
 	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error)
-	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
+	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
 }
 
 type TurnRunArtifactIndexer interface {
@@ -136,8 +137,4 @@ type ToolCallStore interface {
 	GetToolCallForAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string) (*domain.ToolCallRecord, error)
 	ClaimAwaitingInputAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string) (*AskUserAnswerClaim, error)
 	FinalizeAwaitingInputAnswer(ctx context.Context, ownerUserID string, turnID string, toolCallID string, answerKey string, answerFingerprint string, answerOptionID string, outputBlobKey string, interaction json.RawMessage) (*domain.ToolCallRecord, bool, error)
-}
-
-type TurnStreamEventStore interface {
-	AppendTurnStreamEvent(ctx context.Context, conversationID string, turnID string, eventType string, payload json.RawMessage) (*domain.TurnStreamEvent, error)
 }

@@ -67,3 +67,15 @@ func TestGeneratedImageDraftsForTurnPreserveImageDimensions(t *testing.T) {
 		t.Fatalf("unexpected draft dimensions: %#v", metadata.Attachments)
 	}
 }
+
+func TestGeneratedImageObjectKeysUseConversationPrefix(t *testing.T) {
+	if got := generatedImageObjectKey("conv-1", "turn-1", "run-1", "image-1", "png"); got != "conversations/conv-1/turns/turn-1/generated-images/run-1/image-1.png" {
+		t.Fatalf("final image key = %q", got)
+	}
+	if first, second := generatedImageObjectKey("conv-1", "turn-1", "run-1", "image-1", "png"), generatedImageObjectKey("conv-1", "turn-1", "run-2", "image-1", "png"); first == second {
+		t.Fatalf("final image keys must be isolated by run: %q", first)
+	}
+	if got := generatedImagePreviewObjectKey("conv-1", "turn-1", "run-1", "image-1", 2, "png"); got != "conversations/conv-1/turns/turn-1/generated-image-previews/run-1/image-1/partial-2.png" {
+		t.Fatalf("partial image key = %q", got)
+	}
+}

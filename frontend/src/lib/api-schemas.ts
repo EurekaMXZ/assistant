@@ -313,7 +313,6 @@ export const turnSchema = z.object({
   status: turnStatusSchema,
   request_blob_key: z.string().optional(),
   response_blob_key: z.string().optional(),
-  stream_blob_key: z.string().optional(),
   openai_response_id: z.string().optional(),
   error_code: z.string().optional(),
   error_message: z.string().optional(),

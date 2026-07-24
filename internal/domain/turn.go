@@ -25,7 +25,6 @@ type Turn struct {
 	Status            string          `json:"status"`
 	RequestBlobKey    string          `json:"request_blob_key,omitempty"`
 	ResponseBlobKey   string          `json:"response_blob_key,omitempty"`
-	StreamBlobKey     string          `json:"stream_blob_key,omitempty"`
 	OpenAIResponseID  string          `json:"openai_response_id,omitempty"`
 	ErrorCode         string          `json:"error_code,omitempty"`
 	ErrorMessage      string          `json:"error_message,omitempty"`
@@ -57,7 +56,6 @@ type TurnRunSummary struct {
 	CheckpointChecksum  string
 	RequestBlobKey      string
 	ResponseBlobKey     string
-	StreamBlobKey       string
 	ResponseID          string
 	InputTokens         int
 	OutputTokens        int

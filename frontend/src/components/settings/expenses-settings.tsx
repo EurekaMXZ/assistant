@@ -48,7 +48,7 @@ import type {
 import { toast } from "sonner";
 
 type ExpenseView = "transactions" | "usage";
-const redemptionCodePattern = /^(?:[0-9a-f]{48}|ASST-[A-Za-z0-9_-]{32})$/;
+const redemptionCodePattern = /^[0-9a-f]{48}$/;
 
 function transactionLabel(kind: BillingTransaction["kind"]) {
   const labels: Record<BillingTransaction["kind"], string> = {

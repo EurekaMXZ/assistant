@@ -139,10 +139,6 @@ func TestBuildPublicToolPresentationExposesSandboxCommandResult(t *testing.T) {
 		t.Fatalf("ExitCode = %#v", presentation.ExitCode)
 	}
 
-	legacy := BuildPublicToolPresentation("", "", SandboxExec, "completed", nil, []byte(`{"result":{"stdout":"hello\n","stderr":"warning\n"}}`), "")
-	if legacy.CommandOutput != "hello\nwarning\n" {
-		t.Fatalf("legacy command output = %q", legacy.CommandOutput)
-	}
 }
 
 func TestBuildPublicToolPresentationExposesImportedAttachmentPath(t *testing.T) {

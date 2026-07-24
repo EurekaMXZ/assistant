@@ -477,7 +477,7 @@ func (l *ContextLoader) loadTurnModelContextItems(ctx context.Context, conversat
 	}
 
 	key := l.modelContexts.TurnModelContextKey(conversationID, turnID)
-	data, err := l.modelContexts.GetBytes(ctx, key)
+	data, err := getCompressedArtifact(ctx, l.modelContexts, key)
 	switch {
 	case err == nil:
 		data = bytes.TrimSpace(data)

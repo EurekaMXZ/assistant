@@ -1,7 +1,6 @@
 package billing
 
 import (
-	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -25,12 +24,5 @@ func TestHashRedemptionCodeRejectsMalformedValues(t *testing.T) {
 		if _, err := HashRedemptionCode(value); err == nil {
 			t.Fatalf("HashRedemptionCode(%q) succeeded", value)
 		}
-	}
-}
-
-func TestHashRedemptionCodeAcceptsLegacyIssuedCode(t *testing.T) {
-	legacy := "ASST-" + base64.RawURLEncoding.EncodeToString(make([]byte, redemptionCodeBytes))
-	if _, err := HashRedemptionCode(legacy); err != nil {
-		t.Fatalf("hash legacy redemption code: %v", err)
 	}
 }

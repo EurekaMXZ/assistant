@@ -85,26 +85,11 @@ func TestNormalizeEndpointAcceptsS3ProviderURLs(t *testing.T) {
 func TestStoreKeyBuildersUseStableLayout(t *testing.T) {
 	store := &Store{}
 
-	if got := store.TurnRequestKey("conv-1", "turn-1"); got != "requests/conv-1/turn-1.json" {
-		t.Fatalf("request key = %q, want %q", got, "requests/conv-1/turn-1.json")
+	if got := store.TurnModelContextKey("conv-1", "turn-1"); got != "conversations/conv-1/turns/turn-1/model-context.json.zst" {
+		t.Fatalf("turn model context key = %q", got)
 	}
-	if got := store.TurnResponseKey("conv-1", "turn-1"); got != "responses/conv-1/turn-1.json" {
-		t.Fatalf("response key = %q, want %q", got, "responses/conv-1/turn-1.json")
-	}
-	if got := store.TurnStreamKey("conv-1", "turn-1"); got != "stream-events/conv-1/turn-1.jsonl" {
-		t.Fatalf("stream key = %q, want %q", got, "stream-events/conv-1/turn-1.jsonl")
-	}
-	if got := store.TurnModelContextKey("conv-1", "turn-1"); got != "turn-model-context/conv-1/turn-1.json" {
-		t.Fatalf("turn model context key = %q, want %q", got, "turn-model-context/conv-1/turn-1.json")
-	}
-	if got := store.TurnRunRequestKey("conv-1", "turn-1", 2); got != "run-requests/conv-1/turn-1/step-002.json" {
-		t.Fatalf("run request key = %q, want %q", got, "run-requests/conv-1/turn-1/step-002.json")
-	}
-	if got := store.TurnRunResponseKey("conv-1", "turn-1", 2); got != "run-responses/conv-1/turn-1/step-002.json" {
-		t.Fatalf("run response key = %q, want %q", got, "run-responses/conv-1/turn-1/step-002.json")
-	}
-	if got := store.TurnRunOutputItemsKey("conv-1", "turn-1", 2); got != "run-output-items/conv-1/turn-1/step-002.json" {
-		t.Fatalf("run output items key = %q, want %q", got, "run-output-items/conv-1/turn-1/step-002.json")
+	if got := store.TurnRunRequestKey("conv-1", "turn-1", 2); got != "conversations/conv-1/turns/turn-1/staging/step-002/request.json.zst" {
+		t.Fatalf("run request key = %q", got)
 	}
 	if got := store.ImmutableRunArtifactKey("conv-1", "turn-1", 2, "run-1", "request.json.zst"); got != "conversations/conv-1/turns/turn-1/runs/000002-run-1/request.json.zst" {
 		t.Fatalf("immutable run key = %q", got)
@@ -112,14 +97,14 @@ func TestStoreKeyBuildersUseStableLayout(t *testing.T) {
 	if got := store.ContextCheckpointKey("conv-1", 7); got != "conversations/conv-1/context-checkpoints/000007.json.zst" {
 		t.Fatalf("context checkpoint key = %q", got)
 	}
-	if got := store.ToolCallArgumentsKey("conv-1", "turn-1", "call-1"); got != "tool-calls/conv-1/turn-1/call-1-arguments.json" {
-		t.Fatalf("tool arguments key = %q, want %q", got, "tool-calls/conv-1/turn-1/call-1-arguments.json")
+	if got := store.ToolCallArgumentsKey("conv-1", "turn-1", "call-1"); got != "conversations/conv-1/turns/turn-1/tool-calls/call-1/arguments.json" {
+		t.Fatalf("tool arguments key = %q", got)
 	}
-	if got := store.ToolCallOutputKey("conv-1", "turn-1", "call-1"); got != "tool-calls/conv-1/turn-1/call-1-output.json" {
-		t.Fatalf("tool output key = %q, want %q", got, "tool-calls/conv-1/turn-1/call-1-output.json")
+	if got := store.ToolCallOutputKey("conv-1", "turn-1", "call-1"); got != "conversations/conv-1/turns/turn-1/tool-calls/call-1/output.json" {
+		t.Fatalf("tool output key = %q", got)
 	}
-	if got := store.ContextAnchorKey("conv-1", 7); got != "context-items/conv-1/gen-000007.json" {
-		t.Fatalf("anchor key = %q, want %q", got, "context-items/conv-1/gen-000007.json")
+	if got := store.ContextAnchorKey("conv-1", 7); got != "conversations/conv-1/context-anchors/gen-000007.json" {
+		t.Fatalf("anchor key = %q", got)
 	}
 }
 

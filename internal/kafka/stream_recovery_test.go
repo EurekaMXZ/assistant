@@ -117,10 +117,10 @@ func TestStreamRecoveryPersistsBeforeCommit(t *testing.T) {
 	}
 
 	inputs := store.snapshot()
-	if len(inputs) != 3 {
-		t.Fatalf("persisted inputs = %d, want 3", len(inputs))
+	if len(inputs) != 2 {
+		t.Fatalf("persisted inputs = %d, want 2", len(inputs))
 	}
-	if inputs[0].EventType != domain.ConversationEventRunStarted || inputs[1].EventType != domain.ConversationEventOutputTextCompleted || inputs[2].EventType != domain.ConversationEventRunCompleted {
+	if inputs[0].EventType != domain.ConversationEventOutputTextCompleted || inputs[1].EventType != domain.ConversationEventRunCompleted {
 		t.Fatalf("unexpected recovered event types: %#v", inputs)
 	}
 	reader.mu.Lock()

@@ -337,7 +337,7 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 		t.Fatalf("stale completion error = %v, want conflict", err)
 	}
 	failed, err := runs.FailScheduledTurnRun(t.Context(), replacementLease, "", "", "", "upstream failed",
-		"request-2", "stream-2", domain.TurnErrorUpstreamRequestFailed, domain.TurnPublicErrorUpstreamRequestFailed, 100_000)
+		"request-2", domain.TurnErrorUpstreamRequestFailed, domain.TurnPublicErrorUpstreamRequestFailed, 100_000)
 	if err != nil || failed.Status != domain.TurnRunStatusFailed {
 		t.Fatalf("fail replacement run = %#v, err=%v", failed, err)
 	}

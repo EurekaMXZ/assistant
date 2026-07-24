@@ -50,20 +50,8 @@ func (s *stubContextLoaderArtifactStore) GetBytes(_ context.Context, key string)
 	return append([]byte(nil), data...), nil
 }
 
-func (s *stubContextLoaderArtifactStore) TurnRequestKey(conversationID, turnID string) string {
-	return fmt.Sprintf("request:%s:%s", conversationID, turnID)
-}
-
-func (s *stubContextLoaderArtifactStore) TurnResponseKey(conversationID, turnID string) string {
-	return fmt.Sprintf("response:%s:%s", conversationID, turnID)
-}
-
-func (s *stubContextLoaderArtifactStore) TurnStreamKey(conversationID, turnID string) string {
-	return fmt.Sprintf("stream:%s:%s", conversationID, turnID)
-}
-
 func (s *stubContextLoaderArtifactStore) TurnModelContextKey(conversationID, turnID string) string {
-	return fmt.Sprintf("model-context:%s:%s", conversationID, turnID)
+	return fmt.Sprintf("conversations/%s/turns/%s/model-context.json.zst", conversationID, turnID)
 }
 
 func TestBuildTurnModelInputUsesConversationHistory(t *testing.T) {
@@ -92,13 +80,18 @@ func TestBuildTurnModelInputUsesConversationHistory(t *testing.T) {
 }
 
 func TestContextLoaderUsesTurnModelContextForAssistantHistory(t *testing.T) {
+	payload := []byte(`[
+		{"type":"reasoning","raw":{"type":"reasoning","encrypted_content":"ciphertext"}},
+		{"type":"message","role":"assistant","content":"done"}
+	]`)
+	compressed, _, err := compressImmutableRunPayload(payload)
+	if err != nil {
+		t.Fatalf("compress model context: %v", err)
+	}
 	loader := &ContextLoader{
 		modelContexts: &stubContextLoaderArtifactStore{
 			data: map[string][]byte{
-				"model-context:conv-1:turn-1": []byte(`[
-					{"type":"reasoning","raw":{"type":"reasoning","encrypted_content":"ciphertext"}},
-					{"type":"message","role":"assistant","content":"done"}
-				]`),
+				"conversations/conv-1/turns/turn-1/model-context.json.zst": compressed,
 			},
 		},
 	}
@@ -269,15 +262,15 @@ func TestContextLoaderBuildsNoCheckpointSnapshotFromCompleteEvents(t *testing.T)
 	}
 }
 
-func TestContextLoaderKeepsLegacyAnchorFallbackWithoutCheckpoint(t *testing.T) {
+func TestContextLoaderSkipsEventSnapshotWhenAnchorExists(t *testing.T) {
 	loader := &ContextLoader{completeEvents: &stubCompleteEventStore{contextEvents: []domain.ConversationEvent{{
 		EventSeq: 1, EventType: "message.completed", ContextIncluded: true,
 	}}}}
 	_, found, err := loader.loadEventSnapshot(t.Context(), "conv-1", &domain.ContextHead{
-		AnchorKey: "legacy-anchor", LastContextEventSeq: 1,
+		AnchorKey: "anchor", LastContextEventSeq: 1,
 	})
 	if err != nil || found {
-		t.Fatalf("legacy anchor event fallback: found=%t err=%v", found, err)
+		t.Fatalf("anchor event snapshot: found=%t err=%v", found, err)
 	}
 }
 

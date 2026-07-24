@@ -33,7 +33,6 @@ type workflowAdapters struct {
 	GeneratedImageAssets workflow.GeneratedImageAssetStore
 	TurnRuns             workflow.TurnRunWorkflowStore
 	ToolCalls            workflow.ToolCallStore
-	StreamEvents         workflow.TurnStreamEventStore
 	StaleTurns           workflow.StaleTurnRepository
 	Locker               workflow.ConversationLocker
 	ConversationReader   workflow.ConversationReader
@@ -60,7 +59,6 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	workflowTurnRepository := postgres.NewWorkflowTurnRepository(pool)
 	turnRunRepository := postgres.NewTurnRunRepository(pool)
 	toolCallRepository := postgres.NewToolCallRepository(pool)
-	turnStreamEventRepository := postgres.NewTurnStreamEventRepository(pool)
 	conversationEventRepository := postgres.NewConversationEventRepository(pool)
 	userRepository := postgres.NewUserRepository(pool)
 	modelRepository := postgres.NewModelRepository(pool)
@@ -98,12 +96,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	}
 	getTurnTimeline := server.GetTurnTimeline{
 		Turns:           turnRepository,
-		Events:          turnStreamEventRepository,
 		CompleteEvents:  conversationEventRepository,
-		Runs:            turnRunRepository,
-		ToolCalls:       toolCallRepository,
-		Messages:        messageRepository,
-		Artifacts:       toolArtifacts,
 		GeneratedImages: generatedImageAssetRepository,
 	}
 	createSandbox := tool.CreateSandbox{
@@ -159,7 +152,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	initialTurnService := &InitialTurnService{Messages: messageService, Store: initialTurnRepository}
 	answerService := workflow.AskUserAnswerService{
 		Calls: toolCallRepository, Turns: workflowTurnRepository, Artifacts: toolArtifacts,
-		Publisher: workflow.NewArchivingStreamPublisher(publisher, nil, turnStreamEventRepository, conversationEventRepository),
+		Publisher: workflow.NewArchivingStreamPublisher(publisher, conversationEventRepository),
 	}
 
 	useCases := server.UseCases{
@@ -422,7 +415,6 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		GeneratedImageAssets: generatedImageAssetRepository,
 		TurnRuns:             turnRunRepository,
 		ToolCalls:            toolCallRepository,
-		StreamEvents:         turnStreamEventRepository,
 		StaleTurns:           postgres.NewStaleTurnRepository(pool),
 		Locker:               conversationLocker,
 		ConversationReader:   conversationRepository,

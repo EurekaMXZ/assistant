@@ -135,7 +135,7 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	if r.store != nil {
 		turn, err = r.store.GetTurn(ctx, event.TurnID)
 		if err != nil {
-			return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorContextLoadFailed, domain.TurnPublicErrorRequestProcessing, err)
+			return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorContextLoadFailed, domain.TurnPublicErrorRequestProcessing, err)
 		}
 	}
 	var modelInput []llm.ModelItem
@@ -150,29 +150,29 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 		}
 	}
 	if err != nil {
-		return r.failTurn(ctx, turn, "", "", domain.TurnErrorContextLoadFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, "", domain.TurnErrorContextLoadFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 
 	scope, err := r.toolScope(ctx, event.ConversationID, event.TurnID)
 	if err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	if r.models == nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, errors.New("model catalog is not configured"))
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, errors.New("model catalog is not configured"))
 	}
 	execution, err := r.models.GetTurnExecution(ctx, event.TurnID)
 	if err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	if execution == nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, errors.New("turn has no model execution snapshot"))
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, errors.New("turn has no model execution snapshot"))
 	}
 	if err := validateExecutionSnapshot(execution); err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	personalization, err := BuildAccountPersonalizationContext(ctx, scope.OwnerUserID, r.profiles)
 	if err != nil {
-		return r.failTurn(ctx, turn, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	modelInput = insertAccountPersonalizationContext(modelInput, personalization)
 	reasoningEffort, reasoningSummary, textVerbosity := modelRequestParameters(execution.DefaultParameters)
@@ -206,20 +206,16 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	}
 	state, rawRequest, err := r.tools.PrepareScheduledRun(ctx, input, 1, len(input.Input))
 	if err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	requestTokens := estimateModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
 	if requestTokens > modelRequestInputLimit(execution.ContextWindowTokens, 0) {
-		return r.failTurn(ctx, turn, "", "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing,
+		return r.failTurn(ctx, turn, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing,
 			fmt.Errorf("model request input estimate %d exceeds context limit", requestTokens))
 	}
 	stateKey, runRequestKey, err := r.tools.PersistScheduledRunState(ctx, scope, state, rawRequest)
 	if err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", "", domain.TurnErrorRequestBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
-	}
-	requestKey := r.blobs.TurnRequestKey(event.ConversationID, event.TurnID)
-	if err := r.blobs.PutBytes(ctx, requestKey, rawRequest, "application/json"); err != nil {
-		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, requestKey, "", domain.TurnErrorRequestBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	runID, err := r.runs.StartTurnRun(ctx, event.TurnID, toolRunProviderOpenAIResponses, execution.UpstreamModel, runRequestKey, stateKey)
 	if err != nil {
@@ -252,20 +248,20 @@ func variantSourceTurnID(turn *domain.Turn) string {
 }
 
 func (r *TurnRunner) retryModelInput(ctx context.Context, conversationID string, sourceTurnID string, variantTurnID string) ([]llm.ModelItem, error) {
-	if r == nil || r.blobs == nil {
+	if r == nil || r.blobs == nil || r.store == nil {
 		return nil, errors.New("turn artifacts are not configured")
 	}
-	raw, err := r.blobs.GetBytes(ctx, r.blobs.TurnRequestKey(conversationID, sourceTurnID))
+	source, sourceErr := r.store.GetTurn(ctx, sourceTurnID)
+	if sourceErr != nil {
+		return nil, sourceErr
+	}
+	raw, err := getCompressedArtifact(ctx, r.blobs, source.RequestBlobKey)
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) {
 			return nil, fmt.Errorf("get retry source request: %w", err)
 		}
-		if r.loader == nil || r.store == nil {
+		if r.loader == nil {
 			return nil, errors.New("retry context loader is not configured")
-		}
-		source, sourceErr := r.store.GetTurn(ctx, sourceTurnID)
-		if sourceErr != nil {
-			return nil, sourceErr
 		}
 		if source.Status != domain.TurnStatusFailed {
 			return nil, fmt.Errorf("get retry source request: %w", err)
@@ -542,6 +538,7 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			}
 			if settled != nil && settled.Status == domain.TurnRunStatusFailed {
 				_ = stopLease()
+				r.cleanupFailedGeneratedImages(ctx, event.ConversationID, event.TurnID)
 				return r.publishTurnFailure(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID},
 					domain.TurnErrorBillingSettlementFailed, domain.TurnPublicErrorBillingRequired, domain.ErrPaymentRequired)
 			}
@@ -585,6 +582,7 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	}
 	_ = stopLease()
 	if settled != nil && settled.Status == domain.TurnRunStatusFailed {
+		r.cleanupFailedGeneratedImages(ctx, event.ConversationID, event.TurnID)
 		return r.publishTurnFailure(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID},
 			domain.TurnErrorBillingSettlementFailed, domain.TurnPublicErrorBillingRequired, domain.ErrPaymentRequired)
 	}
@@ -641,11 +639,12 @@ func (r *TurnRunner) ensureImmutableRunRequest(ctx context.Context, conversation
 	if err != nil {
 		return fmt.Errorf("load run request artifact: %w", err)
 	}
-	if strings.HasSuffix(run.RequestBlobKey, ".zst") {
-		payload, err = decompressImmutableRunPayload(payload)
-		if err != nil {
-			return err
-		}
+	if !strings.HasSuffix(run.RequestBlobKey, ".zst") {
+		return fmt.Errorf("run request artifact key must end in .zst: %q", run.RequestBlobKey)
+	}
+	payload, err = decompressImmutableRunPayload(payload)
+	if err != nil {
+		return err
 	}
 	return r.persistImmutableRunRequest(ctx, conversationID, run.TurnID, run.StepIndex, run.ID, payload)
 }
@@ -682,38 +681,29 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 
 	turn := &domain.Turn{ID: run.TurnID, ConversationID: event.ConversationID}
 	if err := r.externalizeGeneratedImages(ctx, turn, run.ID, outcome); err != nil {
-		return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorGeneratedImageFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, run.RequestBlobKey, domain.TurnErrorGeneratedImageFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
-	responseKey := r.blobs.TurnResponseKey(turn.ConversationID, turn.ID)
-	if len(outcome.Model.RawResponse) > 0 {
-		if err := r.blobs.PutBytes(ctx, responseKey, outcome.Model.RawResponse, "application/json"); err != nil {
-			return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorResponseBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
-		}
-	}
-	if run.ResponseBlobKey != "" {
-		responseKey = run.ResponseBlobKey
-	}
+	responseKey := run.ResponseBlobKey
 	toolRun := &ToolRunResult{Model: outcome.Model, Tools: outcome.Tools, ContextItems: outcome.ContextItems}
 	if err := r.persistTurnModelContext(ctx, turn, toolRun); err != nil {
-		return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorModelContextBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, run.RequestBlobKey, domain.TurnErrorModelContextBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	summary := domain.TurnRunSummary{
 		RunID: run.ID, CheckpointBlobKey: run.CheckpointBlobKey,
 		CheckpointChecksum: immutableRunArtifactChecksum(run.ArtifactMetadata, immutableRunCheckpointArtifact),
-		RequestBlobKey:     r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), ResponseBlobKey: responseKey,
-		StreamBlobKey: r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), ResponseID: outcome.Model.ResponseID,
+		RequestBlobKey:     run.RequestBlobKey, ResponseBlobKey: responseKey, ResponseID: outcome.Model.ResponseID,
 		InputTokens: outcome.Model.Usage.InputTokens, OutputTokens: outcome.Model.Usage.OutputTokens,
 		TotalTokens: outcome.Model.Usage.TotalTokens, ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,
 	}
 	assistantDrafts := assistantMessageDraftsFromRun(toolRun, outcome.Model)
 	attachmentDrafts, err := assistantAttachmentDraftsFromItems(outcome.ContextItems, turn.ConversationID, turn.ID)
 	if err != nil {
-		return r.failTurn(ctx, turn, summary.RequestBlobKey, summary.StreamBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, summary.RequestBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	assistantDrafts = append(assistantDrafts, attachmentDrafts...)
 	generatedImageDrafts, err := r.generatedImageDraftsForTurn(ctx, turn)
 	if err != nil {
-		return r.failTurn(ctx, turn, summary.RequestBlobKey, summary.StreamBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, summary.RequestBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	if len(generatedImageDrafts) > 0 {
 		assistantDrafts = append(assistantDrafts, generatedImageDrafts...)
@@ -726,7 +716,7 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		if errors.Is(err, domain.ErrConflict) {
 			return nil
 		}
-		return r.failTurn(ctx, turn, summary.RequestBlobKey, summary.StreamBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+		return r.failTurn(ctx, turn, summary.RequestBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	if updatedHead != nil && (completedTurn == nil || completedTurn.RetryOfTurnID == "") {
 		for _, assistantMessage := range assistantMessages {
@@ -760,16 +750,16 @@ func (r *TurnRunner) failScheduledTurnRun(ctx context.Context, event WorkflowEve
 		}
 	}
 	code, publicMessage := classifyInitialToolRunFailure(cause, modelResult)
-	requestKey := r.blobs.TurnRequestKey(event.ConversationID, event.TurnID)
-	streamKey := r.blobs.TurnStreamKey(event.ConversationID, event.TurnID)
+	requestKey := run.RequestBlobKey
 	compactTriggerTokens := r.compactTriggerTokens(ctx, event.TurnID, contextWindowTokens)
 	if _, err := r.runs.FailScheduledTurnRun(ctx, lease, responseID, responseKey, resultKey,
-		publicToolRunError(cause), requestKey, streamKey, code, publicMessage, compactTriggerTokens); err != nil {
+		publicToolRunError(cause), requestKey, code, publicMessage, compactTriggerTokens); err != nil {
 		if errors.Is(err, domain.ErrConflict) {
 			return nil
 		}
 		return fmt.Errorf("fail scheduled turn run: %w", err)
 	}
+	r.cleanupFailedGeneratedImages(ctx, event.ConversationID, event.TurnID)
 	turn := &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}
 	return r.publishTurnFailure(ctx, turn, code, publicMessage, cause)
 }
@@ -788,7 +778,7 @@ func (r *TurnRunner) persistTurnModelContext(ctx context.Context, turn *domain.T
 	}
 
 	key := r.blobs.TurnModelContextKey(turn.ConversationID, turn.ID)
-	if err := r.blobs.PutBytes(ctx, key, payload, turnModelContextContentType); err != nil {
+	if err := putCompressedArtifact(ctx, r.blobs, key, payload); err != nil {
 		return fmt.Errorf("persist turn model context: %w", err)
 	}
 	return nil
@@ -825,17 +815,18 @@ func (r *TurnRunner) toolScope(ctx context.Context, conversationID string, turnI
 	return scope, nil
 }
 
-func (r *TurnRunner) failTurn(ctx context.Context, turn *domain.Turn, requestKey string, streamKey string, code string, publicMessage string, cause error) error {
+func (r *TurnRunner) failTurn(ctx context.Context, turn *domain.Turn, requestKey string, code string, publicMessage string, cause error) error {
 	if turn == nil {
 		return nil
 	}
 	compactTriggerTokens := r.compactTriggerTokens(ctx, turn.ID, 0)
-	if err := r.store.FinalizeTurnFailure(ctx, turn.ID, requestKey, streamKey, code, publicMessage, compactTriggerTokens); err != nil {
+	if err := r.store.FinalizeTurnFailure(ctx, turn.ID, requestKey, code, publicMessage, compactTriggerTokens); err != nil {
 		if r.logger != nil {
 			r.logger.Printf("mark turn %s failed: %v", turn.ID, err)
 		}
 		return err
 	}
+	r.cleanupFailedGeneratedImages(ctx, turn.ConversationID, turn.ID)
 	return r.publishTurnFailure(ctx, turn, code, publicMessage, cause)
 }
 

@@ -53,7 +53,6 @@ The following work is deferred:
 - Permanent storage of raw token or text delta events in PostgreSQL.
 - Provider-side file reuse or provider-managed conversation state.
 - Cross-provider translation of historical provider-specific request payloads.
-- Immediate deletion of legacy Turn-level objects before migration verification is complete.
 
 ## 4. Target architecture
 
@@ -188,7 +187,7 @@ After an output item completes, the complete DB event replaces the temporary liv
 
 ### 5.5 No frontend projection database
 
-No additional message, timeline, or presentation projection database is introduced in this phase. Existing entity tables may remain for workflow integrity and migration compatibility, but complete event rows are the frontend content source.
+No additional message, timeline, or presentation projection database is introduced in this phase. Existing entity tables remain only for workflow integrity; complete event rows are the frontend content source.
 
 This means event payload schemas must be versioned and stable enough for direct frontend consumption.
 
@@ -297,13 +296,9 @@ attempt
 status
 request_blob_key
 response_blob_key
-output_items_blob_key
-tool_results_blob_key
-presentation_events_blob_key
 checkpoint_blob_key
 provider_response_id
-request_checksum
-response_checksum
+artifact_metadata
 started_at
 completed_at
 failed_at
@@ -446,7 +441,7 @@ It does not scan all prior requests or reconstruct the entire conversation from 
 
 ### 11.3 No-checkpoint fallback
 
-New or legacy conversations may not have a checkpoint. The fallback is:
+New conversations may not have a checkpoint. The fallback is:
 
 ```text
 1. Query all context-included complete events for the conversation.
@@ -526,7 +521,7 @@ Missing or checksum-invalid image objects are hard context errors. The Worker mu
 
 Generated output images use two lifetimes:
 
-- `partial` assets are transient previews under `generated-image-previews/{conversation}/{turn}/{run}/{item}/`. They do not count against attachment quota, expire after `IMAGE_GENERATION_PREVIEW_TTL`, and are removed by a dedicated reaper.
+- `partial` assets are transient previews under `conversations/{conversation}/turns/{turn}/generated-image-previews/{run}/{item}/`. They do not count against attachment quota, expire after `IMAGE_GENERATION_PREVIEW_TTL`, and are removed by a dedicated reaper.
 - `final` assets point at the durable generated-image attachment. They follow attachment retention and remain available to model context through immutable S3 references.
 
 Historical `image_generation_call` items are sent back to Responses as `{type, id}`. Their S3 `result_ref` remains an internal recovery reference and is never hydrated back into a provider `result` field. When an image must be supplied as pixels rather than referenced by its provider item ID, the final attachment is injected as an ordinary `input_image` and follows the existing size and checksum validation path.
@@ -542,7 +537,7 @@ Historical `image_generation_call` items are sent back to Responses as `{type, i
 4. Apply compaction and token limits.
 5. Build the canonical request manifest with image references.
 6. Write request.json.zst to the deterministic run prefix.
-7. Persist request key, checksum, and run status in PostgreSQL.
+7. Persist the request object reference, manifest metadata, and run status in PostgreSQL.
 8. Hydrate image references into base64.
 9. Call the provider.
 ```
@@ -699,66 +694,21 @@ The following rules are mandatory:
 | Worker-local context | Process lifetime and local eviction |
 | S3 request/run artifacts | Long-term according to account retention and deletion policy |
 | S3 partial image previews | Short-lived; initially 24 hours |
-| Legacy Turn-level stream objects | Retain until migration verification completes |
 
-## 18. Migration plan
+## 18. Fresh-start baseline
 
-### Phase 1: Schema and formats
-
-- Add `conversation_events` and required indexes.
-- Add context-head version and latest-run/checkpoint fields.
-- Add missing run-level object keys and checksums to `turn_runs`.
-- Define versioned complete-event, request-manifest, checkpoint, and Redis snapshot schemas.
-
-### Phase 2: Request-level S3 dual write
-
-- Write new immutable run-prefix objects while preserving current objects.
-- Verify new objects against existing Turn results.
-- Stop adding new data to the whole-Turn stream archive only after parity checks pass.
-
-### Phase 3: Complete-event accumulation
-
-- Keep live deltas in Kafka and Redis/SSE.
-- Add Worker accumulators and complete-event writes.
-- Dual-read frontend data in verification tooling before changing production reads.
-
-### Phase 4: Redis shared context cache
-
-- Introduce a cache interface with local L1 and Redis L2 implementations.
-- Add immutable context version keys and checksums.
-- Preserve S3 + PostgreSQL reconstruction as the fallback.
-
-### Phase 5: Context loader switch
-
-- Read the context head first.
-- Prefer local cache, then Redis, then S3 checkpoint plus DB tail events.
-- Replace per-Turn S3 context scans with latest-checkpoint reconstruction.
-
-### Phase 6: Frontend event reads
-
-- Add cursor-based complete-event API endpoints.
-- Switch conversation rendering to complete events.
-- Keep legacy message APIs during migration and compare results.
-
-### Phase 7: Legacy backfill and cleanup
-
-- Convert legacy messages and timeline records into complete events where required.
-- Treat existing Turn request/response objects as the first run archive when possible.
-- Backfill context checkpoints lazily for old conversations.
-- Remove legacy read paths and Turn-level stream rewriting after measured parity.
+The schema and object layout are a clean baseline. Deployments use an empty PostgreSQL database and empty conversation-artifact storage, then apply migrations from the beginning. There is no schema backfill, dual write, legacy object discovery, or legacy read path.
 
 ## 19. Testing requirements
 
 The implementation must include:
 
 - Delta accumulator tests for ordering, duplication, item completion, failure, and cancellation.
-- Complete-event schema compatibility tests.
 - Frontend event pagination and active-stream merge tests.
 - Request-level S3 key and immutability tests.
 - Context snapshot serialization, checksum, and version tests.
 - Local hit, Redis hit, Redis miss, Redis outage, and corrupt-cache fallback tests.
 - Cold reconstruction tests using one checkpoint plus DB tail events.
-- No-checkpoint legacy fallback tests.
 - Multi-request Turn success and failed-latest-run recovery tests.
 - Cancellation/completion race tests.
 - S3-success/DB-failure orphan cleanup tests.

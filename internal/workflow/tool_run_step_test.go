@@ -158,34 +158,34 @@ func TestScheduledRunTruncatesModelVisibleToolOutputButPersistsFullArtifact(t *t
 	}
 }
 
-func TestLoadScheduledRunStateTruncatesLegacyToolOutput(t *testing.T) {
+func TestLoadScheduledRunStateTruncatesRawToolOutput(t *testing.T) {
 	artifacts := &stubToolArtifactStore{}
 	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, artifacts, nil)
 	orchestrator.modelToolOutputMaxTokens = 50
-	legacyRaw, err := json.Marshal(map[string]any{
+	rawOutput, err := json.Marshal(map[string]any{
 		"type": llm.ModelItemFunctionCallOutput, "call_id": "call-1", "output": strings.Repeat("x", 1_000),
 	})
 	if err != nil {
-		t.Fatalf("marshal legacy output: %v", err)
+		t.Fatalf("marshal raw output: %v", err)
 	}
 	state := &ScheduledRunState{
 		Version: scheduledRunStateVersion, StepIndex: 2, InitialInputCount: 1,
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
 		Request: llm.ModelRequest{Input: []llm.ModelItem{
 			{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "request"},
-			{Type: llm.ModelItemFunctionCallOutput, Raw: legacyRaw},
+			{Type: llm.ModelItemFunctionCallOutput, Raw: rawOutput},
 		}},
 	}
 	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{}`))
 	if err != nil {
-		t.Fatalf("persist legacy state: %v", err)
+		t.Fatalf("persist state: %v", err)
 	}
 	loaded, err := orchestrator.LoadScheduledRunState(t.Context(), stateKey)
 	if err != nil {
-		t.Fatalf("load legacy state: %v", err)
+		t.Fatalf("load state: %v", err)
 	}
 	if !strings.Contains(loaded.Request.Input[1].Output, "Warning: truncated output") {
-		t.Fatalf("legacy output was not truncated: %#v", loaded.Request.Input[1])
+		t.Fatalf("raw output was not truncated: %#v", loaded.Request.Input[1])
 	}
 }
 

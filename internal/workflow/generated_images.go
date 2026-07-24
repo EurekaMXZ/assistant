@@ -34,44 +34,6 @@ type persistedGeneratedImage struct {
 	Height     int
 }
 
-func (r *TurnRunner) generatedImageDrafts(ctx context.Context, turn *domain.Turn, result *llm.ModelResult) ([]domain.AssistantMessageDraft, error) {
-	if turn == nil || result == nil || len(result.OutputItems) == 0 {
-		return nil, nil
-	}
-
-	var imageItems []llm.ModelItem
-	for _, item := range result.OutputItems {
-		if item.Type == llm.ModelItemImageGenerationCall && strings.TrimSpace(item.Result) != "" {
-			imageItems = append(imageItems, item)
-		}
-	}
-	if len(imageItems) == 0 {
-		return nil, nil
-	}
-	if r == nil || r.blobs == nil || r.generatedAttachments == nil || r.conversations == nil {
-		return nil, fmt.Errorf("generated image persistence is not configured")
-	}
-
-	conversation, err := r.conversations.GetConversation(ctx, turn.ConversationID)
-	if err != nil {
-		return nil, err
-	}
-	ownerUserID := strings.TrimSpace(conversation.OwnerUserID)
-	if ownerUserID == "" {
-		return nil, fmt.Errorf("conversation owner is required for generated image attachments")
-	}
-
-	drafts := make([]domain.AssistantMessageDraft, 0, len(imageItems))
-	for index, item := range imageItems {
-		persisted, err := r.persistGeneratedImage(ctx, turn, result.ResponseID, ownerUserID, item, index)
-		if err != nil {
-			return nil, err
-		}
-		drafts = append(drafts, persisted.Draft)
-	}
-	return drafts, nil
-}
-
 func (r *TurnRunner) generatedImageDraftsForTurn(ctx context.Context, turn *domain.Turn) ([]domain.AssistantMessageDraft, error) {
 	if r == nil || r.generatedImageAssets == nil || turn == nil {
 		return nil, nil
@@ -155,7 +117,7 @@ func (r *TurnRunner) externalizeGeneratedImages(ctx context.Context, turn *domai
 		if item.Type != llm.ModelItemImageGenerationCall || strings.TrimSpace(item.Result) == "" {
 			continue
 		}
-		persisted, err := r.persistGeneratedImage(ctx, turn, outcome.Model.ResponseID, ownerUserID, item, index)
+		persisted, err := r.persistGeneratedImage(ctx, turn, runID, outcome.Model.ResponseID, ownerUserID, item, index)
 		if err != nil {
 			return err
 		}
@@ -165,6 +127,7 @@ func (r *TurnRunner) externalizeGeneratedImages(ctx context.Context, turn *domai
 			return err
 		}
 		outcome.Model.OutputItems[index] = referenced
+		outcome.Model.RawResponse = replaceGeneratedImageResult(outcome.Model.RawResponse, item.ID, persisted.Reference)
 		replaceGeneratedImageItem(outcome.ContextItems, item.ID, referenced)
 		if outcome.NextState != nil {
 			replaceGeneratedImageItem(outcome.NextState.Request.Input, item.ID, referenced)
@@ -196,6 +159,50 @@ func (r *TurnRunner) externalizeGeneratedImages(ctx context.Context, turn *domai
 	return nil
 }
 
+func replaceGeneratedImageResult(raw json.RawMessage, itemID string, ref modelImageReference) json.RawMessage {
+	if len(raw) == 0 || strings.TrimSpace(itemID) == "" {
+		return raw
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return raw
+	}
+	var response map[string]json.RawMessage
+	if json.Unmarshal(envelope["response"], &response) != nil {
+		return raw
+	}
+	var output []json.RawMessage
+	if json.Unmarshal(response["output"], &output) != nil {
+		return raw
+	}
+	changed := false
+	for index, value := range output {
+		var outputItem map[string]json.RawMessage
+		if json.Unmarshal(value, &outputItem) != nil {
+			continue
+		}
+		var id, itemType string
+		if json.Unmarshal(outputItem["id"], &id) != nil || id != itemID ||
+			json.Unmarshal(outputItem["type"], &itemType) != nil || itemType != llm.ModelItemImageGenerationCall {
+			continue
+		}
+		delete(outputItem, "result")
+		outputItem["result_ref"], _ = json.Marshal(ref)
+		output[index], _ = json.Marshal(outputItem)
+		changed = true
+	}
+	if !changed {
+		return raw
+	}
+	response["output"], _ = json.Marshal(output)
+	envelope["response"], _ = json.Marshal(response)
+	updated, err := json.Marshal(envelope)
+	if err != nil {
+		return raw
+	}
+	return updated
+}
+
 func generatedImageReferenceItem(item llm.ModelItem, ref modelImageReference) (llm.ModelItem, error) {
 	raw, err := json.Marshal(map[string]any{
 		"id": item.ID, "type": item.Type, "status": item.Status,
@@ -217,7 +224,11 @@ func replaceGeneratedImageItem(items []llm.ModelItem, itemID string, replacement
 	}
 }
 
-func (r *TurnRunner) persistGeneratedImage(ctx context.Context, turn *domain.Turn, responseID string, ownerUserID string, item llm.ModelItem, outputIndex int) (*persistedGeneratedImage, error) {
+func (r *TurnRunner) persistGeneratedImage(ctx context.Context, turn *domain.Turn, runID string, responseID string, ownerUserID string, item llm.ModelItem, outputIndex int) (*persistedGeneratedImage, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, fmt.Errorf("generated image run id is required")
+	}
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(item.Result))
 	if err != nil {
 		return nil, fmt.Errorf("decode generated image %s: %w", generatedImageItemID(item, outputIndex), err)
@@ -231,7 +242,7 @@ func (r *TurnRunner) persistGeneratedImage(ctx context.Context, turn *domain.Tur
 	if err != nil {
 		return nil, fmt.Errorf("decode generated image dimensions %s: %w", generatedImageItemID(item, outputIndex), err)
 	}
-	objectKey := generatedImageObjectKey(turn.ConversationID, turn.ID, generatedImageItemID(item, outputIndex), format)
+	objectKey := generatedImageObjectKey(turn.ConversationID, turn.ID, runID, generatedImageItemID(item, outputIndex), format)
 	if err := r.blobs.PutBytes(ctx, objectKey, data, contentType); err != nil {
 		return nil, fmt.Errorf("store generated image %s: %w", generatedImageItemID(item, outputIndex), err)
 	}
@@ -418,12 +429,56 @@ func generatedImageSHA256(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func generatedImageObjectKey(conversationID string, turnID string, itemID string, format string) string {
-	return fmt.Sprintf("generated-images/%s/%s/%s.%s", strings.TrimSpace(conversationID), strings.TrimSpace(turnID), safeObjectKeyPart(itemID), format)
+func (r *TurnRunner) cleanupFailedGeneratedImages(ctx context.Context, conversationID string, turnID string) {
+	if r == nil || r.generatedAttachments == nil {
+		return
+	}
+
+	prefix := generatedImageObjectPrefix(conversationID, turnID)
+	objectKeys, err := r.generatedAttachments.DeleteGeneratedImageAttachments(ctx, prefix)
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Printf("delete generated image attachments for failed turn %s: %v", turnID, err)
+		}
+		return
+	}
+
+	deleter, ok := r.blobs.(generatedImageObjectDeleter)
+	if !ok {
+		return
+	}
+	keysToDelete := objectKeys
+	if lister, ok := r.blobs.(RunArtifactObjectStore); ok {
+		objects, err := lister.ListRunArtifactObjects(ctx, prefix)
+		if err != nil {
+			if r.logger != nil {
+				r.logger.Printf("list generated image objects for failed turn %s: %v", turnID, err)
+			}
+		} else {
+			keysToDelete = make([]string, 0, len(objects))
+			for _, object := range objects {
+				keysToDelete = append(keysToDelete, object.Key)
+			}
+		}
+	}
+	for _, objectKey := range keysToDelete {
+		if err := deleter.DeleteObject(ctx, objectKey); err != nil && r.logger != nil {
+			r.logger.Printf("delete generated image object %s for failed turn %s: %v", objectKey, turnID, err)
+		}
+	}
+}
+
+func generatedImageObjectPrefix(conversationID string, turnID string) string {
+	return fmt.Sprintf("conversations/%s/turns/%s/generated-images/", strings.TrimSpace(conversationID), strings.TrimSpace(turnID))
+}
+
+func generatedImageObjectKey(conversationID string, turnID string, runID string, itemID string, format string) string {
+	runID = safeObjectKeyPart(runID)
+	return fmt.Sprintf("%s%s/%s.%s", generatedImageObjectPrefix(conversationID, turnID), runID, safeObjectKeyPart(itemID), format)
 }
 
 func generatedImagePreviewObjectKey(conversationID string, turnID string, runID string, itemID string, revision int, format string) string {
-	return fmt.Sprintf("generated-image-previews/%s/%s/%s/%s/partial-%d.%s",
+	return fmt.Sprintf("conversations/%s/turns/%s/generated-image-previews/%s/%s/partial-%d.%s",
 		strings.TrimSpace(conversationID), strings.TrimSpace(turnID), strings.TrimSpace(runID), safeObjectKeyPart(itemID), revision, format)
 }
 

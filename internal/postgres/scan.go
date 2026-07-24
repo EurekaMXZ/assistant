@@ -136,7 +136,6 @@ func scanTurn(row scanRow) (*domain.Turn, error) {
 		&turn.Status,
 		&turn.RequestBlobKey,
 		&turn.ResponseBlobKey,
-		&turn.StreamBlobKey,
 		&turn.OpenAIResponseID,
 		&turn.ErrorCode,
 		&turn.ErrorMessage,
@@ -236,8 +235,6 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		cancelledAt      sql.NullTime
 		billingSettledAt sql.NullTime
 		billingAmount    sql.NullInt64
-		requestSize      sql.NullInt64
-		responseSize     sql.NullInt64
 	)
 
 	if err := row.Scan(
@@ -249,18 +246,9 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 		&run.Status,
 		&run.RequestBlobKey,
 		&run.ResponseBlobKey,
-		&run.OutputItemsBlobKey,
-		&run.ToolResultsBlobKey,
-		&run.PresentationEventsBlobKey,
 		&run.CheckpointBlobKey,
 		&run.FailureBlobKey,
 		&run.ArtifactMetadata,
-		&run.RequestChecksum,
-		&run.ResponseChecksum,
-		&requestSize,
-		&responseSize,
-		&run.RequestSchemaVersion,
-		&run.ResponseSchemaVersion,
 		&run.ResponseID,
 		&run.InputTokens,
 		&run.CacheReadInputTokens,
@@ -297,12 +285,6 @@ func scanTurnRun(row scanRow) (*domain.TurnRun, error) {
 	}
 	if cancelledAt.Valid {
 		run.CancelledAt = &cancelledAt.Time
-	}
-	if requestSize.Valid {
-		run.RequestSizeBytes = requestSize.Int64
-	}
-	if responseSize.Valid {
-		run.ResponseSizeBytes = responseSize.Int64
 	}
 	if billingAmount.Valid {
 		value := billingAmount.Int64
@@ -365,28 +347,6 @@ func scanToolCall(row scanRow) (*domain.ToolCallRecord, error) {
 	}
 
 	return &record, nil
-}
-
-func scanTurnStreamEvent(row scanRow) (*domain.TurnStreamEvent, error) {
-	var (
-		event   domain.TurnStreamEvent
-		payload []byte
-	)
-
-	if err := row.Scan(
-		&event.ID,
-		&event.TurnID,
-		&event.ConversationID,
-		&event.EventIndex,
-		&event.EventType,
-		&payload,
-		&event.CreatedAt,
-	); err != nil {
-		return nil, err
-	}
-
-	event.Payload = cloneJSON(payload)
-	return &event, nil
 }
 
 func scanConversationSandbox(row scanRow) (*domain.ConversationSandbox, error) {

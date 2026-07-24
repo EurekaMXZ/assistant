@@ -252,32 +252,8 @@ func (s *Store) GetJSON(ctx context.Context, key string, target any) error {
 	return nil
 }
 
-func turnRequestKey(conversationID, turnID string) string {
-	return fmt.Sprintf("requests/%s/%s.json", conversationID, turnID)
-}
-
-func (s *Store) TurnRequestKey(conversationID, turnID string) string {
-	return turnRequestKey(conversationID, turnID)
-}
-
-func turnResponseKey(conversationID, turnID string) string {
-	return fmt.Sprintf("responses/%s/%s.json", conversationID, turnID)
-}
-
-func (s *Store) TurnResponseKey(conversationID, turnID string) string {
-	return turnResponseKey(conversationID, turnID)
-}
-
-func turnStreamKey(conversationID, turnID string) string {
-	return fmt.Sprintf("stream-events/%s/%s.jsonl", conversationID, turnID)
-}
-
-func (s *Store) TurnStreamKey(conversationID, turnID string) string {
-	return turnStreamKey(conversationID, turnID)
-}
-
 func turnModelContextKey(conversationID, turnID string) string {
-	return fmt.Sprintf("turn-model-context/%s/%s.json", conversationID, turnID)
+	return fmt.Sprintf("conversations/%s/turns/%s/model-context.json.zst", conversationID, turnID)
 }
 
 func (s *Store) TurnModelContextKey(conversationID, turnID string) string {
@@ -285,7 +261,7 @@ func (s *Store) TurnModelContextKey(conversationID, turnID string) string {
 }
 
 func turnRunRequestKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-requests/%s/%s/step-%03d.json", conversationID, turnID, stepIndex)
+	return fmt.Sprintf("conversations/%s/turns/%s/staging/step-%03d/request.json.zst", conversationID, turnID, stepIndex)
 }
 
 func (s *Store) TurnRunRequestKey(conversationID, turnID string, stepIndex int) string {
@@ -293,27 +269,11 @@ func (s *Store) TurnRunRequestKey(conversationID, turnID string, stepIndex int) 
 }
 
 func (s *Store) TurnRunStateKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-states/%s/%s/step-%03d.json", conversationID, turnID, stepIndex)
+	return fmt.Sprintf("conversations/%s/turns/%s/staging/step-%03d/state.json.zst", conversationID, turnID, stepIndex)
 }
 
 func (s *Store) TurnRunResultKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-results/%s/%s/step-%03d.json", conversationID, turnID, stepIndex)
-}
-
-func turnRunResponseKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-responses/%s/%s/step-%03d.json", conversationID, turnID, stepIndex)
-}
-
-func (s *Store) TurnRunResponseKey(conversationID, turnID string, stepIndex int) string {
-	return turnRunResponseKey(conversationID, turnID, stepIndex)
-}
-
-func turnRunOutputItemsKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-output-items/%s/%s/step-%03d.json", conversationID, turnID, stepIndex)
-}
-
-func (s *Store) TurnRunOutputItemsKey(conversationID, turnID string, stepIndex int) string {
-	return turnRunOutputItemsKey(conversationID, turnID, stepIndex)
+	return fmt.Sprintf("conversations/%s/turns/%s/staging/step-%03d/outcome.json.zst", conversationID, turnID, stepIndex)
 }
 
 func immutableRunArtifactKey(conversationID, turnID string, stepIndex int, runID string, artifact string) string {
@@ -325,7 +285,7 @@ func (s *Store) ImmutableRunArtifactKey(conversationID, turnID string, stepIndex
 }
 
 func toolCallArgumentsKey(conversationID, turnID, callID string) string {
-	return fmt.Sprintf("tool-calls/%s/%s/%s-arguments.json", conversationID, turnID, callID)
+	return fmt.Sprintf("conversations/%s/turns/%s/tool-calls/%s/arguments.json", conversationID, turnID, callID)
 }
 
 func (s *Store) ToolCallArgumentsKey(conversationID, turnID, callID string) string {
@@ -333,7 +293,7 @@ func (s *Store) ToolCallArgumentsKey(conversationID, turnID, callID string) stri
 }
 
 func toolCallOutputKey(conversationID, turnID, callID string) string {
-	return fmt.Sprintf("tool-calls/%s/%s/%s-output.json", conversationID, turnID, callID)
+	return fmt.Sprintf("conversations/%s/turns/%s/tool-calls/%s/output.json", conversationID, turnID, callID)
 }
 
 func (s *Store) ToolCallOutputKey(conversationID, turnID, callID string) string {
@@ -341,7 +301,7 @@ func (s *Store) ToolCallOutputKey(conversationID, turnID, callID string) string 
 }
 
 func contextAnchorKey(conversationID string, generation int64) string {
-	return fmt.Sprintf("context-items/%s/gen-%06d.json", conversationID, generation)
+	return fmt.Sprintf("conversations/%s/context-anchors/gen-%06d.json", conversationID, generation)
 }
 
 func (s *Store) ContextAnchorKey(conversationID string, generation int64) string {

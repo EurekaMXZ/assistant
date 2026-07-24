@@ -54,11 +54,8 @@ type SandboxCommandResult struct {
 	Args             []string `json:"args,omitempty"`
 	WorkingDirectory string   `json:"working_directory,omitempty"`
 	Output           string   `json:"output,omitempty"`
-	// Stdout and Stderr are retained for decoding results from older sandbox agents.
-	Stdout   string `json:"stdout,omitempty"`
-	Stderr   string `json:"stderr,omitempty"`
-	ExitCode int    `json:"exit_code"`
-	TimedOut bool   `json:"timed_out,omitempty"`
+	ExitCode         int      `json:"exit_code"`
+	TimedOut         bool     `json:"timed_out,omitempty"`
 }
 
 type SandboxShellCreateRequest struct {

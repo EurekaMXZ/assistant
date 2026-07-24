@@ -232,10 +232,10 @@ func (o *ToolOrchestrator) PersistScheduledRunState(ctx context.Context, scope t
 	}
 	stateKey := o.artifacts.TurnRunStateKey(scope.ConversationID, scope.TurnID, state.StepIndex)
 	requestKey := o.artifacts.TurnRunRequestKey(scope.ConversationID, scope.TurnID, state.StepIndex)
-	if err := o.artifacts.PutBytes(ctx, stateKey, statePayload, "application/json"); err != nil {
+	if err := putCompressedArtifact(ctx, o.artifacts, stateKey, statePayload); err != nil {
 		return "", "", fmt.Errorf("persist scheduled run state: %w", err)
 	}
-	if err := o.artifacts.PutBytes(ctx, requestKey, rawRequest, "application/json"); err != nil {
+	if err := putCompressedArtifact(ctx, o.artifacts, requestKey, rawRequest); err != nil {
 		return "", "", fmt.Errorf("persist scheduled run request: %w", err)
 	}
 	return stateKey, requestKey, nil
@@ -245,7 +245,7 @@ func (o *ToolOrchestrator) LoadScheduledRunState(ctx context.Context, key string
 	if o == nil || o.artifacts == nil {
 		return nil, fmt.Errorf("load scheduled run state requires artifact store")
 	}
-	payload, err := o.artifacts.GetBytes(ctx, key)
+	payload, err := getCompressedArtifact(ctx, o.artifacts, key)
 	if err != nil {
 		return nil, err
 	}
@@ -267,25 +267,19 @@ func (o *ToolOrchestrator) PersistScheduledRunOutcome(ctx context.Context, scope
 	if o == nil || o.artifacts == nil || run == nil || outcome == nil || outcome.Model == nil {
 		return "", "", fmt.Errorf("persist scheduled run outcome requires artifact store and model result")
 	}
-	if err := o.persistTurnRunOutputItems(ctx, scope, run.StepIndex, outcome.Model); err != nil {
-		return "", "", err
-	}
 	responseKey := ""
 	if len(outcome.Model.RawResponse) > 0 {
-		if writer, ok := o.artifacts.(ImmutableRunArtifactStore); ok {
-			responseKey = writer.ImmutableRunArtifactKey(scope.ConversationID, scope.TurnID, run.StepIndex, run.ID, immutableRunResponseArtifact)
-			compressed, _, err := compressImmutableRunPayload(outcome.Model.RawResponse)
-			if err != nil {
-				return "", "", fmt.Errorf("compress scheduled run response: %w", err)
-			}
-			if err := writer.PutImmutableBytes(ctx, responseKey, compressed, immutableRunArtifactContentType); err != nil {
-				return "", "", fmt.Errorf("persist scheduled run response: %w", err)
-			}
-		} else {
-			responseKey = o.artifacts.TurnRunResponseKey(scope.ConversationID, scope.TurnID, run.StepIndex)
-			if err := o.artifacts.PutBytes(ctx, responseKey, outcome.Model.RawResponse, "application/json"); err != nil {
-				return "", "", fmt.Errorf("persist scheduled run response: %w", err)
-			}
+		writer, ok := o.artifacts.(ImmutableRunArtifactStore)
+		if !ok || writer == nil {
+			return "", "", fmt.Errorf("persist scheduled run response requires immutable artifact storage")
+		}
+		responseKey = writer.ImmutableRunArtifactKey(scope.ConversationID, scope.TurnID, run.StepIndex, run.ID, immutableRunResponseArtifact)
+		compressed, _, err := compressImmutableRunPayload(outcome.Model.RawResponse)
+		if err != nil {
+			return "", "", fmt.Errorf("compress scheduled run response: %w", err)
+		}
+		if err := writer.PutImmutableBytes(ctx, responseKey, compressed, immutableRunArtifactContentType); err != nil {
+			return "", "", fmt.Errorf("persist scheduled run response: %w", err)
 		}
 	}
 	storedOutcome := *outcome
@@ -298,7 +292,7 @@ func (o *ToolOrchestrator) PersistScheduledRunOutcome(ctx context.Context, scope
 		return "", "", fmt.Errorf("marshal scheduled run outcome: %w", err)
 	}
 	resultKey := o.artifacts.TurnRunResultKey(scope.ConversationID, scope.TurnID, run.StepIndex)
-	if err := o.artifacts.PutBytes(ctx, resultKey, payload, "application/json"); err != nil {
+	if err := putCompressedArtifact(ctx, o.artifacts, resultKey, payload); err != nil {
 		return "", "", fmt.Errorf("persist scheduled run outcome: %w", err)
 	}
 	return responseKey, resultKey, nil
@@ -308,7 +302,7 @@ func (o *ToolOrchestrator) LoadScheduledRunOutcome(ctx context.Context, key stri
 	if o == nil || o.artifacts == nil {
 		return nil, fmt.Errorf("load scheduled run outcome requires artifact store")
 	}
-	payload, err := o.artifacts.GetBytes(ctx, key)
+	payload, err := getCompressedArtifact(ctx, o.artifacts, key)
 	if err != nil {
 		return nil, err
 	}
@@ -317,19 +311,39 @@ func (o *ToolOrchestrator) LoadScheduledRunOutcome(ctx context.Context, key stri
 		return nil, fmt.Errorf("decode scheduled run outcome: %w", err)
 	}
 	if outcome.Model != nil && len(outcome.Model.RawResponse) == 0 && strings.TrimSpace(outcome.ResponseBlobKey) != "" {
-		response, err := o.artifacts.GetBytes(ctx, outcome.ResponseBlobKey)
+		response, err := getCompressedArtifact(ctx, o.artifacts, outcome.ResponseBlobKey)
 		if err != nil {
 			return nil, fmt.Errorf("load scheduled run response: %w", err)
-		}
-		if strings.HasSuffix(outcome.ResponseBlobKey, ".zst") {
-			response, err = decompressImmutableRunPayload(response)
-			if err != nil {
-				return nil, fmt.Errorf("decompress scheduled run response: %w", err)
-			}
 		}
 		outcome.Model.RawResponse = response
 	}
 	return &outcome, nil
+}
+
+func putCompressedArtifact(ctx context.Context, artifacts interface {
+	PutBytes(context.Context, string, []byte, string) error
+}, key string, payload []byte) error {
+	if !strings.HasSuffix(key, ".zst") {
+		return fmt.Errorf("compressed artifact key must end in .zst: %q", key)
+	}
+	compressed, _, err := compressImmutableRunPayload(payload)
+	if err != nil {
+		return err
+	}
+	return artifacts.PutBytes(ctx, key, compressed, immutableRunArtifactContentType)
+}
+
+func getCompressedArtifact(ctx context.Context, artifacts interface {
+	GetBytes(context.Context, string) ([]byte, error)
+}, key string) ([]byte, error) {
+	payload, err := artifacts.GetBytes(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(key, ".zst") {
+		return nil, fmt.Errorf("compressed artifact key must end in .zst: %q", key)
+	}
+	return decompressImmutableRunPayload(payload)
 }
 
 func (o *ToolOrchestrator) RecoverScheduledRunOutcome(ctx context.Context, scope tool.ToolScope, stepIndex int) (*ScheduledRunOutcome, string, string, bool, error) {
@@ -345,9 +359,6 @@ func (o *ToolOrchestrator) RecoverScheduledRunOutcome(ctx context.Context, scope
 		return nil, "", "", false, err
 	}
 	responseKey := strings.TrimSpace(outcome.ResponseBlobKey)
-	if responseKey == "" && outcome.Model != nil && len(outcome.Model.RawResponse) > 0 {
-		responseKey = o.artifacts.TurnRunResponseKey(scope.ConversationID, scope.TurnID, stepIndex)
-	}
 	return outcome, responseKey, resultKey, true, nil
 }
 

@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +44,10 @@ func ownedConversationReader() *stubWorkflowConversationReader {
 }
 
 type stubGeneratedAttachmentStore struct {
-	params []assistantattachment.CreateAttachmentParams
+	params        []assistantattachment.CreateAttachmentParams
+	deletedPrefix string
+	deletedKeys   []string
+	deleteErr     error
 }
 
 type stubRunnerContextStore struct {
@@ -313,7 +315,7 @@ func (s *stubTurnWorkflowStore) FinalizeTurnSuccess(context.Context, string, []d
 	return nil, nil, nil, false, nil
 }
 
-func (s *stubTurnWorkflowStore) FinalizeTurnFailure(context.Context, string, string, string, string, string, int) error {
+func (s *stubTurnWorkflowStore) FinalizeTurnFailure(context.Context, string, string, string, string, int) error {
 	s.failures++
 	return nil
 }
@@ -375,7 +377,7 @@ func (s *stubScheduledRunStore) CompleteScheduledTurnRun(context.Context, TurnRu
 	return s.run, nil
 }
 
-func (s *stubScheduledRunStore) FailScheduledTurnRun(context.Context, TurnRunLease, string, string, string, string, string, string, string, string, int) (*domain.TurnRun, error) {
+func (s *stubScheduledRunStore) FailScheduledTurnRun(context.Context, TurnRunLease, string, string, string, string, string, string, string, int) (*domain.TurnRun, error) {
 	s.failed++
 	if s.failErr != nil {
 		return nil, s.failErr
@@ -411,6 +413,24 @@ func (s *stubGeneratedAttachmentStore) UpsertAttachment(_ context.Context, param
 		ObjectKey:        params.ObjectKey,
 		Metadata:         params.Metadata,
 	}, nil
+}
+
+func (s *stubGeneratedAttachmentStore) DeleteGeneratedImageAttachments(_ context.Context, objectKeyPrefix string) ([]string, error) {
+	s.deletedPrefix = objectKeyPrefix
+	if s.deleteErr != nil {
+		return nil, s.deleteErr
+	}
+	return append([]string(nil), s.deletedKeys...), nil
+}
+
+type generatedImageCleanupBlobStore struct {
+	stubTurnArtifactStore
+	deleted []string
+}
+
+func (s *generatedImageCleanupBlobStore) DeleteObject(_ context.Context, key string) error {
+	s.deleted = append(s.deleted, key)
+	return nil
 }
 
 func (s *stubConversationSandboxReader) GetActiveConversationSandbox(_ context.Context, conversationID string) (*domain.ConversationSandbox, error) {
@@ -516,14 +536,18 @@ func TestTurnRunnerContextReadySchedulesWithoutCallingModel(t *testing.T) {
 }
 
 func TestTurnRunnerRetryInputReplacesOriginalUserPrompt(t *testing.T) {
+	request, _, err := compressImmutableRunPayload([]byte(`{"input":[{"type":"message","role":"assistant","content":"context"},{"type":"message","role":"user","content":"original"}]}`))
+	if err != nil {
+		t.Fatalf("compress request: %v", err)
+	}
 	artifacts := &stubTurnArtifactStore{data: map[string][]byte{
-		"requests/conv-1/root-turn.json": []byte(`{"input":[{"type":"message","role":"assistant","content":"context"},{"type":"message","role":"user","content":"original"}]}`),
+		"conversations/conv-1/turns/root-turn/request.json.zst": request,
 	}}
 	runner := &TurnRunner{
 		blobs: artifacts,
 		store: &stubTurnWorkflowStore{userMessage: &domain.Message{
 			Role: domain.RoleUser, ContentText: "edited prompt", ContextExcluded: true,
-		}},
+		}, turn: &domain.Turn{RequestBlobKey: "conversations/conv-1/turns/root-turn/request.json.zst"}},
 		loader: &ContextLoader{},
 	}
 
@@ -549,14 +573,18 @@ func TestTurnRunnerRetryInputTruncatesRawToolOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
-	artifacts := &stubTurnArtifactStore{data: map[string][]byte{"requests/conv-1/root-turn.json": request}}
+	compressedRequest, _, err := compressImmutableRunPayload(request)
+	if err != nil {
+		t.Fatalf("compress request: %v", err)
+	}
+	artifacts := &stubTurnArtifactStore{data: map[string][]byte{"conversations/conv-1/turns/root-turn/request.json.zst": compressedRequest}}
 	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, nil, nil)
 	orchestrator.modelToolOutputMaxTokens = 50
 	runner := &TurnRunner{
 		blobs: artifacts,
 		store: &stubTurnWorkflowStore{userMessage: &domain.Message{
 			Role: domain.RoleUser, ContentText: "edited prompt", ContextExcluded: true,
-		}},
+		}, turn: &domain.Turn{RequestBlobKey: "conversations/conv-1/turns/root-turn/request.json.zst"}},
 		loader: &ContextLoader{},
 		tools:  orchestrator,
 	}
@@ -738,6 +766,28 @@ func TestScheduledRunFailureRetriesAtomicRunAndTurnFinalization(t *testing.T) {
 	}
 }
 
+func TestFailTurnCleansGeneratedImageAttachmentsAndObjects(t *testing.T) {
+	attachments := &stubGeneratedAttachmentStore{deletedKeys: []string{
+		"conversations/conv-1/turns/turn-1/generated-images/run-1/image-1.png",
+	}}
+	blobs := &generatedImageCleanupBlobStore{}
+	runner := &TurnRunner{
+		store:                &stubTurnWorkflowStore{},
+		generatedAttachments: attachments,
+		blobs:                blobs,
+	}
+
+	if err := runner.failTurn(t.Context(), &domain.Turn{ID: "turn-1", ConversationID: "conv-1"}, "", "test_failure", "request failed", errors.New("failure")); err != nil {
+		t.Fatalf("fail turn: %v", err)
+	}
+	if attachments.deletedPrefix != "conversations/conv-1/turns/turn-1/generated-images/" {
+		t.Fatalf("cleanup prefix = %q", attachments.deletedPrefix)
+	}
+	if len(blobs.deleted) != 1 || blobs.deleted[0] != attachments.deletedKeys[0] {
+		t.Fatalf("deleted objects = %#v", blobs.deleted)
+	}
+}
+
 func TestTurnRunnerRequestedEventExecutesOneRequestThenReschedules(t *testing.T) {
 	model := &stubModelClient{
 		rawRequests: []json.RawMessage{json.RawMessage(`{"step":2}`)},
@@ -804,7 +854,11 @@ func TestTurnRunnerResumesCheckpointWithoutCallingModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal checkpoint: %v", err)
 	}
-	if err := artifacts.PutBytes(t.Context(), resultKey, payload, "application/json"); err != nil {
+	compressed, _, err := compressImmutableRunPayload(payload)
+	if err != nil {
+		t.Fatalf("compress checkpoint: %v", err)
+	}
+	if err := artifacts.PutBytes(t.Context(), resultKey, compressed, immutableRunArtifactContentType); err != nil {
 		t.Fatalf("persist checkpoint: %v", err)
 	}
 	runs := &stubScheduledRunStore{run: &domain.TurnRun{
@@ -896,73 +950,13 @@ func TestTurnRunnerPersistsTurnModelContext(t *testing.T) {
 		t.Fatalf("persist model context: %v", err)
 	}
 
-	data := string(store.data["turn-model-context/conv-1/turn-1.json"])
+	payload, err := decompressImmutableRunPayload(store.data["conversations/conv-1/turns/turn-1/model-context.json.zst"])
+	if err != nil {
+		t.Fatalf("decode model context: %v", err)
+	}
+	data := string(payload)
 	if !strings.Contains(data, "encrypted_content") || !strings.Contains(data, "ciphertext") {
 		t.Fatalf("expected encrypted reasoning to be stored in model context artifact, got %q", data)
-	}
-}
-
-func TestTurnRunnerGeneratedImageDraftsPersistAttachments(t *testing.T) {
-	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4sUAAAAASUVORK5CYII=")
-	if err != nil {
-		t.Fatalf("decode image fixture: %v", err)
-	}
-	blobs := &stubTurnArtifactStore{}
-	attachments := &stubGeneratedAttachmentStore{}
-	runner := &TurnRunner{
-		blobs:                blobs,
-		generatedAttachments: attachments,
-		conversations: &stubWorkflowConversationReader{
-			conversation: &domain.Conversation{ID: "conv-1", OwnerUserID: "user-1"},
-		},
-	}
-
-	drafts, err := runner.generatedImageDrafts(context.Background(), &domain.Turn{ID: "turn-1", ConversationID: "conv-1"}, &llm.ModelResult{
-		ResponseID: "resp-1",
-		OutputItems: []llm.ModelItem{
-			{
-				ID:            "ig_1",
-				Type:          llm.ModelItemImageGenerationCall,
-				Status:        "generating",
-				RevisedPrompt: "A red circle.",
-				Result:        base64.StdEncoding.EncodeToString(imageData),
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("generated image drafts: %v", err)
-	}
-	if len(drafts) != 1 {
-		t.Fatalf("draft count = %d, want 1", len(drafts))
-	}
-	if len(attachments.params) != 1 {
-		t.Fatalf("attachment count = %d, want 1", len(attachments.params))
-	}
-	params := attachments.params[0]
-	if params.ConversationID != "conv-1" || params.UploadedByUserID != "user-1" || params.ContentType != "image/png" || params.Category != domain.AttachmentCategoryImage {
-		t.Fatalf("unexpected attachment params: %#v", params)
-	}
-	if !strings.Contains(params.ObjectKey, "generated-images/conv-1/turn-1/ig_1.png") {
-		t.Fatalf("unexpected object key: %q", params.ObjectKey)
-	}
-	if string(blobs.data[params.ObjectKey]) != string(imageData) {
-		t.Fatalf("stored image bytes mismatch")
-	}
-	var attachmentMetadata struct {
-		Width  int `json:"width"`
-		Height int `json:"height"`
-	}
-	if err := json.Unmarshal(params.Metadata, &attachmentMetadata); err != nil {
-		t.Fatalf("decode attachment metadata: %v", err)
-	}
-	if attachmentMetadata.Width != 1 || attachmentMetadata.Height != 1 {
-		t.Fatalf("attachment dimensions = %dx%d, want 1x1", attachmentMetadata.Width, attachmentMetadata.Height)
-	}
-	if !strings.Contains(string(drafts[0].Metadata), `"display_kind":"assistant_image"`) || !strings.Contains(string(drafts[0].Metadata), `"attachment_ids"`) {
-		t.Fatalf("unexpected draft metadata: %s", drafts[0].Metadata)
-	}
-	if !strings.Contains(string(drafts[0].Metadata), `"width":1`) || !strings.Contains(string(drafts[0].Metadata), `"height":1`) {
-		t.Fatalf("draft metadata is missing image dimensions: %s", drafts[0].Metadata)
 	}
 }
 

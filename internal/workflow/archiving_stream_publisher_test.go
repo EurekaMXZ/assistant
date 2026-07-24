@@ -43,20 +43,8 @@ func (s *stubTurnArtifactStore) GetBytes(_ context.Context, key string) ([]byte,
 	return append([]byte(nil), value...), nil
 }
 
-func (s *stubTurnArtifactStore) TurnRequestKey(conversationID, turnID string) string {
-	return "requests/" + conversationID + "/" + turnID + ".json"
-}
-
-func (s *stubTurnArtifactStore) TurnResponseKey(conversationID, turnID string) string {
-	return "responses/" + conversationID + "/" + turnID + ".json"
-}
-
-func (s *stubTurnArtifactStore) TurnStreamKey(conversationID, turnID string) string {
-	return "stream-events/" + conversationID + "/" + turnID + ".jsonl"
-}
-
 func (s *stubTurnArtifactStore) TurnModelContextKey(conversationID, turnID string) string {
-	return "turn-model-context/" + conversationID + "/" + turnID + ".json"
+	return "conversations/" + conversationID + "/turns/" + turnID + "/model-context.json.zst"
 }
 
 func (s *stubArchiveStreamPublisher) Publish(_ context.Context, event stream.Event) error {
@@ -89,7 +77,7 @@ func (s *stubCompleteEventStore) ListConversationEvents(context.Context, string,
 func TestArchivingStreamPublisherForwardsLiveDeltasAndPersistsOnlyCompletedItems(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
 	complete := &stubCompleteEventStore{}
-	publisher := NewArchivingStreamPublisher(next, nil, nil, complete)
+	publisher := NewArchivingStreamPublisher(next, complete)
 
 	for _, event := range []stream.Event{
 		{Type: "response.output_text.delta", ConversationID: "conv-1", TurnID: "turn-1", RunID: "run-1", ItemID: "item-1", TransportSeq: 1, Delta: "hel"},
@@ -116,7 +104,7 @@ func TestArchivingStreamPublisherForwardsLiveDeltasAndPersistsOnlyCompletedItems
 
 func TestArchivingStreamPublisherFlushesInterruptedTextOnFailure(t *testing.T) {
 	complete := &stubCompleteEventStore{}
-	publisher := NewArchivingStreamPublisher(nil, nil, nil, complete)
+	publisher := NewArchivingStreamPublisher(nil, complete)
 	if err := publisher.Publish(t.Context(), stream.Event{
 		Type: "response.output_text.delta", ConversationID: "conv-2", TurnID: "turn-2", RunID: "run-2", ItemID: "item-2", TransportSeq: 1, Delta: "partial",
 	}); err != nil {
@@ -135,7 +123,7 @@ func TestArchivingStreamPublisherFlushesInterruptedTextOnFailure(t *testing.T) {
 func TestArchivingStreamPublisherReturnsCompleteStoreErrorsWithoutSkippingLivePublish(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
 	complete := &stubCompleteEventStore{err: errors.New("postgres down")}
-	publisher := NewArchivingStreamPublisher(next, nil, nil, complete)
+	publisher := NewArchivingStreamPublisher(next, complete)
 
 	err := publisher.Publish(t.Context(), stream.Event{
 		Type: "response.output_text.done", ConversationID: "conv-3", TurnID: "turn-3", RunID: "run-3", ItemID: "item-3", Text: "done",
@@ -151,7 +139,7 @@ func TestArchivingStreamPublisherReturnsCompleteStoreErrorsWithoutSkippingLivePu
 func TestArchivingStreamPublisherSkipsAccumulatorWithoutTurnIdentity(t *testing.T) {
 	next := &stubArchiveStreamPublisher{}
 	complete := &stubCompleteEventStore{}
-	publisher := NewArchivingStreamPublisher(next, nil, nil, complete)
+	publisher := NewArchivingStreamPublisher(next, complete)
 	if err := publisher.Publish(t.Context(), stream.Event{Type: "response.output_text.done", Text: "done"}); err != nil {
 		t.Fatal(err)
 	}

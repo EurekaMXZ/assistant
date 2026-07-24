@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, streamKey string, code string, message string, compactTriggerTokens int) error {
+func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID string, requestKey string, code string, message string, compactTriggerTokens int) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -28,14 +28,13 @@ func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID
 		SET
 			status = $2,
 			request_blob_key = CASE WHEN $3 = '' THEN request_blob_key ELSE $3 END,
-			stream_blob_key = CASE WHEN $4 = '' THEN stream_blob_key ELSE $4 END,
-			error_code = $5,
-			error_message = $6,
-			metadata = $7::jsonb,
+			error_code = $4,
+			error_message = $5,
+			metadata = $6::jsonb,
 			failed_at = now(),
 			completed_at = NULL
 		WHERE id = $1::uuid
-	`, turnID, domain.TurnStatusFailed, requestKey, streamKey, code, message, metadata); err != nil {
+	`, turnID, domain.TurnStatusFailed, requestKey, code, message, metadata); err != nil {
 		return fmt.Errorf("update turn failure: %w", err)
 	}
 	head, err := queryContextHeadForUpdate(ctx, tx, turn.ConversationID)

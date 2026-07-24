@@ -24,18 +24,9 @@ const turnRunColumns = `
 	tr.status,
 	tr.request_blob_key,
 	COALESCE(tr.response_blob_key, ''),
-	COALESCE(tr.output_items_blob_key, ''),
-	COALESCE(tr.tool_results_blob_key, ''),
-	COALESCE(tr.presentation_events_blob_key, ''),
 	COALESCE(tr.checkpoint_blob_key, ''),
 	COALESCE(tr.failure_blob_key, ''),
 	tr.artifact_metadata,
-	COALESCE(tr.request_checksum, ''),
-	COALESCE(tr.response_checksum, ''),
-	COALESCE(tr.request_size_bytes, 0),
-	COALESCE(tr.response_size_bytes, 0),
-	tr.request_schema_version,
-	tr.response_schema_version,
 	COALESCE(tr.response_id, ''),
 	tr.input_tokens,
 	tr.cache_read_input_tokens,
@@ -122,7 +113,7 @@ func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runI
 	}
 
 	metadata := make(map[string]workflow.RunArtifactMetadata, len(artifacts))
-	var request, response, outputItems, toolResults, presentation, checkpoint, failure workflow.RunArtifactMetadata
+	var request, response, checkpoint, failure workflow.RunArtifactMetadata
 	for _, artifact := range artifacts {
 		if artifact.Name == "" || artifact.ObjectKey == "" {
 			continue
@@ -133,12 +124,6 @@ func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runI
 			request = artifact
 		case "response.json.zst":
 			response = artifact
-		case "output-items.json.zst":
-			outputItems = artifact
-		case "tool-results.json.zst":
-			toolResults = artifact
-		case "presentation-events.json.zst":
-			presentation = artifact
 		case "context-checkpoint.json.zst":
 			checkpoint = artifact
 		case "failure.json.zst":
@@ -163,22 +148,11 @@ func (r *TurnRunRepository) SetTurnRunArtifactMetadata(ctx context.Context, runI
 		SET
 			request_blob_key = COALESCE(NULLIF($2, ''), request_blob_key),
 			response_blob_key = COALESCE(NULLIF($3, ''), response_blob_key),
-			output_items_blob_key = COALESCE(NULLIF($4, ''), output_items_blob_key),
-			tool_results_blob_key = COALESCE(NULLIF($5, ''), tool_results_blob_key),
-			presentation_events_blob_key = COALESCE(NULLIF($6, ''), presentation_events_blob_key),
-			checkpoint_blob_key = COALESCE(NULLIF($7, ''), checkpoint_blob_key),
-			failure_blob_key = COALESCE(NULLIF($8, ''), failure_blob_key),
-			request_checksum = COALESCE(NULLIF($9, ''), request_checksum),
-			response_checksum = COALESCE(NULLIF($10, ''), response_checksum),
-			request_size_bytes = CASE WHEN $11 > 0 THEN $11 ELSE request_size_bytes END,
-			response_size_bytes = CASE WHEN $12 > 0 THEN $12 ELSE response_size_bytes END,
-			request_schema_version = CASE WHEN $13 > 0 THEN $13 ELSE request_schema_version END,
-			response_schema_version = CASE WHEN $14 > 0 THEN $14 ELSE response_schema_version END,
-			artifact_metadata = artifact_metadata || $15::jsonb
+			checkpoint_blob_key = COALESCE(NULLIF($4, ''), checkpoint_blob_key),
+			failure_blob_key = COALESCE(NULLIF($5, ''), failure_blob_key),
+			artifact_metadata = artifact_metadata || $6::jsonb
 		WHERE id = $1::uuid
-	`, runID, request.ObjectKey, response.ObjectKey, outputItems.ObjectKey, toolResults.ObjectKey, presentation.ObjectKey,
-		checkpoint.ObjectKey, failure.ObjectKey, request.SHA256, response.SHA256, request.UncompressedSize,
-		response.UncompressedSize, request.SchemaVersion, response.SchemaVersion, encodedMetadata); err != nil {
+	`, runID, request.ObjectKey, response.ObjectKey, checkpoint.ObjectKey, failure.ObjectKey, encodedMetadata); err != nil {
 		return fmt.Errorf("update turn run artifact metadata: %w", err)
 	}
 	if request.ObjectKey != "" {
@@ -204,20 +178,22 @@ func (r *TurnRunRepository) ListReferencedRunArtifactKeys(ctx context.Context) (
 		FROM (
 			SELECT request_blob_key AS object_key FROM turn_runs
 			UNION ALL SELECT response_blob_key FROM turn_runs
-			UNION ALL SELECT output_items_blob_key FROM turn_runs
-			UNION ALL SELECT tool_results_blob_key FROM turn_runs
-			UNION ALL SELECT presentation_events_blob_key FROM turn_runs
 			UNION ALL SELECT checkpoint_blob_key FROM turn_runs
 			UNION ALL SELECT failure_blob_key FROM turn_runs
 			UNION ALL SELECT state_blob_key FROM turn_runs
 			UNION ALL SELECT result_blob_key FROM turn_runs
+			UNION ALL
+			SELECT artifact.value->>'object_key'
+			FROM turn_runs tr
+			CROSS JOIN LATERAL jsonb_each(tr.artifact_metadata) AS artifact(name, value)
 			UNION ALL SELECT request_blob_key FROM turns
 			UNION ALL SELECT response_blob_key FROM turns
-			UNION ALL SELECT stream_blob_key FROM turns
 			UNION ALL SELECT anchor_key FROM context_heads
 			UNION ALL SELECT latest_checkpoint_key FROM context_heads
 			UNION ALL SELECT arguments_blob_key FROM tool_calls
 			UNION ALL SELECT output_blob_key FROM tool_calls
+			UNION ALL SELECT object_key FROM attachments
+			UNION ALL SELECT object_key FROM generated_image_assets
 		) artifact_refs
 		WHERE NULLIF(btrim(object_key), '') IS NOT NULL
 	`)
@@ -846,7 +822,7 @@ func (r *TurnRunRepository) insertBillingUsageEvent(
 	return nil
 }
 
-func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, streamBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error) {
+func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin turn run failure: %w", err)
@@ -882,10 +858,9 @@ func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease work
 		UPDATE turns
 		SET status = $2,
 			request_blob_key = CASE WHEN $3 = '' THEN request_blob_key ELSE $3 END,
-			stream_blob_key = CASE WHEN $4 = '' THEN stream_blob_key ELSE $4 END,
-			error_code = $5, error_message = $6, completed_at = NULL, failed_at = now()
+			error_code = $4, error_message = $5, completed_at = NULL, failed_at = now()
 		WHERE id = $1::uuid
-	`, run.TurnID, domain.TurnStatusFailed, requestBlobKey, streamBlobKey, turnCode, turnMessage); err != nil {
+	`, run.TurnID, domain.TurnStatusFailed, requestBlobKey, turnCode, turnMessage); err != nil {
 		return nil, fmt.Errorf("fail parent turn: %w", err)
 	}
 	var modelID, modelPriceID, ownerUserID, conversationID string

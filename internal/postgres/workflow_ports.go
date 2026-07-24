@@ -12,5 +12,5 @@ var (
 	_ workflow.TurnCancellationStore     = (*TurnRunRepository)(nil)
 	_ workflow.ToolCallStore             = (*ToolCallRepository)(nil)
 	_ workflow.StaleTurnRepository       = (*StaleTurnRepository)(nil)
-	_ workflow.TurnStreamEventStore      = (*TurnStreamEventRepository)(nil)
+	_ workflow.GeneratedAttachmentStore  = (*AttachmentRepository)(nil)
 )

@@ -261,6 +261,43 @@ func (r *AttachmentRepository) UpsertAttachment(ctx context.Context, params atta
 	return stored, nil
 }
 
+func (r *AttachmentRepository) DeleteGeneratedImageAttachments(ctx context.Context, objectKeyPrefix string) ([]string, error) {
+	objectKeyPrefix = strings.TrimSpace(objectKeyPrefix)
+	if objectKeyPrefix == "" {
+		return nil, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		DELETE FROM attachments AS a
+		WHERE starts_with(a.object_key, $1)
+		  AND a.category = 'image'
+		  AND a.metadata->>'source' = 'image_generation'
+		  AND NOT EXISTS (
+			SELECT 1 FROM messages m
+			WHERE m.conversation_id = a.conversation_id
+			  AND COALESCE(m.metadata->'attachment_ids', '[]'::jsonb) ? a.id::text
+		  )
+		RETURNING a.object_key
+	`, objectKeyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("delete generated image attachments: %w", err)
+	}
+	defer rows.Close()
+
+	objectKeys := make([]string, 0)
+	for rows.Next() {
+		var objectKey string
+		if err := rows.Scan(&objectKey); err != nil {
+			return nil, fmt.Errorf("scan deleted generated image attachment: %w", err)
+		}
+		objectKeys = append(objectKeys, objectKey)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deleted generated image attachments: %w", err)
+	}
+	return objectKeys, nil
+}
+
 func (r *AttachmentRepository) ListAttachmentsByIDs(ctx context.Context, conversationID string, ids []string) ([]domain.Attachment, error) {
 	if len(ids) == 0 {
 		return nil, nil

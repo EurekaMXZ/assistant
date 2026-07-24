@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +12,6 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/stream"
-	"github.com/EurekaMXZ/assistant/internal/tool"
-	"github.com/klauspost/compress/zstd"
 )
 
 const (
@@ -29,16 +25,8 @@ const (
 
 var reasoningTitleParagraphPattern = regexp.MustCompile(`^[ \t]*\*\*([^*\r\n]+)\*\*[ \t]*\r?$`)
 
-type turnTimelineEventLister interface {
-	ListTurnStreamEventsByTurn(ctx context.Context, turnID string) ([]domain.TurnStreamEvent, error)
-}
-
 type turnTimelineConversationEventLister interface {
 	ListConversationEventsByTurn(ctx context.Context, turnID string) ([]domain.ConversationEvent, error)
-}
-
-type turnTimelineMessageLister interface {
-	ListAssistantMessagesByTurn(ctx context.Context, turnID string) ([]domain.Message, error)
 }
 
 type turnTimelineGeneratedImageLister interface {
@@ -47,12 +35,7 @@ type turnTimelineGeneratedImageLister interface {
 
 type GetTurnTimeline struct {
 	Turns           executionTraceTurnGetter
-	Events          turnTimelineEventLister
 	CompleteEvents  turnTimelineConversationEventLister
-	Runs            turnRunLister
-	ToolCalls       toolCallLister
-	Messages        turnTimelineMessageLister
-	Artifacts       turnRunArtifactReader
 	GeneratedImages turnTimelineGeneratedImageLister
 }
 
@@ -121,16 +104,7 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 	if uc.Turns == nil {
 		return nil, errors.New("get turn timeline use case requires turn getter")
 	}
-	if uc.Runs == nil {
-		return nil, errors.New("get turn timeline use case requires turn run lister")
-	}
-
 	turn, err := uc.Turns.GetTurn(ctx, turnID)
-	if err != nil {
-		return nil, err
-	}
-
-	runs, err := uc.Runs.ListTurnRunsByTurn(ctx, turnID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,73 +115,21 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 		Status:         turn.Status,
 	}
 
-	assistantMessages, err := uc.loadAssistantMessages(ctx, turnID)
+	if uc.CompleteEvents == nil {
+		return nil, errors.New("get turn timeline use case requires complete event store")
+	}
+	completeEvents, err := uc.CompleteEvents.ListConversationEventsByTurn(ctx, turn.ID)
 	if err != nil {
 		return nil, err
 	}
-
-	if uc.CompleteEvents != nil {
-		completeEvents, err := uc.CompleteEvents.ListConversationEventsByTurn(ctx, turn.ID)
-		if err != nil {
-			return nil, err
-		}
-		if len(completeEvents) > 0 {
-			timeline.LastEventIndex = completeEvents[len(completeEvents)-1].EventSeq
-		}
-		items, err := buildTimelineFromConversationEvents(completeEvents, turn.ID)
-		if err != nil {
-			return nil, err
-		}
-		if len(items) > 0 {
-			items = appendMissingTerminalStatus(items, turn)
-			items, err = uc.reconcileDurableToolCalls(ctx, turn.ID, items)
-			if err != nil {
-				return nil, err
-			}
-			timeline.Items = appendMissingAssistantMessages(items, turn, assistantMessages)
-			return uc.appendGeneratedImageAssets(ctx, timeline)
-		}
+	if len(completeEvents) > 0 {
+		timeline.LastEventIndex = completeEvents[len(completeEvents)-1].EventSeq
 	}
-
-	var events []domain.TurnStreamEvent
-	if uc.Events != nil {
-		events, err = uc.Events.ListTurnStreamEventsByTurn(ctx, turnID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(events) > 0 {
-		timeline.LastEventIndex = events[len(events)-1].EventIndex
-		reasoningItems, err := uc.loadReasoningItems(ctx, turn, runs)
-		if err != nil {
-			return nil, err
-		}
-		if containsReasoningSummaryStreamEvents(events) {
-			reasoningItems = nil
-		}
-		items, _, err := buildTimelineFromEvents(events, reasoningItems)
-		if err != nil {
-			return nil, err
-		}
-		items = appendMissingTerminalStatus(items, turn)
-		items, err = uc.reconcileDurableToolCalls(ctx, turn.ID, items)
-		if err != nil {
-			return nil, err
-		}
-		timeline.Items = appendMissingAssistantMessages(items, turn, assistantMessages)
-		return uc.appendGeneratedImageAssets(ctx, timeline)
-	}
-
-	reasoningItems, err := uc.loadReasoningItems(ctx, turn, runs)
+	items, err := buildTimelineFromConversationEvents(completeEvents, turn.ID)
 	if err != nil {
 		return nil, err
 	}
-
-	items, err := uc.buildFallbackTimeline(ctx, turn, runs, reasoningItems, assistantMessages)
-	if err != nil {
-		return nil, err
-	}
-	timeline.Items = items
+	timeline.Items = appendMissingTerminalStatus(items, turn)
 	return uc.appendGeneratedImageAssets(ctx, timeline)
 }
 
@@ -269,272 +191,6 @@ func generatedImageTimelineImage(asset domain.GeneratedImageAsset) *TurnTimeline
 	}
 }
 
-func (uc GetTurnTimeline) loadReasoningItems(ctx context.Context, turn *domain.Turn, runs []domain.TurnRun) ([]reasoningTimelineItem, error) {
-	if uc.Artifacts == nil || turn == nil || len(runs) == 0 {
-		return nil, nil
-	}
-
-	items := make([]reasoningTimelineItem, 0, len(runs))
-	for _, run := range runs {
-		key := strings.TrimSpace(run.OutputItemsBlobKey)
-		immutable := key != ""
-		if key == "" {
-			key = uc.Artifacts.TurnRunOutputItemsKey(turn.ConversationID, turn.ID, run.StepIndex)
-		}
-		data, err := uc.Artifacts.GetBytes(ctx, key)
-		switch {
-		case err == nil:
-			if immutable {
-				data, err = decodeTimelineRunArtifact(data, run.ArtifactMetadata, "output-items.json.zst")
-				if err != nil {
-					return nil, fmt.Errorf("decode turn run output items %q: %w", key, err)
-				}
-			}
-			parts, rawErr := extractReasoningParts(data)
-			if rawErr != nil {
-				return nil, fmt.Errorf("extract reasoning items from %q: %w", key, rawErr)
-			}
-			if len(parts) == 0 {
-				continue
-			}
-			for _, part := range parts {
-				responseID := strings.TrimSpace(run.ResponseID)
-				items = append(items, reasoningTimelineItem{
-					ID: stableTimelineReasoningPartID(
-						responseID,
-						part.ItemID,
-						part.OutputIndex,
-						part.SummaryIndex,
-						run.ID,
-						run.StepIndex,
-					),
-					RunID:        run.ID,
-					ResponseID:   responseID,
-					ItemID:       part.ItemID,
-					StepIndex:    run.StepIndex,
-					OutputIndex:  part.OutputIndex,
-					SummaryIndex: part.SummaryIndex,
-					ContentText:  part.Text,
-					Raw:          part.Raw,
-					CreatedAt:    reasoningTimelineTimestamp(run),
-				})
-			}
-		case errors.Is(err, domain.ErrNotFound):
-			continue
-		default:
-			return nil, fmt.Errorf("get turn run output items %q: %w", key, err)
-		}
-	}
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].StepIndex != items[j].StepIndex {
-			return items[i].StepIndex < items[j].StepIndex
-		}
-		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
-			return items[i].CreatedAt.Before(items[j].CreatedAt)
-		}
-		return items[i].ID < items[j].ID
-	})
-
-	return items, nil
-}
-
-func decodeTimelineRunArtifact(compressed []byte, rawMetadata json.RawMessage, artifactName string) ([]byte, error) {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, err
-	}
-	payload, err := decoder.DecodeAll(compressed, nil)
-	decoder.Close()
-	if err != nil {
-		return nil, err
-	}
-	var metadata map[string]struct {
-		SHA256 string `json:"sha256"`
-	}
-	if len(rawMetadata) > 0 && json.Unmarshal(rawMetadata, &metadata) == nil {
-		if expected := strings.TrimSpace(metadata[artifactName].SHA256); expected != "" {
-			digest := sha256.Sum256(payload)
-			if !strings.EqualFold(expected, hex.EncodeToString(digest[:])) {
-				return nil, fmt.Errorf("checksum mismatch")
-			}
-		}
-	}
-	return payload, nil
-}
-
-func (uc GetTurnTimeline) loadAssistantMessages(ctx context.Context, turnID string) ([]domain.Message, error) {
-	if uc.Messages == nil {
-		return nil, nil
-	}
-
-	messages, err := uc.Messages.ListAssistantMessagesByTurn(ctx, turnID)
-	switch {
-	case err == nil:
-		return messages, nil
-	case errors.Is(err, domain.ErrNotFound):
-		return nil, nil
-	default:
-		return nil, err
-	}
-}
-
-func (uc GetTurnTimeline) buildFallbackTimeline(ctx context.Context, turn *domain.Turn, runs []domain.TurnRun, reasoningItems []reasoningTimelineItem, assistantMessages []domain.Message) ([]TurnTimelineItem, error) {
-	items := make([]TurnTimelineItem, 0, 1+len(reasoningItems))
-	if item := fallbackStatusItem(turn); item != nil {
-		items = append(items, *item)
-	}
-
-	for _, reasoning := range reasoningItems {
-		items = append(items, turnTimelineReasoningItem(reasoning))
-	}
-
-	if uc.ToolCalls != nil {
-		calls, err := uc.ToolCalls.ListToolCallsByTurn(ctx, turn.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, call := range calls {
-			item, itemErr := uc.buildFallbackToolCallItem(ctx, call)
-			if itemErr != nil {
-				return nil, itemErr
-			}
-			items = append(items, item)
-		}
-	}
-
-	for index := range assistantMessages {
-		if item := fallbackAssistantMessageItem(turn, &assistantMessages[index], index); item != nil {
-			items = append(items, *item)
-		}
-	}
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
-			return items[i].CreatedAt.Before(items[j].CreatedAt)
-		}
-		return items[i].ID < items[j].ID
-	})
-
-	return splitReasoningTimelineItems(items), nil
-}
-
-func (uc GetTurnTimeline) buildFallbackToolCallItem(ctx context.Context, call domain.ToolCallRecord) (TurnTimelineItem, error) {
-	var (
-		arguments json.RawMessage
-		output    []byte
-		err       error
-	)
-
-	if uc.Artifacts != nil {
-		arguments, err = loadTraceJSONArtifact(ctx, uc.Artifacts, call.ArgumentsBlobKey, "tool call arguments")
-		if err != nil {
-			return TurnTimelineItem{}, err
-		}
-
-		output, err = loadTraceArtifactBytes(ctx, uc.Artifacts, call.OutputBlobKey, "tool call output")
-		if err != nil {
-			return TurnTimelineItem{}, err
-		}
-	}
-
-	normalizedOutput, err := normalizeTimelineOutput(output)
-	if err != nil {
-		return TurnTimelineItem{}, err
-	}
-	if call.ToolName == tool.AskUser && call.Namespace == "" {
-		prompt, promptErr := tool.DecodeAskUserPrompt(arguments)
-		if promptErr != nil {
-			return TurnTimelineItem{}, promptErr
-		}
-		var answer *tool.AskUserAnswer
-		if len(output) > 0 {
-			var decoded tool.AskUserAnswer
-			if answerErr := json.Unmarshal(output, &decoded); answerErr != nil {
-				return TurnTimelineItem{}, fmt.Errorf("decode ask_user answer: %w", answerErr)
-			}
-			answer = &decoded
-		}
-		if call.Status == domain.ToolCallStatusCancelled && answer == nil {
-			answer = &tool.AskUserAnswer{Status: "cancelled", OptionID: "cancelled", Label: "已取消", UserReported: false}
-		}
-		return TurnTimelineItem{
-			ID: "ask-user:" + call.ID, Type: turnTimelineItemInteraction, Status: call.Status,
-			ToolCallID: call.ID, Prompt: prompt.Prompt, Kind: prompt.Kind,
-			Options: append([]tool.AskUserOption(nil), prompt.Options...), Action: prompt.Action, Answer: answer,
-			Metadata: fallbackToolCallMetadata(call), CreatedAt: call.StartedAt,
-		}, nil
-	}
-	return TurnTimelineItem{
-		ID:        stableTimelineToolID(call.ID, call.CallID, call.ToolName),
-		Type:      turnTimelineItemToolCall,
-		Title:     stableTimelineToolTitle(call.Namespace, call.ToolName),
-		Status:    call.Status,
-		Arguments: cloneRawJSON(arguments),
-		Output:    normalizedOutput,
-		Metadata:  fallbackToolCallMetadata(call),
-		CreatedAt: call.StartedAt,
-	}, nil
-}
-
-func (uc GetTurnTimeline) reconcileDurableToolCalls(ctx context.Context, turnID string, items []TurnTimelineItem) ([]TurnTimelineItem, error) {
-	if uc.ToolCalls == nil {
-		return items, nil
-	}
-	calls, err := uc.ToolCalls.ListToolCallsByTurn(ctx, turnID)
-	if err != nil {
-		return nil, err
-	}
-	for _, call := range calls {
-		durable, err := uc.buildFallbackToolCallItem(ctx, call)
-		if err != nil {
-			return nil, err
-		}
-		if index := durableToolCallIndex(items, call); index != -1 {
-			items[index] = reconcileDurableToolCallItem(items[index], durable)
-			continue
-		}
-		items = insertTimelineItemByCreatedAt(items, durable)
-	}
-	return items, nil
-}
-
-func durableToolCallIndex(items []TurnTimelineItem, call domain.ToolCallRecord) int {
-	id := stableTimelineToolID(call.ID, call.CallID, call.ToolName)
-	for index, item := range items {
-		if item.Type != turnTimelineItemToolCall && item.Type != turnTimelineItemInteraction {
-			continue
-		}
-		if item.ID == id || metadataString(item.Metadata, "tool_call_record_id") == call.ID {
-			return index
-		}
-		if call.CallID != "" && metadataString(item.Metadata, "call_id") == call.CallID {
-			return index
-		}
-	}
-	return -1
-}
-
-func reconcileDurableToolCallItem(existing TurnTimelineItem, durable TurnTimelineItem) TurnTimelineItem {
-	if len(durable.Arguments) == 0 {
-		durable.Arguments = existing.Arguments
-	}
-	if len(durable.Output) == 0 {
-		durable.Output = existing.Output
-	}
-	if durable.Summary == "" {
-		durable.Summary = existing.Summary
-	}
-	if len(durable.Details) == 0 {
-		durable.Details = existing.Details
-	}
-	if !existing.CreatedAt.IsZero() {
-		durable.CreatedAt = existing.CreatedAt
-	}
-	durable.Metadata = mergeTimelineMetadata(existing.Metadata, durable.Metadata)
-	return durable
-}
-
 func insertTimelineItemByCreatedAt(items []TurnTimelineItem, item TurnTimelineItem) []TurnTimelineItem {
 	insertAt := len(items)
 	if !item.CreatedAt.IsZero() {
@@ -562,20 +218,6 @@ func appendMissingTerminalStatus(items []TurnTimelineItem, turn *domain.Turn) []
 		}
 	}
 	return insertTimelineItemByCreatedAt(items, *item)
-}
-
-func buildTimelineFromEvents(events []domain.TurnStreamEvent, reasoningItems []reasoningTimelineItem) ([]TurnTimelineItem, bool, error) {
-	reducer := newTimelineReducer(nil, nil, reasoningItems)
-	for _, stored := range events {
-		event, err := decodeStoredStreamEvent(stored)
-		if err != nil {
-			return nil, false, err
-		}
-		if _, err := reducer.Apply(normalizedTimelineEvent{Event: event, CreatedAt: stored.CreatedAt}); err != nil {
-			return nil, false, fmt.Errorf("reduce stored stream event %q: %w", stored.ID, err)
-		}
-	}
-	return reducer.FinalItems(), reducer.HasAssistantText(), nil
 }
 
 func buildTimelineFromConversationEvents(events []domain.ConversationEvent, turnID string) ([]TurnTimelineItem, error) {
@@ -739,15 +381,6 @@ func reasoningTitleParagraphStarts(text string) []int {
 	return starts
 }
 
-func decodeStoredStreamEvent(stored domain.TurnStreamEvent) (stream.Event, error) {
-	var event stream.Event
-	if err := json.Unmarshal(stored.Payload, &event); err != nil {
-		return stream.Event{}, fmt.Errorf("decode stored stream event: %w", err)
-	}
-	event.EventIndex = stored.EventIndex
-	return event, nil
-}
-
 func decodeResponseStreamPayload(event stream.Event) (responseStreamPayload, bool) {
 	var payload responseStreamPayload
 	raw := strings.TrimSpace(event.Payload)
@@ -865,7 +498,7 @@ func reasoningSummaryResponseID(event stream.Event) string {
 	return strings.TrimSpace(event.ResponseID)
 }
 
-func newToolTimelineItem(stored domain.TurnStreamEvent, event stream.Event, payload stream.ToolStreamPayload) TurnTimelineItem {
+func newToolTimelineItem(createdAt time.Time, event stream.Event, payload stream.ToolStreamPayload) TurnTimelineItem {
 	title := strings.TrimSpace(payload.ToolName)
 	if title == "" {
 		title = strings.TrimSpace(event.ToolName)
@@ -885,7 +518,7 @@ func newToolTimelineItem(stored domain.TurnStreamEvent, event stream.Event, payl
 		Summary:   strings.TrimSpace(payload.Summary),
 		Details:   append([]string(nil), payload.Details...),
 		Metadata:  toolTimelineMetadata(payload),
-		CreatedAt: stored.CreatedAt,
+		CreatedAt: createdAt,
 	}
 }
 
@@ -917,15 +550,6 @@ func toolTimelineMetadata(payload stream.ToolStreamPayload) map[string]any {
 		"error":               strings.TrimSpace(payload.Error),
 	}
 	return compactMetadata(metadata)
-}
-
-func fallbackToolCallMetadata(call domain.ToolCallRecord) map[string]any {
-	return compactMetadata(map[string]any{
-		"tool_call_record_id": call.ID,
-		"call_id":             call.CallID,
-		"tool_name":           stableTimelineToolTitle(call.Namespace, call.ToolName),
-		"error":               strings.TrimSpace(call.ErrorMessage),
-	})
 }
 
 func turnTimelineReasoningItem(reasoning reasoningTimelineItem) TurnTimelineItem {
@@ -973,73 +597,6 @@ func fallbackStatusItem(turn *domain.Turn) *TurnTimelineItem {
 	return nil
 }
 
-func fallbackAssistantMessageItem(turn *domain.Turn, message *domain.Message, index int) *TurnTimelineItem {
-	if message == nil || strings.TrimSpace(message.ContentText) == "" {
-		return nil
-	}
-
-	createdAt := message.CreatedAt
-	if createdAt.IsZero() && turn != nil {
-		createdAt = turn.UpdatedAt
-	}
-
-	return &TurnTimelineItem{
-		ID:          "assistant:" + firstMessageFallbackID(message, index),
-		Type:        turnTimelineItemOutputText,
-		Title:       "Assistant",
-		Status:      "completed",
-		ContentText: message.ContentText,
-		Metadata: compactMetadata(map[string]any{
-			"response_id": turnResponseID(turn),
-			"message_id":  message.ID,
-		}),
-		CreatedAt: createdAt,
-	}
-}
-
-func firstMessageFallbackID(message *domain.Message, index int) string {
-	if message != nil && strings.TrimSpace(message.ID) != "" {
-		return strings.TrimSpace(message.ID)
-	}
-	return fmt.Sprintf("assistant-message-%d", index)
-}
-
-func appendMissingAssistantMessages(items []TurnTimelineItem, turn *domain.Turn, messages []domain.Message) []TurnTimelineItem {
-	seenContent := make(map[string]struct{}, len(items))
-	var streamedContent strings.Builder
-	for _, item := range items {
-		if item.Type == turnTimelineItemOutputText && strings.TrimSpace(item.ContentText) != "" {
-			seenContent[strings.TrimSpace(item.ContentText)] = struct{}{}
-			streamedContent.WriteString(item.ContentText)
-		}
-	}
-	if text := strings.TrimSpace(streamedContent.String()); text != "" {
-		seenContent[text] = struct{}{}
-	}
-	for index := range messages {
-		text := strings.TrimSpace(messages[index].ContentText)
-		if text == "" {
-			continue
-		}
-		if _, ok := seenContent[text]; ok {
-			continue
-		}
-		if item := fallbackAssistantMessageItem(turn, &messages[index], index); item != nil {
-			items = append(items, *item)
-			seenContent[text] = struct{}{}
-		}
-	}
-	return items
-}
-
-func extractReasoningParts(data []byte) ([]reasoningOutputPart, error) {
-	var rawItems []json.RawMessage
-	if err := json.Unmarshal(data, &rawItems); err != nil {
-		return nil, err
-	}
-	return reasoningPartsFromRawItems(rawItems)
-}
-
 func reasoningPartsFromRawItems(rawItems []json.RawMessage) ([]reasoningOutputPart, error) {
 	parts := make([]reasoningOutputPart, 0)
 	for outputIndex, raw := range rawItems {
@@ -1069,21 +626,6 @@ func reasoningPartsFromRawItems(rawItems []json.RawMessage) ([]reasoningOutputPa
 		}
 	}
 	return parts, nil
-}
-
-func normalizeTimelineOutput(output []byte) (json.RawMessage, error) {
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" {
-		return nil, nil
-	}
-	if json.Valid([]byte(trimmed)) {
-		return redactEncryptedContentJSON([]byte(trimmed))
-	}
-	wrapped, err := json.Marshal(trimmed)
-	if err != nil {
-		return nil, err
-	}
-	return append(json.RawMessage(nil), wrapped...), nil
 }
 
 func cloneRawJSON(raw json.RawMessage) json.RawMessage {
@@ -1229,47 +771,4 @@ func turnResponseID(turn *domain.Turn) string {
 		return ""
 	}
 	return strings.TrimSpace(turn.OpenAIResponseID)
-}
-
-func stableTimelineToolTitle(namespace string, toolName string) string {
-	namespace = strings.TrimSpace(namespace)
-	toolName = strings.TrimSpace(toolName)
-	if namespace == "" || toolName == "" || strings.HasPrefix(toolName, namespace+".") {
-		return toolName
-	}
-	return namespace + "." + toolName
-}
-
-func timelineRunTimestamp(run domain.TurnRun) time.Time {
-	switch {
-	case run.CompletedAt != nil:
-		return *run.CompletedAt
-	case run.FailedAt != nil:
-		return *run.FailedAt
-	case !run.UpdatedAt.IsZero():
-		return run.UpdatedAt
-	default:
-		return run.StartedAt
-	}
-}
-
-func reasoningTimelineTimestamp(run domain.TurnRun) time.Time {
-	switch {
-	case !run.StartedAt.IsZero():
-		return run.StartedAt
-	case !run.CreatedAt.IsZero():
-		return run.CreatedAt
-	default:
-		return timelineRunTimestamp(run)
-	}
-}
-
-func containsReasoningSummaryStreamEvents(events []domain.TurnStreamEvent) bool {
-	for _, event := range events {
-		switch event.EventType {
-		case "response.reasoning_summary_part.added", "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done", "response.reasoning_summary_part.done":
-			return true
-		}
-	}
-	return false
 }

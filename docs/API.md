@@ -154,7 +154,6 @@ Fields:
 - `status`: `accepted | context_ready | processing | completed | failed`
 - `request_blob_key`
 - `response_blob_key`
-- `stream_blob_key`
 - `openai_response_id`
 - `error_code`
 - `error_message`
@@ -770,7 +769,7 @@ Create a short-lived inline download URL for a generated-image preview or final 
     "expires_at": "2026-07-25T12:00:00Z"
   },
   "download": {
-    "url": "https://objects.example.com/bucket/generated-image-previews/...?X-Amz-Signature=...",
+    "url": "https://objects.example.com/bucket/conversations/conv_123/turns/turn_123/generated-image-previews/...?X-Amz-Signature=...",
     "method": "GET",
     "expires_at": "2026-07-24T12:15:00Z"
   }

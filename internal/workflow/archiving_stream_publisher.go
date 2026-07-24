@@ -14,14 +14,10 @@ type ArchivingStreamPublisher struct {
 	accumulator    *CompleteEventAccumulator
 }
 
-func NewArchivingStreamPublisher(next stream.Publisher, _ TurnArtifactStore, _ TurnStreamEventStore, completeEvents ...CompleteEventStore) *ArchivingStreamPublisher {
-	var completed CompleteEventStore
-	if len(completeEvents) > 0 {
-		completed = completeEvents[0]
-	}
+func NewArchivingStreamPublisher(next stream.Publisher, completeEvents CompleteEventStore) *ArchivingStreamPublisher {
 	return &ArchivingStreamPublisher{
 		next:           next,
-		completeEvents: completed,
+		completeEvents: completeEvents,
 		accumulator:    NewCompleteEventAccumulator(),
 	}
 }
@@ -45,8 +41,11 @@ func (p *ArchivingStreamPublisher) Publish(ctx context.Context, event stream.Eve
 }
 
 func (p *ArchivingStreamPublisher) archiveEvent(ctx context.Context, event stream.Event) (stream.Event, error) {
-	if p == nil || p.completeEvents == nil || p.accumulator == nil {
-		return event, nil
+	if p == nil || p.accumulator == nil {
+		return event, errors.New("stream archive publisher is not configured")
+	}
+	if p.completeEvents == nil {
+		return event, errors.New("stream archive publisher requires complete event store")
 	}
 	completed, err := p.accumulator.Apply(event)
 	if err != nil {

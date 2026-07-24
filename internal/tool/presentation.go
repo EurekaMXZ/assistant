@@ -69,9 +69,6 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 		if output := nestedObject(result, "result"); output != nil {
 			commandSource = output
 			presentation.CommandOutput = rawStringField(output, "output")
-			if _, hasOutput := output["output"]; !hasOutput {
-				presentation.CommandOutput = mergeLegacyCommandOutput(rawStringField(output, "stdout"), rawStringField(output, "stderr"))
-			}
 			if exitCode, ok := intField(output, "exit_code"); ok {
 				presentation.ExitCode = &exitCode
 			}
@@ -153,20 +150,6 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 		presentation.InputLabel = "File"
 		presentation.InputText = stringField(args, "filename")
 	}
-}
-
-func mergeLegacyCommandOutput(stdout string, stderr string) string {
-	if stdout == "" {
-		return stderr
-	}
-	if stderr == "" {
-		return stdout
-	}
-	separator := "\n"
-	if strings.HasSuffix(stdout, "\n") {
-		separator = ""
-	}
-	return stdout + separator + stderr
 }
 
 func applyTavilyPublicPresentation(presentation *PublicToolPresentation, toolName string, args map[string]any, result any) {

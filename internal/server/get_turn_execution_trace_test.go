@@ -2,14 +2,16 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
+	"github.com/klauspost/compress/zstd"
 )
 
 type stubTraceTurnGetter struct {
@@ -75,21 +77,40 @@ func (s *stubTurnRunArtifactReader) GetBytes(_ context.Context, key string) ([]b
 	return append([]byte(nil), value...), nil
 }
 
-func (s *stubTurnRunArtifactReader) TurnRunOutputItemsKey(conversationID, turnID string, stepIndex int) string {
-	return fmt.Sprintf("run-output-items/%s/%s/step-%03d.json", conversationID, turnID, stepIndex)
+func compressedTraceArtifact(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatalf("create artifact encoder: %v", err)
+	}
+	defer encoder.Close()
+	return encoder.EncodeAll(payload, nil)
+}
+
+func traceArtifactMetadata(t *testing.T, key string, payload []byte) json.RawMessage {
+	t.Helper()
+	digest := sha256.Sum256(payload)
+	metadata, err := json.Marshal(map[string]map[string]string{
+		"output-items.json.zst": {"object_key": key, "sha256": hex.EncodeToString(digest[:])},
+	})
+	if err != nil {
+		t.Fatalf("marshal artifact metadata: %v", err)
+	}
+	return metadata
 }
 
 func TestGetTurnExecutionTraceReturnsRunsCallsAndOutputItems(t *testing.T) {
 	now := time.Unix(1710000000, 0).UTC()
 	completedAt := now.Add(2 * time.Second)
+	outputItemsKey := "conversations/conv-1/turns/turn-1/runs/000001-run-1/output-items.json.zst"
+	outputItems := []byte(`[{"type":"reasoning","encrypted_content":"ciphertext"},{"type":"mcp_call","name":"search"}]`)
 	turns := &stubTraceTurnGetter{
 		turn: &domain.Turn{
 			ID:               "turn-1",
 			ConversationID:   "conv-1",
 			Status:           domain.TurnStatusCompleted,
-			RequestBlobKey:   "requests/conv-1/turn-1.json",
-			ResponseBlobKey:  "responses/conv-1/turn-1.json",
-			StreamBlobKey:    "stream-events/conv-1/turn-1.jsonl",
+			RequestBlobKey:   "conversations/conv-1/turns/turn-1/runs/000001-run-1/request.json.zst",
+			ResponseBlobKey:  "conversations/conv-1/turns/turn-1/runs/000001-run-1/response.json.zst",
 			OpenAIResponseID: "resp_1",
 			StartedAt:        &now,
 			CompletedAt:      &completedAt,
@@ -100,18 +121,19 @@ func TestGetTurnExecutionTraceReturnsRunsCallsAndOutputItems(t *testing.T) {
 	runs := &stubTurnRunLister{
 		runs: []domain.TurnRun{
 			{
-				ID:              "run-1",
-				TurnID:          "turn-1",
-				StepIndex:       1,
-				Provider:        "openai.responses",
-				Status:          domain.TurnRunStatusCompleted,
-				RequestBlobKey:  "run-request:1",
-				ResponseBlobKey: "run-response:1",
-				ResponseID:      "resp_1",
-				StartedAt:       now,
-				CompletedAt:     &completedAt,
-				CreatedAt:       now,
-				UpdatedAt:       completedAt,
+				ID:               "run-1",
+				TurnID:           "turn-1",
+				StepIndex:        1,
+				Provider:         "openai.responses",
+				Status:           domain.TurnRunStatusCompleted,
+				RequestBlobKey:   "conversations/conv-1/turns/turn-1/runs/000001-run-1/request.json.zst",
+				ResponseBlobKey:  "conversations/conv-1/turns/turn-1/runs/000001-run-1/response.json.zst",
+				ArtifactMetadata: traceArtifactMetadata(t, outputItemsKey, outputItems),
+				ResponseID:       "resp_1",
+				StartedAt:        now,
+				CompletedAt:      &completedAt,
+				CreatedAt:        now,
+				UpdatedAt:        completedAt,
 			},
 		},
 	}
@@ -137,10 +159,9 @@ func TestGetTurnExecutionTraceReturnsRunsCallsAndOutputItems(t *testing.T) {
 	}
 	artifacts := &stubTurnRunArtifactReader{
 		data: map[string][]byte{
-			"run-output-items/conv-1/turn-1/step-001.json": []byte(`[{"type":"reasoning","encrypted_content":"ciphertext"},{"type":"mcp_call","name":"search"}]`),
-			"tool-args:1":                       []byte(`{"query":"latest openai news"}`),
-			"tool-output:1":                     []byte(`{"results":[{"title":"OpenAI"}]}`),
-			"stream-events/conv-1/turn-1.jsonl": []byte("{\"type\":\"tool.started\",\"conversation_id\":\"conv-1\",\"turn_id\":\"turn-1\",\"tool_name\":\"internet.search\",\"payload\":\"{\\\"status\\\":\\\"started\\\"}\"}\n{\"type\":\"response.completed\",\"conversation_id\":\"conv-1\",\"turn_id\":\"turn-1\",\"text\":\"done\"}\n"),
+			outputItemsKey:  compressedTraceArtifact(t, outputItems),
+			"tool-args:1":   []byte(`{"query":"latest openai news"}`),
+			"tool-output:1": []byte(`{"results":[{"title":"OpenAI"}]}`),
 		},
 	}
 	uc := GetTurnExecutionTrace{
@@ -160,11 +181,8 @@ func TestGetTurnExecutionTraceReturnsRunsCallsAndOutputItems(t *testing.T) {
 	if trace.TurnID != "turn-1" || len(trace.Runs) != 1 {
 		t.Fatalf("unexpected trace: %#v", trace)
 	}
-	if trace.RequestBlobKey != "requests/conv-1/turn-1.json" || trace.ResponseBlobKey != "responses/conv-1/turn-1.json" {
+	if trace.RequestBlobKey != "conversations/conv-1/turns/turn-1/runs/000001-run-1/request.json.zst" || trace.ResponseBlobKey != "conversations/conv-1/turns/turn-1/runs/000001-run-1/response.json.zst" {
 		t.Fatalf("unexpected turn blob keys: %#v", trace)
-	}
-	if trace.Runs[0].OutputItemsBlobKey != "run-output-items/conv-1/turn-1/step-001.json" {
-		t.Fatalf("unexpected output items blob key: %#v", trace.Runs[0])
 	}
 	if !json.Valid(trace.Runs[0].OutputItems) {
 		t.Fatalf("expected valid output items: %s", trace.Runs[0].OutputItems)
@@ -180,18 +198,6 @@ func TestGetTurnExecutionTraceReturnsRunsCallsAndOutputItems(t *testing.T) {
 	}
 	if len(trace.Runs[0].ToolCalls[0].Details) != 2 || trace.Runs[0].ToolCalls[0].Details[0] != "Query: latest openai news" || trace.Runs[0].ToolCalls[0].Details[1] != "Results: 1" {
 		t.Fatalf("unexpected tool call details: %#v", trace.Runs[0].ToolCalls[0].Details)
-	}
-	if len(trace.StreamEvents) != 2 {
-		t.Fatalf("expected 2 stream events, got %#v", trace.StreamEvents)
-	}
-	if trace.StreamEvents[0].Type != "tool.started" {
-		t.Fatalf("unexpected first stream event: %#v", trace.StreamEvents[0])
-	}
-	if string(trace.StreamEvents[0].PayloadJSON) != `{"status":"started"}` {
-		t.Fatalf("unexpected first stream event payload json: %s", trace.StreamEvents[0].PayloadJSON)
-	}
-	if trace.StreamEvents[1].Type != "response.completed" || trace.StreamEvents[1].Text != "done" {
-		t.Fatalf("unexpected second stream event: %#v", trace.StreamEvents[1])
 	}
 }
 
@@ -234,12 +240,14 @@ func TestGetTurnExecutionTraceIgnoresMissingOutputItemsArtifact(t *testing.T) {
 }
 
 func TestGetTurnExecutionTraceRejectsNullOutputItems(t *testing.T) {
+	outputItemsKey := "conversations/conv-null/turns/turn-null/runs/000001-run-null/output-items.json.zst"
+	outputItems := []byte(`null`)
 	uc := GetTurnExecutionTrace{
 		Turns:     &stubTraceTurnGetter{turn: &domain.Turn{ID: "turn-null", ConversationID: "conv-null"}},
-		Runs:      &stubTurnRunLister{runs: []domain.TurnRun{{ID: "run-null", TurnID: "turn-null", StepIndex: 1}}},
+		Runs:      &stubTurnRunLister{runs: []domain.TurnRun{{ID: "run-null", TurnID: "turn-null", StepIndex: 1, ArtifactMetadata: traceArtifactMetadata(t, outputItemsKey, outputItems)}}},
 		ToolCalls: &stubToolCallLister{},
 		Artifacts: &stubTurnRunArtifactReader{data: map[string][]byte{
-			"run-output-items/conv-null/turn-null/step-001.json": []byte(`null`),
+			outputItemsKey: compressedTraceArtifact(t, outputItems),
 		}},
 	}
 	if _, err := uc.Execute(t.Context(), "turn-null"); err == nil || !strings.Contains(err.Error(), "must be a json array") {
@@ -248,6 +256,8 @@ func TestGetTurnExecutionTraceRejectsNullOutputItems(t *testing.T) {
 }
 
 func TestGetTurnExecutionTraceReturnsArtifactReadError(t *testing.T) {
+	outputItemsKey := "conversations/conv-3/turns/turn-3/runs/000001-run-3/output-items.json.zst"
+	outputItems := []byte(`[]`)
 	uc := GetTurnExecutionTrace{
 		Turns: &stubTraceTurnGetter{
 			turn: &domain.Turn{
@@ -257,19 +267,21 @@ func TestGetTurnExecutionTraceReturnsArtifactReadError(t *testing.T) {
 			},
 		},
 		Runs: &stubTurnRunLister{
-			runs: []domain.TurnRun{{ID: "run-3", TurnID: "turn-3", StepIndex: 1}},
+			runs: []domain.TurnRun{{ID: "run-3", TurnID: "turn-3", StepIndex: 1, ArtifactMetadata: traceArtifactMetadata(t, outputItemsKey, outputItems)}},
 		},
 		ToolCalls: &stubToolCallLister{},
 		Artifacts: &stubTurnRunArtifactReader{err: errors.New("minio unavailable")},
 	}
 
 	_, err := uc.Execute(context.Background(), "turn-3")
-	if err == nil || err.Error() != `get turn run output items "run-output-items/conv-3/turn-3/step-001.json": minio unavailable` {
+	if err == nil || err.Error() != `get turn run output items "conversations/conv-3/turns/turn-3/runs/000001-run-3/output-items.json.zst": minio unavailable` {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestGetTurnExecutionTraceReturnsInvalidArtifactJSONError(t *testing.T) {
+	outputItemsKey := "conversations/conv-4/turns/turn-4/runs/000001-run-4/output-items.json.zst"
+	outputItems := []byte(`{"oops"`)
 	uc := GetTurnExecutionTrace{
 		Turns: &stubTraceTurnGetter{
 			turn: &domain.Turn{
@@ -279,18 +291,18 @@ func TestGetTurnExecutionTraceReturnsInvalidArtifactJSONError(t *testing.T) {
 			},
 		},
 		Runs: &stubTurnRunLister{
-			runs: []domain.TurnRun{{ID: "run-4", TurnID: "turn-4", StepIndex: 1}},
+			runs: []domain.TurnRun{{ID: "run-4", TurnID: "turn-4", StepIndex: 1, ArtifactMetadata: traceArtifactMetadata(t, outputItemsKey, outputItems)}},
 		},
 		ToolCalls: &stubToolCallLister{},
 		Artifacts: &stubTurnRunArtifactReader{
 			data: map[string][]byte{
-				"run-output-items/conv-4/turn-4/step-001.json": []byte(`{"oops"`),
+				outputItemsKey: compressedTraceArtifact(t, outputItems),
 			},
 		},
 	}
 
 	_, err := uc.Execute(context.Background(), "turn-4")
-	if err == nil || err.Error() != `turn run output items "run-output-items/conv-4/turn-4/step-001.json" is not valid json` {
+	if err == nil || err.Error() != `turn run output items "conversations/conv-4/turns/turn-4/runs/000001-run-4/output-items.json.zst" is not valid json` {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -303,7 +315,6 @@ func TestGetTurnExecutionTraceReturnsPlainTextToolCallOutput(t *testing.T) {
 				ID:             "turn-5",
 				ConversationID: "conv-5",
 				Status:         domain.TurnStatusFailed,
-				StreamBlobKey:  "stream-events/conv-5/turn-5.jsonl",
 			},
 		},
 		Runs: &stubTurnRunLister{
@@ -329,9 +340,8 @@ func TestGetTurnExecutionTraceReturnsPlainTextToolCallOutput(t *testing.T) {
 		},
 		Artifacts: &stubTurnRunArtifactReader{
 			data: map[string][]byte{
-				"tool-args:5":                       []byte(`{"command":"pwd"}`),
-				"tool-output:5":                     []byte(`permission denied`),
-				"stream-events/conv-5/turn-5.jsonl": []byte("{\"type\":\"tool.failed\",\"conversation_id\":\"conv-5\",\"turn_id\":\"turn-5\",\"tool_name\":\"sandbox.exec\",\"payload\":\"permission denied\",\"error\":\"permission denied\"}\n"),
+				"tool-args:5":   []byte(`{"command":"pwd"}`),
+				"tool-output:5": []byte(`permission denied`),
 			},
 		},
 	}
@@ -349,12 +359,6 @@ func TestGetTurnExecutionTraceReturnsPlainTextToolCallOutput(t *testing.T) {
 	}
 	if len(call.Details) != 2 || call.Details[0] != "Command: pwd" || call.Details[1] != "Error: permission denied" {
 		t.Fatalf("unexpected tool call details: %#v", call.Details)
-	}
-	if len(trace.StreamEvents) != 1 {
-		t.Fatalf("unexpected stream events: %#v", trace.StreamEvents)
-	}
-	if trace.StreamEvents[0].PayloadText != "permission denied" {
-		t.Fatalf("unexpected stream event payload text: %#v", trace.StreamEvents[0])
 	}
 }
 
@@ -393,31 +397,6 @@ func TestGetTurnExecutionTraceReturnsInvalidToolCallArgumentsError(t *testing.T)
 
 	_, err := uc.Execute(context.Background(), "turn-6")
 	if err == nil || err.Error() != `tool call arguments "tool-args:6" is not valid json` {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestGetTurnExecutionTraceReturnsInvalidStreamArchiveLineError(t *testing.T) {
-	uc := GetTurnExecutionTrace{
-		Turns: &stubTraceTurnGetter{
-			turn: &domain.Turn{
-				ID:             "turn-7",
-				ConversationID: "conv-7",
-				Status:         domain.TurnStatusFailed,
-				StreamBlobKey:  "stream-events/conv-7/turn-7.jsonl",
-			},
-		},
-		Runs:      &stubTurnRunLister{},
-		ToolCalls: &stubToolCallLister{},
-		Artifacts: &stubTurnRunArtifactReader{
-			data: map[string][]byte{
-				"stream-events/conv-7/turn-7.jsonl": []byte("{\"type\":\"response.started\",\"conversation_id\":\"conv-7\",\"turn_id\":\"turn-7\"}\nnot-json\n"),
-			},
-		},
-	}
-
-	_, err := uc.Execute(context.Background(), "turn-7")
-	if err == nil || err.Error() != `stream event archive "stream-events/conv-7/turn-7.jsonl" line 2 is not valid json` {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

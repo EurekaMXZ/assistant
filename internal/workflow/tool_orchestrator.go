@@ -74,38 +74,6 @@ func publicToolRunError(err error) string {
 	return domain.TurnPublicErrorRequestProcessing
 }
 
-func (o *ToolOrchestrator) persistTurnRunOutputItems(ctx context.Context, scope tool.ToolScope, stepIndex int, result *llm.ModelResult) error {
-	if o == nil || o.artifacts == nil || result == nil || len(result.OutputItems) == 0 {
-		return nil
-	}
-
-	items := make([]json.RawMessage, 0, len(result.OutputItems))
-	for _, item := range result.OutputItems {
-		if len(item.Raw) > 0 {
-			items = append(items, append(json.RawMessage(nil), item.Raw...))
-			continue
-		}
-
-		raw, err := json.Marshal(item)
-		if err != nil {
-			return fmt.Errorf("marshal turn run output item: %w", err)
-		}
-		items = append(items, raw)
-	}
-
-	payload, err := json.Marshal(items)
-	if err != nil {
-		return fmt.Errorf("marshal turn run output items: %w", err)
-	}
-
-	key := o.artifacts.TurnRunOutputItemsKey(scope.ConversationID, scope.TurnID, stepIndex)
-	if err := o.artifacts.PutBytes(ctx, key, payload, "application/json"); err != nil {
-		return fmt.Errorf("persist turn run output items: %w", err)
-	}
-
-	return nil
-}
-
 func (o *ToolOrchestrator) recordToolCallStart(ctx context.Context, scope tool.ToolScope, run *domain.TurnRun, call tool.ToolCall) (*domain.ToolCallRecord, bool, error) {
 	if o == nil || o.artifacts == nil || o.calls == nil || run == nil {
 		return nil, true, nil

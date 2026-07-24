@@ -33,8 +33,7 @@ A single-line commit message is not acceptable, even for a small change.
 fix(chat): render persistent shell command output
 
 Route sandbox.shell_connect through the terminal timeline presentation while
-preserving legacy sandbox.exec support. Add regression coverage for command
-output and exit status rendering.
+adding regression coverage for command output and exit status rendering.
 ```
 
 Using multiple `-m` arguments creates the required subject and body paragraphs:
@@ -42,5 +41,5 @@ Using multiple `-m` arguments creates the required subject and body paragraphs:
 ```bash
 git commit \
   -m "fix(chat): render persistent shell command output" \
-  -m "Route sandbox.shell_connect through the terminal timeline presentation while preserving legacy sandbox.exec support. Add regression coverage for command output and exit status rendering."
+  -m "Route sandbox.shell_connect through the terminal timeline presentation. Add regression coverage for command output and exit status rendering."
 ```

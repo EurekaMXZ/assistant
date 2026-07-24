@@ -145,7 +145,7 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `UPDATE turns SET status = $2 WHERE id = $1::uuid`, retry.Turn.ID, domain.TurnStatusContextReady); err != nil {
 		t.Fatalf("mark first retry context ready: %v", err)
 	}
-	if err := workflowTurns.FinalizeTurnFailure(t.Context(), retry.Turn.ID, "", "", "retry_failed", "retry failed", 0); err != nil {
+	if err := workflowTurns.FinalizeTurnFailure(t.Context(), retry.Turn.ID, "", "retry_failed", "retry failed", 0); err != nil {
 		t.Fatalf("finalize first retry failure: %v", err)
 	}
 
@@ -231,7 +231,7 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `UPDATE turns SET status = $2 WHERE id = $1::uuid`, failedRetry.Turn.ID, domain.TurnStatusContextReady); err != nil {
 		t.Fatalf("mark second retry context ready: %v", err)
 	}
-	if err := workflowTurns.FinalizeTurnFailure(t.Context(), failedRetry.Turn.ID, "", "", "retry_failed", "retry failed", 0); err != nil {
+	if err := workflowTurns.FinalizeTurnFailure(t.Context(), failedRetry.Turn.ID, "", "retry_failed", "retry failed", 0); err != nil {
 		t.Fatalf("finalize retry failure: %v", err)
 	}
 

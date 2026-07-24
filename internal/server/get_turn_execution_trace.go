@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/tool"
+	"github.com/klauspost/compress/zstd"
 )
 
 type executionTraceTurnGetter interface {
@@ -26,7 +29,6 @@ type toolCallLister interface {
 
 type turnRunArtifactReader interface {
 	GetBytes(ctx context.Context, key string) ([]byte, error)
-	TurnRunOutputItemsKey(conversationID, turnID string, stepIndex int) string
 }
 
 type GetTurnExecutionTrace struct {
@@ -107,7 +109,6 @@ func (uc GetTurnExecutionTrace) Execute(ctx context.Context, turnID string) (*Tu
 		Status:           turn.Status,
 		RequestBlobKey:   turn.RequestBlobKey,
 		ResponseBlobKey:  turn.ResponseBlobKey,
-		StreamBlobKey:    turn.StreamBlobKey,
 		OpenAIResponseID: turn.OpenAIResponseID,
 		ErrorCode:        turn.ErrorCode,
 		ErrorMessage:     turn.ErrorMessage,
@@ -117,13 +118,6 @@ func (uc GetTurnExecutionTrace) Execute(ctx context.Context, turnID string) (*Tu
 		CreatedAt:        turn.CreatedAt,
 		UpdatedAt:        turn.UpdatedAt,
 		Runs:             make([]TurnRunTrace, 0, len(runs)),
-	}
-	if uc.Artifacts != nil {
-		streamEvents, err := loadTraceStreamEvents(ctx, uc.Artifacts, turn.StreamBlobKey)
-		if err != nil {
-			return nil, err
-		}
-		trace.StreamEvents = streamEvents
 	}
 	for _, run := range runs {
 		toolCalls := callsByRun[run.ID]
@@ -154,36 +148,75 @@ func (uc GetTurnExecutionTrace) Execute(ctx context.Context, turnID string) (*Tu
 			ToolCalls:                nonNilSlice(toolCalls),
 		}
 		if uc.Artifacts != nil {
-			item.OutputItemsBlobKey = uc.Artifacts.TurnRunOutputItemsKey(turn.ConversationID, turn.ID, run.StepIndex)
-			data, readErr := uc.Artifacts.GetBytes(ctx, item.OutputItemsBlobKey)
-			switch {
-			case readErr == nil:
-				data = bytes.TrimSpace(data)
-				if len(data) == 0 {
-					break
+			outputItemsKey := runArtifactObjectKey(run.ArtifactMetadata, "output-items.json.zst")
+			if outputItemsKey != "" {
+				data, readErr := uc.Artifacts.GetBytes(ctx, outputItemsKey)
+				switch {
+				case readErr == nil:
+					data, readErr = decodeTraceRunArtifact(data, run.ArtifactMetadata, "output-items.json.zst")
+					if readErr != nil {
+						return nil, fmt.Errorf("decode turn run output items %q: %w", outputItemsKey, readErr)
+					}
+					data = bytes.TrimSpace(data)
+					if len(data) == 0 {
+						break
+					}
+					if !json.Valid(data) {
+						return nil, fmt.Errorf("turn run output items %q is not valid json", outputItemsKey)
+					}
+					var outputItems []json.RawMessage
+					if err := json.Unmarshal(data, &outputItems); err != nil || outputItems == nil {
+						return nil, fmt.Errorf("turn run output items %q must be a json array", outputItemsKey)
+					}
+					redacted, err := redactEncryptedContentJSON(data)
+					if err != nil {
+						return nil, fmt.Errorf("redact turn run output items %q: %w", outputItemsKey, err)
+					}
+					item.OutputItems = redacted
+				case errors.Is(readErr, domain.ErrNotFound):
+				default:
+					return nil, fmt.Errorf("get turn run output items %q: %w", outputItemsKey, readErr)
 				}
-				if !json.Valid(data) {
-					return nil, fmt.Errorf("turn run output items %q is not valid json", item.OutputItemsBlobKey)
-				}
-				var outputItems []json.RawMessage
-				if err := json.Unmarshal(data, &outputItems); err != nil || outputItems == nil {
-					return nil, fmt.Errorf("turn run output items %q must be a json array", item.OutputItemsBlobKey)
-				}
-				redacted, err := redactEncryptedContentJSON(data)
-				if err != nil {
-					return nil, fmt.Errorf("redact turn run output items %q: %w", item.OutputItemsBlobKey, err)
-				}
-				item.OutputItems = redacted
-			case errors.Is(readErr, domain.ErrNotFound):
-				// Older runs may not have a dedicated output-items artifact yet.
-			default:
-				return nil, fmt.Errorf("get turn run output items %q: %w", item.OutputItemsBlobKey, readErr)
 			}
 		}
 		trace.Runs = append(trace.Runs, item)
 	}
 
 	return trace, nil
+}
+
+func runArtifactObjectKey(rawMetadata json.RawMessage, name string) string {
+	var metadata map[string]struct {
+		ObjectKey string `json:"object_key"`
+	}
+	if len(rawMetadata) == 0 || json.Unmarshal(rawMetadata, &metadata) != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata[name].ObjectKey)
+}
+
+func decodeTraceRunArtifact(compressed []byte, rawMetadata json.RawMessage, name string) ([]byte, error) {
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := decoder.DecodeAll(compressed, nil)
+	decoder.Close()
+	if err != nil {
+		return nil, err
+	}
+	var metadata map[string]struct {
+		SHA256 string `json:"sha256"`
+	}
+	if len(rawMetadata) > 0 && json.Unmarshal(rawMetadata, &metadata) == nil {
+		if expected := strings.TrimSpace(metadata[name].SHA256); expected != "" {
+			digest := sha256.Sum256(payload)
+			if !strings.EqualFold(expected, hex.EncodeToString(digest[:])) {
+				return nil, errors.New("checksum mismatch")
+			}
+		}
+	}
+	return payload, nil
 }
 
 func traceToolErrorMessage(status string, errorMessage string, output []byte) string {
@@ -242,70 +275,6 @@ func loadTraceArtifactBytes(ctx context.Context, artifacts turnRunArtifactReader
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("get %s %q: %w", label, key, err)
-	}
-}
-
-func loadTraceStreamEvents(ctx context.Context, artifacts turnRunArtifactReader, key string) ([]StreamEventTrace, error) {
-	if artifacts == nil || strings.TrimSpace(key) == "" {
-		return nil, nil
-	}
-
-	data, err := artifacts.GetBytes(ctx, key)
-	switch {
-	case err == nil:
-		lines := bytes.Split(data, []byte{'\n'})
-		events := make([]StreamEventTrace, 0, len(lines))
-		for index, line := range lines {
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
-				continue
-			}
-
-			var raw struct {
-				Type           string `json:"type"`
-				ConversationID string `json:"conversation_id,omitempty"`
-				TurnID         string `json:"turn_id,omitempty"`
-				ResponseID     string `json:"response_id,omitempty"`
-				ToolName       string `json:"tool_name,omitempty"`
-				Payload        string `json:"payload,omitempty"`
-				Delta          string `json:"delta,omitempty"`
-				Text           string `json:"text,omitempty"`
-				Error          string `json:"error,omitempty"`
-			}
-			if err := json.Unmarshal(line, &raw); err != nil {
-				return nil, fmt.Errorf("stream event archive %q line %d is not valid json", key, index+1)
-			}
-
-			event := StreamEventTrace{
-				Type:           raw.Type,
-				ConversationID: raw.ConversationID,
-				TurnID:         raw.TurnID,
-				ResponseID:     raw.ResponseID,
-				ToolName:       raw.ToolName,
-				Delta:          raw.Delta,
-				Text:           raw.Text,
-				Error:          raw.Error,
-			}
-
-			payload := strings.TrimSpace(raw.Payload)
-			if payload != "" {
-				if json.Valid([]byte(payload)) {
-					redacted, err := redactEncryptedContentJSON([]byte(payload))
-					if err != nil {
-						return nil, fmt.Errorf("redact stream event archive %q line %d payload: %w", key, index+1, err)
-					}
-					event.PayloadJSON = redacted
-				} else {
-					event.PayloadText = raw.Payload
-				}
-			}
-			events = append(events, event)
-		}
-		return events, nil
-	case errors.Is(err, domain.ErrNotFound):
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("get stream event archive %q: %w", key, err)
 	}
 }
 

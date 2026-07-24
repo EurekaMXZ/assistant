@@ -141,9 +141,8 @@ func updateTurnSuccess(ctx context.Context, tx pgx.Tx, turnID string, summary do
 			status = $2,
 			request_blob_key = $3,
 			response_blob_key = $4,
-			stream_blob_key = $5,
-			openai_response_id = $6,
-			metadata = $7::jsonb,
+			openai_response_id = $5,
+			metadata = $6::jsonb,
 			completed_at = now(),
 			error_code = NULL,
 			error_message = NULL,
@@ -158,7 +157,6 @@ func updateTurnSuccess(ctx context.Context, tx pgx.Tx, turnID string, summary do
 			status,
 			COALESCE(request_blob_key, ''),
 			COALESCE(response_blob_key, ''),
-			COALESCE(stream_blob_key, ''),
 			COALESCE(openai_response_id, ''),
 			COALESCE(error_code, ''),
 			COALESCE(error_message, ''),
@@ -168,7 +166,7 @@ func updateTurnSuccess(ctx context.Context, tx pgx.Tx, turnID string, summary do
 			failed_at,
 			created_at,
 			updated_at
-	`, turnID, domain.TurnStatusCompleted, summary.RequestBlobKey, summary.ResponseBlobKey, summary.StreamBlobKey, summary.ResponseID, metadata)
+	`, turnID, domain.TurnStatusCompleted, summary.RequestBlobKey, summary.ResponseBlobKey, summary.ResponseID, metadata)
 
 	turn, err := scanTurn(row)
 	if err != nil {
