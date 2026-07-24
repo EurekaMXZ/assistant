@@ -22,6 +22,7 @@ func TestNewBaseSettingsMapsConfig(t *testing.T) {
 		RedisPassword:             "secret",
 		RedisDB:                   3,
 		StreamChannelPrefix:       "assistant:stream",
+		StreamReplayTTL:           time.Hour,
 		S3Provider:                "minio",
 		S3Endpoint:                "127.0.0.1:9000",
 		S3Region:                  "us-east-1",
@@ -63,7 +64,7 @@ func TestNewBaseSettingsMapsConfig(t *testing.T) {
 	if !settings.EnableAuth {
 		t.Fatal("expected auth to be enabled in base settings")
 	}
-	if settings.Stream.Addr != "127.0.0.1:6379" || settings.Stream.Password != "secret" || settings.Stream.DB != 3 || settings.Stream.ChannelPrefix != "assistant:stream" {
+	if settings.Stream.Addr != "127.0.0.1:6379" || settings.Stream.Password != "secret" || settings.Stream.DB != 3 || settings.Stream.ChannelPrefix != "assistant:stream" || settings.Stream.ReplayTTL != time.Hour {
 		t.Fatalf("unexpected stream settings: %+v", settings.Stream)
 	}
 	if settings.Server.Address != "127.0.0.1:8088" || settings.Server.WebOrigin != "https://example.com" {

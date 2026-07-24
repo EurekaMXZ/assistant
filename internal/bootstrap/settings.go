@@ -60,6 +60,7 @@ func newBaseSettings(cfg config.Config, enableAuth bool) baseSettings {
 			Password:      cfg.RedisPassword,
 			DB:            cfg.RedisDB,
 			ChannelPrefix: cfg.StreamChannelPrefix,
+			ReplayTTL:     cfg.StreamReplayTTL,
 		},
 		Server: server.Settings{
 			Address:      cfg.Address(),

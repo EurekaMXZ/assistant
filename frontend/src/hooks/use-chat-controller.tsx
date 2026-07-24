@@ -252,6 +252,7 @@ export function useChatController(conversationId: string) {
     initializeTurns,
     openTimeline,
     registerTurn,
+    restoreActiveTurn,
   } = useTurnTimelineController({
     conversationId,
     setMessages,
@@ -588,8 +589,18 @@ export function useChatController(conversationId: string) {
     const turnId = resumeTurnId;
     resumeConversationIdRef.current = null;
     setResumeTurnId(null);
+    restoreActiveTurn(turnId);
     void streamTurn(turnId);
-  }, [authLoading, conversationId, isLoading, isStreaming, resumeTurnId, streamTurn, user]);
+  }, [
+    authLoading,
+    conversationId,
+    isLoading,
+    isStreaming,
+    restoreActiveTurn,
+    resumeTurnId,
+    streamTurn,
+    user,
+  ]);
 
   useEffect(() => {
     if (restoreTurns.length === 0) return;

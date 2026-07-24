@@ -30,6 +30,7 @@ const (
 	defaultRedisAddr                 = "127.0.0.1:6379"
 	defaultRedisDB                   = 0
 	defaultStreamChannelPrefix       = "assistant:stream"
+	defaultStreamReplayTTL           = time.Hour
 	defaultS3Provider                = "minio"
 	defaultS3Endpoint                = "127.0.0.1:9000"
 	defaultS3Region                  = "us-east-1"
@@ -94,6 +95,7 @@ type Config struct {
 	RedisPassword               string
 	RedisDB                     int
 	StreamChannelPrefix         string
+	StreamReplayTTL             time.Duration
 	KafkaBrokers                []string
 	KafkaWorkflowTopic          string
 	KafkaStreamTopic            string
@@ -185,6 +187,7 @@ func Load() Config {
 		RedisPassword:               os.Getenv("REDIS_PASSWORD"),
 		RedisDB:                     getenvInt("REDIS_DB", defaultRedisDB),
 		StreamChannelPrefix:         getenv("STREAM_CHANNEL_PREFIX", defaultStreamChannelPrefix),
+		StreamReplayTTL:             getenvDuration("STREAM_REPLAY_TTL", defaultStreamReplayTTL),
 		KafkaBrokers:                getenvList("KAFKA_BROKERS", []string{"127.0.0.1:9092"}),
 		KafkaWorkflowTopic:          getenv("KAFKA_WORKFLOW_TOPIC", defaultKafkaTopic),
 		KafkaStreamTopic:            getenv("KAFKA_STREAM_TOPIC", defaultKafkaStreamTopic),

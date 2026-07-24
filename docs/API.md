@@ -983,6 +983,7 @@ Server behavior:
 - the server always sends one complete, filtered `turn.snapshot` first
 - if the turn is completed, failed, or cancelled, it then sends `turn.done` and closes
 - if the turn is still running, it continues with canonical item mutation events, then reconciles durable state and sends a final authoritative `turn.snapshot` before `turn.done`
+- active and recently terminal turns use a Redis replay cache to reconstruct the initial snapshot without reading the full PostgreSQL timeline; Redis cache misses fall back to the durable snapshot
 - terminal snapshots include `started_at` and either `completed_at` or `failed_at`, so clients do not need a separate turn fetch to calculate elapsed time
 - if live terminal delivery is missed, polling performs the same final `turn.snapshot` and `turn.done` reconciliation
 - the server sends SSE keep-alive comments every 30 seconds
@@ -1354,7 +1355,8 @@ If the frontend reconnects after a delay, it can reopen `GET /turns/:turnID/stre
 
 - if the turn already completed, the endpoint sends `turn.snapshot`, then completed `turn.done`
 - if the turn already failed, the endpoint sends `turn.snapshot`, then failed `turn.done`
-- if the turn is running, `turn.snapshot` is followed by live item mutations
+- if the turn is running, `turn.snapshot` includes the active Redis replay state and is followed by live item mutations
+- during the same browser session, the client may render its cached active snapshot before reconnecting; the server `turn.snapshot` remains authoritative and replaces it
 
 This makes the stream endpoint safe to use as both a live stream and a terminal-result fetch path.
 

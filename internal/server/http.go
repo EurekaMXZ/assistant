@@ -15,6 +15,12 @@ type turnStreamSubscriber interface {
 	SubscribeEvents(ctx context.Context, turnID string) (io.Closer, <-chan stream.Event, error)
 }
 
+type turnStreamReplaySubscriber interface {
+	turnStreamSubscriber
+	ReplayEvents(ctx context.Context, turnID string) ([]stream.Event, bool, error)
+	SubscribeEventsWithReplay(ctx context.Context, turnID string) (io.Closer, []stream.Event, bool, <-chan stream.Event, error)
+}
+
 type API struct {
 	useCases  UseCases
 	streamHub turnStreamSubscriber

@@ -7,6 +7,7 @@ type Settings struct {
 	Password      string
 	DB            int
 	ChannelPrefix string
+	ReplayTTL     time.Duration
 	ContextPrefix string
 	ContextTTL    time.Duration
 }

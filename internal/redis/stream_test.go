@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,47 @@ func TestForwardEventsStopsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for event channel to close")
+	}
+}
+
+func TestForwardEventsAfterReplaySkipsDeltasAlreadyInReplay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	source := make(chan *goredis.Message, 3)
+	events := forwardEventsAfterReplay(ctx, []stream.Event{{
+		Type: "response.output_text.delta", TurnID: "turn-1", RunID: "run-1", ItemID: "item-1", Delta: "hello",
+	}}, source)
+	source <- &goredis.Message{Payload: `{"type":"response.output_text.delta","turn_id":"turn-1","run_id":"run-1","item_id":"item-1","delta":"hel"}`}
+	source <- &goredis.Message{Payload: `{"type":"response.output_text.delta","turn_id":"turn-1","run_id":"run-1","item_id":"item-1","delta":"lo"}`}
+	source <- &goredis.Message{Payload: `{"type":"response.output_text.delta","turn_id":"turn-1","run_id":"run-1","item_id":"item-1","delta":"!"}`}
+	close(source)
+
+	select {
+	case event, ok := <-events:
+		if !ok {
+			t.Fatal("expected the delta published after replay")
+		}
+		if event.Delta != "!" {
+			t.Fatalf("delta = %q, want !", event.Delta)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for replay-filtered event")
+	}
+	if _, ok := <-events; ok {
+		t.Fatal("expected replay-filtered channel to close")
+	}
+}
+
+func TestReplayPayloadWithoutGeneratedImageDataPreservesOtherResponseFields(t *testing.T) {
+	payload := `{"type":"response.completed","response":{"id":"resp-1","output":[{"type":"message","content":[{"type":"output_text","text":"Answer"}]},{"type":"image_generation_call","id":"image-1","result":"base64-image-data"}]}}`
+
+	got := replayPayloadWithoutGeneratedImageData(payload)
+	if strings.Contains(got, "base64-image-data") || strings.Contains(got, `"result"`) {
+		t.Fatalf("generated image data was retained: %s", got)
+	}
+	if !strings.Contains(got, `"text":"Answer"`) || !strings.Contains(got, `"id":"image-1"`) {
+		t.Fatalf("non-image response data was lost: %s", got)
 	}
 }
 

@@ -100,6 +100,9 @@ func TestArchivingStreamPublisherForwardsLiveDeltasAndPersistsOnlyCompletedItems
 	if next.events[2].EventIndex != 1 {
 		t.Fatalf("forwarded durable event index = %d, want 1", next.events[2].EventIndex)
 	}
+	if next.events[2].Text != "hello" {
+		t.Fatalf("forwarded completed text = %q, want hello", next.events[2].Text)
+	}
 }
 
 func TestArchivingStreamPublisherFlushesInterruptedTextOnFailure(t *testing.T) {

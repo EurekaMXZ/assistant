@@ -84,6 +84,14 @@ func TestLoadReadsOpenAIUserAgent(t *testing.T) {
 	}
 }
 
+func TestLoadReadsStreamReplayTTL(t *testing.T) {
+	t.Setenv("STREAM_REPLAY_TTL", "45m")
+
+	if got := Load().StreamReplayTTL; got != 45*time.Minute {
+		t.Fatalf("StreamReplayTTL = %v, want 45m", got)
+	}
+}
+
 func TestLoadDoesNotDefaultWebOrigin(t *testing.T) {
 	t.Setenv("WEB_ORIGIN", "")
 

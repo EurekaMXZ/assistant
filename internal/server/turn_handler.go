@@ -142,29 +142,56 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 	initiallyTerminal := terminal
 
 	var (
-		sub     io.Closer
-		channel <-chan stream.Event
+		sub         io.Closer
+		channel     <-chan stream.Event
+		replay      []stream.Event
+		replayFound bool
 	)
+	replayHub, supportsReplay := a.streamHub.(turnStreamReplaySubscriber)
 	if !terminal {
 		if a.streamHub == nil {
 			writeError(c, http.StatusServiceUnavailable, "streaming is not configured")
 			return
 		}
 		var err error
-		sub, channel, err = a.streamHub.SubscribeEvents(c.Request.Context(), turn.ID)
+		if supportsReplay {
+			sub, replay, replayFound, channel, err = replayHub.SubscribeEventsWithReplay(c.Request.Context(), turn.ID)
+		} else {
+			sub, channel, err = a.streamHub.SubscribeEvents(c.Request.Context(), turn.ID)
+		}
 		if err != nil {
 			writeError(c, http.StatusServiceUnavailable, err.Error())
 			return
 		}
 		defer sub.Close()
+	} else if supportsReplay {
+		var err error
+		replay, replayFound, err = replayHub.ReplayEvents(c.Request.Context(), turn.ID)
+		if err != nil {
+			replayFound = false
+		}
 	}
 
 	itemRegistry := newPresentationItemRegistry()
 	eventChain := newPresentationEventChain()
-	snapshot, lastResponseID, outputSlots, lastEventIndex, err := a.loadTurnStreamSnapshot(c.Request.Context(), userID, turn, itemRegistry)
-	if err != nil {
-		writeAPIError(c, err)
-		return
+	var snapshot TurnStreamSnapshot
+	var lastResponseID string
+	var outputSlots *responseOutputSlotResolver
+	var lastEventIndex int64
+	if replayFound {
+		var replayErr error
+		snapshot, lastResponseID, outputSlots, lastEventIndex, replayErr = turnStreamSnapshotFromReplay(turn, replay, itemRegistry)
+		if replayErr != nil {
+			replayFound = false
+		}
+	}
+	if !replayFound {
+		var err error
+		snapshot, lastResponseID, outputSlots, lastEventIndex, err = a.loadTurnStreamSnapshot(c.Request.Context(), userID, turn, itemRegistry)
+		if err != nil {
+			writeAPIError(c, err)
+			return
+		}
 	}
 	presentationState := newPresentationStreamState(turn, itemRegistry, snapshot.Items)
 	presentationState.responseID(lastResponseID)
@@ -301,7 +328,7 @@ func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWrit
 	if turn == nil || !isTurnStreamTerminal(turn.Status) {
 		return errors.New("terminal stream event arrived before durable turn completion")
 	}
-	snapshot, _, _, _, err := a.loadTurnStreamSnapshot(ctx, ownerUserID, turn, items)
+	snapshot, _, _, _, err := a.loadTurnStreamSnapshotWithReplay(ctx, ownerUserID, turn, items)
 	if err != nil {
 		return err
 	}
@@ -320,6 +347,43 @@ func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWrit
 		ErrorCode:      errorCode,
 		Error:          publicError,
 	})
+}
+
+func (a *API) loadTurnStreamSnapshotWithReplay(ctx context.Context, ownerUserID string, turn *domain.Turn, items *presentationItemRegistry) (TurnStreamSnapshot, string, *responseOutputSlotResolver, int64, error) {
+	if replayHub, ok := a.streamHub.(turnStreamReplaySubscriber); ok {
+		events, found, err := replayHub.ReplayEvents(ctx, turn.ID)
+		if err == nil && found {
+			snapshot, responseID, outputSlots, eventIndex, replayErr := turnStreamSnapshotFromReplay(turn, events, items)
+			if replayErr == nil {
+				return snapshot, responseID, outputSlots, eventIndex, nil
+			}
+		}
+	}
+	return a.loadTurnStreamSnapshot(ctx, ownerUserID, turn, items)
+}
+
+func turnStreamSnapshotFromReplay(turn *domain.Turn, events []stream.Event, items *presentationItemRegistry) (TurnStreamSnapshot, string, *responseOutputSlotResolver, int64, error) {
+	state := newPresentationStreamState(turn, items, nil)
+	chain := newPresentationEventChain()
+	lastEventIndex := int64(0)
+	for _, event := range events {
+		if event.EventIndex > lastEventIndex {
+			lastEventIndex = event.EventIndex
+		}
+		if _, err := chain.Dispatch(state, event, time.Now().UTC()); err != nil {
+			return TurnStreamSnapshot{}, "", nil, 0, err
+		}
+	}
+	projected := appendMissingTerminalStatus(state.reducer.FinalItems(), turn)
+	return TurnStreamSnapshot{
+		TurnID:         turn.ID,
+		ConversationID: turn.ConversationID,
+		Status:         turn.Status,
+		Items:          items.FilterAll(projected),
+		StartedAt:      turn.StartedAt,
+		CompletedAt:    turn.CompletedAt,
+		FailedAt:       turn.FailedAt,
+	}, state.responseID(""), state.outputSlots, lastEventIndex, nil
 }
 
 func isTurnStreamTerminal(status string) bool {

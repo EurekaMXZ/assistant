@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,12 +34,33 @@ type stubStreamSubscriber struct {
 	closed       bool
 }
 
+type stubReplayStreamSubscriber struct {
+	stubStreamSubscriber
+	replay    []stream.Event
+	found     bool
+	replayErr error
+	replayHit int
+}
+
 func (s *stubStreamSubscriber) SubscribeEvents(context.Context, string) (io.Closer, <-chan stream.Event, error) {
 	s.subscribeHit++
 	if s.err != nil {
 		return nil, nil, s.err
 	}
 	return stubSubscription{closed: &s.closed}, s.channel, nil
+}
+
+func (s *stubReplayStreamSubscriber) ReplayEvents(context.Context, string) ([]stream.Event, bool, error) {
+	s.replayHit++
+	return append([]stream.Event(nil), s.replay...), s.found, s.replayErr
+}
+
+func (s *stubReplayStreamSubscriber) SubscribeEventsWithReplay(context.Context, string) (io.Closer, []stream.Event, bool, <-chan stream.Event, error) {
+	s.subscribeHit++
+	if s.err != nil {
+		return nil, nil, false, nil, s.err
+	}
+	return stubSubscription{closed: &s.closed}, append([]stream.Event(nil), s.replay...), s.found, s.channel, s.replayErr
 }
 
 func TestHandleStreamTurnCompletedWritesTerminalEventWithoutSubscribing(t *testing.T) {
@@ -99,6 +121,95 @@ func TestHandleStreamTurnCompletedWritesTerminalEventWithoutSubscribing(t *testi
 	}
 	if !strings.Contains(body, "event: turn.done") {
 		t.Fatalf("expected terminal SSE event, got %q", body)
+	}
+}
+
+func TestHandleStreamTurnCompletedUsesReplayBeforePostgresTimeline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	streamHub := &stubReplayStreamSubscriber{
+		found: true,
+		replay: []stream.Event{{
+			Type:           "response.output_text.delta",
+			ConversationID: "conv-1",
+			TurnID:         "turn-replay",
+			ResponseID:     "resp-1",
+			ItemID:         "item-1",
+			Delta:          "cached answer",
+			Payload:        `{"type":"response.output_text.delta","response_id":"resp-1","item_id":"item-1","output_index":0,"content_index":0,"delta":"cached answer"}`,
+		}},
+	}
+	timelineLookups := 0
+	srv := newTestServerWithStream(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
+			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
+		}},
+		Turns: TurnUseCases{GetTurn: func(context.Context, string, string) (*domain.Turn, error) {
+			return &domain.Turn{ID: "turn-replay", ConversationID: "conv-1", Status: domain.TurnStatusCompleted}, nil
+		}, GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
+			timelineLookups++
+			return nil, errors.New("replay should prevent timeline query")
+		}},
+	}, streamHub)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/turns/turn-replay/stream", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if streamHub.replayHit != 1 || streamHub.subscribeHit != 0 {
+		t.Fatalf("replay=%d subscriptions=%d, want replay-only terminal snapshot", streamHub.replayHit, streamHub.subscribeHit)
+	}
+	if timelineLookups != 0 {
+		t.Fatalf("timeline lookups = %d, want 0", timelineLookups)
+	}
+	if !strings.Contains(rec.Body.String(), `"content_text":"cached answer"`) {
+		t.Fatalf("expected cached output in terminal snapshot, got %q", rec.Body.String())
+	}
+}
+
+func TestHandleStreamTurnActiveUsesReplayBeforePostgresTimeline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	channel := make(chan stream.Event)
+	close(channel)
+	streamHub := &stubReplayStreamSubscriber{
+		stubStreamSubscriber: stubStreamSubscriber{channel: channel},
+		found:                true,
+		replay: []stream.Event{{
+			Type:           "response.output_text.delta",
+			ConversationID: "conv-1",
+			TurnID:         "turn-active-replay",
+			ResponseID:     "resp-1",
+			ItemID:         "item-1",
+			Delta:          "before refresh",
+			Payload:        `{"type":"response.output_text.delta","response_id":"resp-1","item_id":"item-1","output_index":0,"content_index":0,"delta":"before refresh"}`,
+		}},
+	}
+	timelineLookups := 0
+	srv := newTestServerWithStream(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: func(context.Context, string) (*domain.User, error) {
+			return &domain.User{ID: "user-1", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil
+		}},
+		Turns: TurnUseCases{GetTurn: func(context.Context, string, string) (*domain.Turn, error) {
+			return &domain.Turn{ID: "turn-active-replay", ConversationID: "conv-1", Status: domain.TurnStatusProcessing}, nil
+		}, GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
+			timelineLookups++
+			return nil, errors.New("replay should prevent timeline query")
+		}},
+	}, streamHub)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/turns/turn-active-replay/stream", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if streamHub.subscribeHit != 1 || !streamHub.closed {
+		t.Fatalf("subscriptions=%d closed=%v, want active replay subscription", streamHub.subscribeHit, streamHub.closed)
+	}
+	if timelineLookups != 0 {
+		t.Fatalf("timeline lookups = %d, want 0", timelineLookups)
+	}
+	if !strings.Contains(rec.Body.String(), `"content_text":"before refresh"`) {
+		t.Fatalf("expected cached output in active snapshot, got %q", rec.Body.String())
 	}
 }
 

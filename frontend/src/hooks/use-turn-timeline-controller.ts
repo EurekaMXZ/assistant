@@ -30,11 +30,18 @@ import {
 } from "@/lib/turn-timeline-state";
 import { runTurnStreamController } from "@/lib/turn-stream-controller";
 import {
+  clearActiveTurnSnapshot,
+  readActiveTurnSnapshot,
+  writeActiveTurnSnapshot,
+} from "@/lib/active-turn-cache";
+import {
+  appendTimelineDelta,
   dispatchTurnStreamEvent,
   isAssistantInteractionItem,
   isAssistantImageItem,
   isAssistantOutputItem,
   isTimelineItem,
+  upsertTimelineItem,
   type ConversationPresentationUpdate,
   type TurnStreamDispatchContext,
 } from "@/lib/turn-stream-events";
@@ -63,6 +70,7 @@ export interface TurnTimelineController {
   initializeTurns: (turns: Turn[]) => void;
   openTimeline: (turnId: string, activeTurnId: string | null) => void;
   registerTurn: (turn: Turn) => void;
+  restoreActiveTurn: (turnId: string) => boolean;
 }
 
 export function useTurnTimelineController({
@@ -74,6 +82,7 @@ export function useTurnTimelineController({
   const projectionRef = useRef(projection);
   const [timelineTurnId, setTimelineTurnId] = useState<string | null>(null);
   const pendingDoneTextMessageIdRef = useRef<string | null>(null);
+  const activeSnapshotsRef = useRef(new Map<string, TurnStreamSnapshot>());
   const hydrationControllersRef = useRef(new Map<string, AbortController>());
   const activeConversationIdRef = useRef(conversationId);
   const mountedRef = useRef(true);
@@ -104,6 +113,7 @@ export function useTurnTimelineController({
     }
     hydrationControllersRef.current.clear();
     pendingDoneTextMessageIdRef.current = null;
+    activeSnapshotsRef.current.clear();
     const initial = createTurnTimelineState();
     projectionRef.current = initial;
     setProjection(initial);
@@ -177,6 +187,28 @@ export function useTurnTimelineController({
     [setMessages],
   );
 
+  const cacheActiveSnapshot = useCallback(
+    (turnId: string, snapshot: TurnStreamSnapshot) => {
+      if (["completed", "failed", "cancelled"].includes(snapshot.status)) {
+        activeSnapshotsRef.current.delete(turnId);
+        clearActiveTurnSnapshot(conversationId, turnId);
+        return;
+      }
+      activeSnapshotsRef.current.set(turnId, snapshot);
+      writeActiveTurnSnapshot(snapshot);
+    },
+    [conversationId],
+  );
+
+  const updateActiveSnapshot = useCallback(
+    (turnId: string, update: (snapshot: TurnStreamSnapshot) => TurnStreamSnapshot) => {
+      const snapshot = activeSnapshotsRef.current.get(turnId);
+      if (!snapshot) return;
+      cacheActiveSnapshot(turnId, update(snapshot));
+    },
+    [cacheActiveSnapshot],
+  );
+
   const createStreamContext = useCallback(
     (turnId: string, mode: TurnStreamMode): TurnStreamDispatchContext => {
       const mirrorMessages = mode !== "panel";
@@ -184,6 +216,7 @@ export function useTurnTimelineController({
         onSnapshot(snapshot) {
           if (mirrorMessages) settlePendingThinkingForSnapshot(snapshot, turnId);
           applyAction({ type: "snapshot", turnId, snapshot });
+          if (mode === "active") cacheActiveSnapshot(turnId, snapshot);
           if (mirrorMessages) {
             const thinkingState = assistantTimelineThinkingState(turnId, snapshot.items);
             pendingDoneTextMessageIdRef.current =
@@ -206,6 +239,12 @@ export function useTurnTimelineController({
             item,
           });
           if (!accepted) return;
+          if (mode === "active") {
+            updateActiveSnapshot(turnId, (snapshot) => ({
+              ...snapshot,
+              items: upsertTimelineItem(snapshot.items, item),
+            }));
+          }
           const content = item.content_text;
           if (mirrorMessages && isAssistantOutputItem(item) && content != null) {
             setMessages((previous) =>
@@ -237,6 +276,12 @@ export function useTurnTimelineController({
             delta,
           });
           if (!accepted) return;
+          if (mode === "active") {
+            updateActiveSnapshot(turnId, (snapshot) => ({
+              ...snapshot,
+              items: appendTimelineDelta(snapshot.items, delta),
+            }));
+          }
           if (mirrorMessages && delta.item_type === "output_text") {
             setMessages((previous) =>
               upsertAssistantTextContent(
@@ -259,6 +304,12 @@ export function useTurnTimelineController({
             item,
           });
           if (!accepted) return;
+          if (mode === "active") {
+            updateActiveSnapshot(turnId, (snapshot) => ({
+              ...snapshot,
+              items: upsertTimelineItem(snapshot.items, item),
+            }));
+          }
           const content = item.content_text;
           if (mirrorMessages && isAssistantOutputItem(item) && content != null) {
             setMessages((previous) =>
@@ -292,7 +343,11 @@ export function useTurnTimelineController({
         onTurnDone(done) {
           if (mirrorMessages) settlePendingThinkingForOtherEvent(turnId, false);
           applyAction({ type: "turn-done", turnId, done });
-          if (mode === "active") pendingDoneTextMessageIdRef.current = null;
+          if (mode === "active") {
+            pendingDoneTextMessageIdRef.current = null;
+            activeSnapshotsRef.current.delete(turnId);
+            clearActiveTurnSnapshot(conversationId, turnId);
+          }
           if (mirrorMessages && done.status === "failed") {
             setMessages((previous) =>
               upsertTurnFailureMessage(
@@ -314,12 +369,14 @@ export function useTurnTimelineController({
     },
     [
       applyAction,
+      cacheActiveSnapshot,
       conversationId,
       onConversationUpdated,
       setMessages,
       settlePendingThinkingForItem,
       settlePendingThinkingForOtherEvent,
       settlePendingThinkingForSnapshot,
+      updateActiveSnapshot,
     ],
   );
 
@@ -413,9 +470,20 @@ export function useTurnTimelineController({
   const finishActiveTurn = useCallback(
     (turnId: string) => {
       pendingDoneTextMessageIdRef.current = null;
+      activeSnapshotsRef.current.delete(turnId);
+      clearActiveTurnSnapshot(conversationId, turnId);
       applyAction({ type: "set-loading", turnId, loading: false });
     },
-    [applyAction],
+    [applyAction, conversationId],
+  );
+  const restoreActiveTurn = useCallback(
+    (turnId: string) => {
+      const snapshot = readActiveTurnSnapshot(conversationId, turnId);
+      if (!snapshot) return false;
+      createStreamContext(turnId, "active").onSnapshot(snapshot);
+      return true;
+    },
+    [conversationId, createStreamContext],
   );
   const timelineActivityLabels = useMemo(() => {
     const labels: Record<string, string | null> = {};
@@ -440,5 +508,6 @@ export function useTurnTimelineController({
     initializeTurns,
     openTimeline,
     registerTurn,
+    restoreActiveTurn,
   };
 }

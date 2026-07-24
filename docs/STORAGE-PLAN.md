@@ -180,10 +180,12 @@ While a Turn is active, the frontend combines:
 
 ```text
 PostgreSQL complete events
-+ Redis/SSE live deltas after the last durable presentation event
++ Redis/SSE replay state and live deltas after the last durable presentation event
 ```
 
 After an output item completes, the complete DB event replaces the temporary live delta state.
+Redis keeps an active-turn replay cache for one hour and a per-output aggregate delta cache for fifteen minutes. These are acceleration layers only: a cache miss falls back to PostgreSQL complete events, and Redis loss never changes the durable turn result.
+During one browser session, the frontend also caches the rendered active snapshot by conversation and turn. It restores that snapshot before reopening SSE and clears it when the turn reaches a terminal state; the next server snapshot is authoritative.
 
 ### 5.5 No frontend projection database
 
