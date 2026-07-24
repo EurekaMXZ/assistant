@@ -8,20 +8,20 @@ import (
 )
 
 type TurnExecutionTrace struct {
-	TurnID           string             `json:"turn_id"`
-	ConversationID   string             `json:"conversation_id"`
-	Status           string             `json:"status"`
-	RequestBlobKey   string             `json:"request_blob_key,omitempty"`
-	ResponseBlobKey  string             `json:"response_blob_key,omitempty"`
-	OpenAIResponseID string             `json:"openai_response_id,omitempty"`
-	ErrorCode        string             `json:"error_code,omitempty"`
-	ErrorMessage     string             `json:"error_message,omitempty"`
-	StartedAt        *time.Time         `json:"started_at,omitempty"`
-	CompletedAt      *time.Time         `json:"completed_at,omitempty"`
-	FailedAt         *time.Time         `json:"failed_at,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
-	Runs             []TurnRunTrace     `json:"runs"`
+	TurnID           string         `json:"turn_id"`
+	ConversationID   string         `json:"conversation_id"`
+	Status           string         `json:"status"`
+	RequestBlobKey   string         `json:"request_blob_key,omitempty"`
+	ResponseBlobKey  string         `json:"response_blob_key,omitempty"`
+	OpenAIResponseID string         `json:"openai_response_id,omitempty"`
+	ErrorCode        string         `json:"error_code,omitempty"`
+	ErrorMessage     string         `json:"error_message,omitempty"`
+	StartedAt        *time.Time     `json:"started_at,omitempty"`
+	CompletedAt      *time.Time     `json:"completed_at,omitempty"`
+	FailedAt         *time.Time     `json:"failed_at,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	Runs             []TurnRunTrace `json:"runs"`
 }
 
 type TurnRunTrace struct {

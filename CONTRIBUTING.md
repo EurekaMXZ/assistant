@@ -43,3 +43,12 @@ git commit \
   -m "fix(chat): render persistent shell command output" \
   -m $'- route sandbox.shell_connect through the terminal timeline presentation\n- add regression coverage for command output and exit status rendering'
 ```
+
+## Required Checks
+
+Before creating a commit, run the checks that apply to its changed areas:
+
+- For Go changes, format changed files with `gofmt -w`, then run `go vet ./...` and `go test ./...`.
+- For frontend changes, from `frontend/`, format changed files with Prettier, then run `pnpm format:check`, `pnpm lint`, and `pnpm test`.
+- Run `pnpm build` for frontend changes that can affect production compilation or rendering.
+- For documentation or configuration changes, run `git diff --check`.
