@@ -20,6 +20,8 @@ const (
 	EventTurnDone             = "turn.done"
 	EventConversationUpdated  = "conversation.updated"
 	EventSandboxUpdated       = "sandbox.updated"
+	EventImagePreview         = "image_generation.preview"
+	EventImageCompleted       = "image_generation.completed"
 )
 
 const (

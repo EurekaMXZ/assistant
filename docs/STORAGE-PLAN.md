@@ -28,6 +28,7 @@ The following decisions are explicit:
 - Redis stores the entire serialized model context in one key for a context version. Redis big-key segmentation is explicitly deferred.
 - Images remain in S3. Redis and local context snapshots contain image references, not base64 data.
 - Before each provider request, the Worker downloads referenced images from S3, verifies them, converts them to base64 data URLs, and releases the bytes after the request.
+- Provider-generated image base64 is consumed at the OpenAI adapter boundary. It is never published to Kafka, Redis, PostgreSQL, or the frontend presentation stream.
 - Provider-managed state, provider Files APIs, external image URLs, and `previous_response_id` optimizations are outside this phase.
 
 ## 2. Goals
@@ -220,6 +221,8 @@ The complete-event accumulator must:
 
 Kafka retention must exceed the maximum expected recovery window. Redis remains a live-delivery mechanism rather than a durable event source.
 
+Image-generation preview transport uses the same ordering path but carries metadata only. On each `response.image_generation_call.partial_image`, the Worker decodes and verifies the standalone snapshot, writes an immutable S3 object, indexes it in `generated_image_assets`, and publishes `image_generation.preview` with the asset ID, revision, content type, dimensions, and size. The base64 field is removed before the event reaches Kafka or live delivery.
+
 ## 7. S3 request/run storage
 
 ### 7.1 Object layout
@@ -245,13 +248,15 @@ Only objects applicable to a run need to exist.
 
 | Object | Meaning |
 | --- | --- |
-| `request.json.zst` | Canonical request manifest sent for this run, using S3 image references instead of cached base64 |
+| `request.json.zst` | Canonical request manifest used to construct this run, using S3 image references instead of cached base64 |
 | `response.json.zst` | Complete raw provider response after provider success |
 | `output-items.json.zst` | Normalized provider output items required by later context construction |
 | `tool-results.json.zst` | Durable tool outputs associated with the request step |
 | `presentation-events.json.zst` | Complete DB-level semantic events produced by this run, used for archive recovery |
 | `context-checkpoint.json.zst` | Complete resumable `[]ModelItem` state after the successful request and required tool processing |
 | `failure.json.zst` | Provider or workflow failure details that should not be placed in frontend event payloads |
+
+`request.json.zst` is the canonical reproducible manifest, not a byte-for-byte copy of the hydrated HTTP request. The model result records the hydrated wire request size and SHA-256 for correlation. Reproduction is defined by the manifest, immutable media objects, and serializer version. This avoids retaining a second copy of image base64 in request artifacts.
 
 ### 7.3 Immutable writes
 
@@ -519,6 +524,13 @@ An image object referenced by an active context checkpoint or archived request m
 
 Missing or checksum-invalid image objects are hard context errors. The Worker must not silently omit an image and send a semantically different request.
 
+Generated output images use two lifetimes:
+
+- `partial` assets are transient previews under `generated-image-previews/{conversation}/{turn}/{run}/{item}/`. They do not count against attachment quota, expire after `IMAGE_GENERATION_PREVIEW_TTL`, and are removed by a dedicated reaper.
+- `final` assets point at the durable generated-image attachment. They follow attachment retention and remain available to model context through immutable S3 references.
+
+Historical `image_generation_call` items are sent back to Responses as `{type, id}`. Their S3 `result_ref` remains an internal recovery reference and is never hydrated back into a provider `result` field. When an image must be supplied as pixels rather than referenced by its provider item ID, the final attachment is injected as an ordinary `input_image` and follows the existing size and checksum validation path.
+
 ## 13. Request lifecycle
 
 ### 13.1 Request preparation
@@ -534,6 +546,8 @@ Missing or checksum-invalid image objects are hard context errors. The Worker mu
 8. Hydrate image references into base64.
 9. Call the provider.
 ```
+
+The hydration step applies to `input_image` attachment references. Generated image tool-call references are serialized by provider item ID and do not reload the generated base64 result.
 
 ### 13.2 Successful request
 
@@ -684,6 +698,7 @@ The following rules are mandatory:
 | Redis complete context | TTL cache, initially 30 minutes to 6 hours |
 | Worker-local context | Process lifetime and local eviction |
 | S3 request/run artifacts | Long-term according to account retention and deletion policy |
+| S3 partial image previews | Short-lived; initially 24 hours |
 | Legacy Turn-level stream objects | Retain until migration verification completes |
 
 ## 18. Migration plan
@@ -781,6 +796,8 @@ Initial acceptance criteria:
 - A failed or cancelled latest run leaves the previous successful checkpoint usable.
 - Redis unavailability does not prevent context construction.
 - Images are absent from Redis snapshots and are hydrated from S3 before provider calls.
+- Generated image base64 is absent from Kafka, PostgreSQL complete events, persisted workflow outcomes, and frontend SSE frames.
+- Partial previews remain available after reconnect through `generated_image_assets`, and the final attachment replaces the latest preview without creating duplicate chat images.
 - Complete DB events reproduce the same settled frontend content as the live stream.
 - Every committed S3 pointer passes checksum verification.
 

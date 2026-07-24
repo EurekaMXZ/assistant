@@ -29,6 +29,7 @@ type TurnRunner struct {
 	conversations        ConversationReader
 	profiles             PersonalizationReader
 	generatedAttachments GeneratedAttachmentStore
+	generatedImageAssets GeneratedImageAssetStore
 	sandboxes            tool.ConversationSandboxReader
 	runs                 TurnRunWorkflowStore
 	completeEvents       CompleteEventRunStore
@@ -288,6 +289,7 @@ func (r *TurnRunner) retryModelInput(ctx context.Context, conversationID string,
 	lastUserIndex := -1
 	for _, rawItem := range request.Input {
 		var header struct {
+			ID   string `json:"id"`
 			Type string `json:"type"`
 			Role string `json:"role"`
 		}
@@ -295,6 +297,7 @@ func (r *TurnRunner) retryModelInput(ctx context.Context, conversationID string,
 			return nil, fmt.Errorf("decode retry source input item: %w", err)
 		}
 		item := llm.ModelItem{
+			ID:   header.ID,
 			Type: header.Type,
 			Role: header.Role,
 			Raw:  append(json.RawMessage(nil), rawItem...),
@@ -481,6 +484,9 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 				}
 				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
 			}
+			if err := r.externalizeGeneratedImages(runCtx, &domain.Turn{ID: claimed.TurnID, ConversationID: event.ConversationID}, claimed.ID, outcome); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
 			responseKey, resultKey, err = r.tools.PersistScheduledRunOutcome(runCtx, state.Scope, claimed, outcome)
 			if err != nil {
 				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
@@ -489,6 +495,9 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		if err := r.runs.CheckpointScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey); err != nil {
 			return err
 		}
+	}
+	if err := r.externalizeGeneratedImages(ctx, &domain.Turn{ID: claimed.TurnID, ConversationID: event.ConversationID}, claimed.ID, outcome); err != nil {
+		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
 	}
 	if !outcome.Postprocessed {
 		if state == nil {
@@ -547,9 +556,6 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		if err := r.runs.CheckpointScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey); err != nil {
 			return err
 		}
-	}
-	if err := r.externalizeGeneratedImages(ctx, &domain.Turn{ID: claimed.TurnID, ConversationID: event.ConversationID}, outcome); err != nil {
-		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
 	}
 	if state == nil && outcome.NextState == nil {
 		state, err = r.tools.LoadScheduledRunState(runCtx, claimed.StateBlobKey)
@@ -675,7 +681,7 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 	}
 
 	turn := &domain.Turn{ID: run.TurnID, ConversationID: event.ConversationID}
-	if err := r.externalizeGeneratedImages(ctx, turn, outcome); err != nil {
+	if err := r.externalizeGeneratedImages(ctx, turn, run.ID, outcome); err != nil {
 		return r.failTurn(ctx, turn, r.blobs.TurnRequestKey(turn.ConversationID, turn.ID), r.blobs.TurnStreamKey(turn.ConversationID, turn.ID), domain.TurnErrorGeneratedImageFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	responseKey := r.blobs.TurnResponseKey(turn.ConversationID, turn.ID)
@@ -705,7 +711,15 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		return r.failTurn(ctx, turn, summary.RequestBlobKey, summary.StreamBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
 	assistantDrafts = append(assistantDrafts, attachmentDrafts...)
-	assistantDrafts = append(assistantDrafts, outcome.GeneratedImageDrafts...)
+	generatedImageDrafts, err := r.generatedImageDraftsForTurn(ctx, turn)
+	if err != nil {
+		return r.failTurn(ctx, turn, summary.RequestBlobKey, summary.StreamBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	if len(generatedImageDrafts) > 0 {
+		assistantDrafts = append(assistantDrafts, generatedImageDrafts...)
+	} else {
+		assistantDrafts = append(assistantDrafts, outcome.GeneratedImageDrafts...)
+	}
 	compactTriggerTokens := r.compactTriggerTokens(ctx, turn.ID, outcome.ContextWindowTokens)
 	completedTurn, assistantMessages, updatedHead, _, err := r.store.FinalizeTurnSuccess(ctx, turn.ID, assistantDrafts, summary, compactTriggerTokens)
 	if err != nil {
@@ -875,6 +889,12 @@ func (r *TurnRunner) modelEventHandler(ctx context.Context, turn *domain.Turn, r
 	var transportSeq int64
 	return func(evt llm.ModelEvent) error {
 		if strings.TrimSpace(evt.Type) == "" {
+			return nil
+		}
+		if evt.Type == "response.image_generation_call.partial_image" {
+			if err := r.persistGeneratedImagePartial(ctx, turn, runID, evt); err != nil && r.logger != nil {
+				r.logger.Printf("persist partial generated image for turn %s: %v", turn.ID, err)
+			}
 			return nil
 		}
 

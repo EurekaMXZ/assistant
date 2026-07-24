@@ -41,14 +41,19 @@ type turnTimelineMessageLister interface {
 	ListAssistantMessagesByTurn(ctx context.Context, turnID string) ([]domain.Message, error)
 }
 
+type turnTimelineGeneratedImageLister interface {
+	ListGeneratedImageAssetsByTurn(ctx context.Context, turnID string) ([]domain.GeneratedImageAsset, error)
+}
+
 type GetTurnTimeline struct {
-	Turns          executionTraceTurnGetter
-	Events         turnTimelineEventLister
-	CompleteEvents turnTimelineConversationEventLister
-	Runs           turnRunLister
-	ToolCalls      toolCallLister
-	Messages       turnTimelineMessageLister
-	Artifacts      turnRunArtifactReader
+	Turns           executionTraceTurnGetter
+	Events          turnTimelineEventLister
+	CompleteEvents  turnTimelineConversationEventLister
+	Runs            turnRunLister
+	ToolCalls       toolCallLister
+	Messages        turnTimelineMessageLister
+	Artifacts       turnRunArtifactReader
+	GeneratedImages turnTimelineGeneratedImageLister
 }
 
 type reasoningTimelineItem struct {
@@ -160,7 +165,7 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 				return nil, err
 			}
 			timeline.Items = appendMissingAssistantMessages(items, turn, assistantMessages)
-			return timeline, nil
+			return uc.appendGeneratedImageAssets(ctx, timeline)
 		}
 	}
 
@@ -190,7 +195,7 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 			return nil, err
 		}
 		timeline.Items = appendMissingAssistantMessages(items, turn, assistantMessages)
-		return timeline, nil
+		return uc.appendGeneratedImageAssets(ctx, timeline)
 	}
 
 	reasoningItems, err := uc.loadReasoningItems(ctx, turn, runs)
@@ -203,7 +208,65 @@ func (uc GetTurnTimeline) Execute(ctx context.Context, turnID string) (*TurnTime
 		return nil, err
 	}
 	timeline.Items = items
+	return uc.appendGeneratedImageAssets(ctx, timeline)
+}
+
+func (uc GetTurnTimeline) appendGeneratedImageAssets(ctx context.Context, timeline *TurnTimeline) (*TurnTimeline, error) {
+	if timeline == nil || uc.GeneratedImages == nil {
+		return timeline, nil
+	}
+	assets, err := uc.GeneratedImages.ListGeneratedImageAssetsByTurn(ctx, timeline.TurnID)
+	if err != nil {
+		return nil, err
+	}
+	if len(assets) == 0 {
+		return timeline, nil
+	}
+	selected := make(map[string]domain.GeneratedImageAsset)
+	for _, asset := range assets {
+		key := strings.TrimSpace(asset.ResponseID) + ":" + strings.TrimSpace(asset.ItemID)
+		current, exists := selected[key]
+		if !exists || asset.Kind == domain.GeneratedImageKindFinal || (current.Kind != domain.GeneratedImageKindFinal && asset.Revision > current.Revision) {
+			selected[key] = asset
+		}
+	}
+	indexes := make(map[string]int, len(timeline.Items))
+	for index, item := range timeline.Items {
+		indexes[item.ID] = index
+	}
+	for _, asset := range selected {
+		status := "generating"
+		if asset.Kind == domain.GeneratedImageKindFinal {
+			status = "completed"
+		}
+		itemID := stableTimelineImageGenerationItemID(asset.ResponseID, asset.ItemID, 0, asset.TurnRunID, int64(asset.Revision))
+		image := generatedImageTimelineImage(asset)
+		if index, exists := indexes[itemID]; exists {
+			timeline.Items[index].Status = status
+			timeline.Items[index].Image = image
+			continue
+		}
+		timeline.Items = append(timeline.Items, TurnTimelineItem{
+			ID: itemID, Type: turnTimelineItemImageGeneration, Title: "图片生成", Status: status,
+			Image: image, CreatedAt: asset.CreatedAt,
+			Metadata: compactMetadata(map[string]any{
+				"response_id": asset.ResponseID,
+				"item_id":     asset.ItemID,
+			}),
+		})
+	}
+	sort.SliceStable(timeline.Items, func(i, j int) bool {
+		return timeline.Items[i].CreatedAt.Before(timeline.Items[j].CreatedAt)
+	})
 	return timeline, nil
+}
+
+func generatedImageTimelineImage(asset domain.GeneratedImageAsset) *TurnTimelineImage {
+	return &TurnTimelineImage{
+		AssetID: asset.ID, Kind: asset.Kind, Revision: asset.Revision,
+		ContentType: asset.ContentType, SizeBytes: asset.SizeBytes,
+		Width: asset.Width, Height: asset.Height, AttachmentID: asset.AttachmentID,
+	}
 }
 
 func (uc GetTurnTimeline) loadReasoningItems(ctx context.Context, turn *domain.Turn, runs []domain.TurnRun) ([]reasoningTimelineItem, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
@@ -23,6 +24,7 @@ type ScheduledRunState struct {
 
 type ScheduledRunOutcome struct {
 	Model                *llm.ModelResult               `json:"model"`
+	ResponseBlobKey      string                         `json:"response_blob_key,omitempty"`
 	ContextWindowTokens  int                            `json:"context_window_tokens,omitempty"`
 	Tools                []llm.ModelTool                `json:"tools,omitempty"`
 	ContextItems         []llm.ModelItem                `json:"context_items,omitempty"`
@@ -78,6 +80,10 @@ func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRu
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal scheduled model request: %w", err)
 	}
+	rawRequest, err = canonicalScheduledRunRequest(rawRequest, request.Input)
+	if err != nil {
+		return nil, nil, err
+	}
 	if initialInputCount < 0 || initialInputCount > len(request.Input) {
 		initialInputCount = len(request.Input)
 	}
@@ -85,6 +91,47 @@ func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRu
 		Version: scheduledRunStateVersion, StepIndex: stepIndex,
 		InitialInputCount: initialInputCount, Scope: cloneToolScope(input.Scope), Request: request,
 	}, rawRequest, nil
+}
+
+func canonicalScheduledRunRequest(providerRequest json.RawMessage, items []llm.ModelItem) (json.RawMessage, error) {
+	hasImageReferences := false
+	for _, item := range items {
+		if item.Type == llm.ModelItemImageGenerationCall && strings.Contains(string(item.Raw), `"result_ref"`) {
+			hasImageReferences = true
+			break
+		}
+	}
+	if !hasImageReferences {
+		return providerRequest, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(providerRequest, &payload); err != nil {
+		return nil, fmt.Errorf("decode scheduled request manifest: %w", err)
+	}
+	var input []json.RawMessage
+	if err := json.Unmarshal(payload["input"], &input); err != nil {
+		return nil, fmt.Errorf("decode scheduled request input manifest: %w", err)
+	}
+	if len(input) != len(items) {
+		return nil, fmt.Errorf("scheduled request input manifest length mismatch")
+	}
+	changed := false
+	for index, item := range items {
+		if item.Type != llm.ModelItemImageGenerationCall || len(item.Raw) == 0 || !strings.Contains(string(item.Raw), `"result_ref"`) {
+			continue
+		}
+		input[index] = append(json.RawMessage(nil), item.Raw...)
+		changed = true
+	}
+	if !changed {
+		return providerRequest, nil
+	}
+	payload["input"], _ = json.Marshal(input)
+	manifest, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal scheduled request manifest: %w", err)
+	}
+	return manifest, nil
 }
 
 func (o *ToolOrchestrator) RequestScheduledRun(ctx context.Context, state *ScheduledRunState, handler llm.ModelEventHandler) (*ScheduledRunOutcome, error) {
@@ -225,12 +272,28 @@ func (o *ToolOrchestrator) PersistScheduledRunOutcome(ctx context.Context, scope
 	}
 	responseKey := ""
 	if len(outcome.Model.RawResponse) > 0 {
-		responseKey = o.artifacts.TurnRunResponseKey(scope.ConversationID, scope.TurnID, run.StepIndex)
-		if err := o.artifacts.PutBytes(ctx, responseKey, outcome.Model.RawResponse, "application/json"); err != nil {
-			return "", "", fmt.Errorf("persist scheduled run response: %w", err)
+		if writer, ok := o.artifacts.(ImmutableRunArtifactStore); ok {
+			responseKey = writer.ImmutableRunArtifactKey(scope.ConversationID, scope.TurnID, run.StepIndex, run.ID, immutableRunResponseArtifact)
+			compressed, _, err := compressImmutableRunPayload(outcome.Model.RawResponse)
+			if err != nil {
+				return "", "", fmt.Errorf("compress scheduled run response: %w", err)
+			}
+			if err := writer.PutImmutableBytes(ctx, responseKey, compressed, immutableRunArtifactContentType); err != nil {
+				return "", "", fmt.Errorf("persist scheduled run response: %w", err)
+			}
+		} else {
+			responseKey = o.artifacts.TurnRunResponseKey(scope.ConversationID, scope.TurnID, run.StepIndex)
+			if err := o.artifacts.PutBytes(ctx, responseKey, outcome.Model.RawResponse, "application/json"); err != nil {
+				return "", "", fmt.Errorf("persist scheduled run response: %w", err)
+			}
 		}
 	}
-	payload, err := json.Marshal(outcome)
+	storedOutcome := *outcome
+	storedOutcome.ResponseBlobKey = responseKey
+	storedModel := *outcome.Model
+	storedModel.RawResponse = nil
+	storedOutcome.Model = &storedModel
+	payload, err := json.Marshal(&storedOutcome)
 	if err != nil {
 		return "", "", fmt.Errorf("marshal scheduled run outcome: %w", err)
 	}
@@ -253,6 +316,19 @@ func (o *ToolOrchestrator) LoadScheduledRunOutcome(ctx context.Context, key stri
 	if err := json.Unmarshal(payload, &outcome); err != nil {
 		return nil, fmt.Errorf("decode scheduled run outcome: %w", err)
 	}
+	if outcome.Model != nil && len(outcome.Model.RawResponse) == 0 && strings.TrimSpace(outcome.ResponseBlobKey) != "" {
+		response, err := o.artifacts.GetBytes(ctx, outcome.ResponseBlobKey)
+		if err != nil {
+			return nil, fmt.Errorf("load scheduled run response: %w", err)
+		}
+		if strings.HasSuffix(outcome.ResponseBlobKey, ".zst") {
+			response, err = decompressImmutableRunPayload(response)
+			if err != nil {
+				return nil, fmt.Errorf("decompress scheduled run response: %w", err)
+			}
+		}
+		outcome.Model.RawResponse = response
+	}
 	return &outcome, nil
 }
 
@@ -268,8 +344,8 @@ func (o *ToolOrchestrator) RecoverScheduledRunOutcome(ctx context.Context, scope
 		}
 		return nil, "", "", false, err
 	}
-	responseKey := ""
-	if outcome.Model != nil && len(outcome.Model.RawResponse) > 0 {
+	responseKey := strings.TrimSpace(outcome.ResponseBlobKey)
+	if responseKey == "" && outcome.Model != nil && len(outcome.Model.RawResponse) > 0 {
 		responseKey = o.artifacts.TurnRunResponseKey(scope.ConversationID, scope.TurnID, stepIndex)
 	}
 	return outcome, responseKey, resultKey, true, nil

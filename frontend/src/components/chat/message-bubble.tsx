@@ -19,13 +19,19 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Spinner } from "@/components/shared/spinner";
-import { getConversationAttachmentUrl } from "@/lib/api";
+import { getConversationAttachmentUrl, getGeneratedImageUrl } from "@/lib/api";
 import { parseSafeAskUserActionURL } from "@/lib/ask-user-action";
 import { assistantInteractionFromMessage } from "@/lib/chat-state";
 import { formatDateTime, formatMessageDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { AskUserInteraction, AskUserOptionTone, Message, Turn } from "@/lib/types";
-import { ImagePreview } from "./image-preview";
+import type {
+  AskUserInteraction,
+  AskUserOptionTone,
+  Message,
+  TimelineImage,
+  Turn,
+} from "@/lib/types";
+import { AssistantImagePreview } from "./assistant-image-preview";
 import { ComposerAttachmentList, type ComposerShellAttachment } from "./composer-shell";
 
 interface MessageBubbleProps {
@@ -76,6 +82,8 @@ type MessageAttachment = {
   content_type?: string;
   category?: string;
   size_bytes?: number;
+  width?: number;
+  height?: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -93,6 +101,8 @@ function attachmentFromMetadataItem(value: unknown): MessageAttachment | null {
     content_type: typeof value.content_type === "string" ? value.content_type : undefined,
     category: typeof value.category === "string" ? value.category : undefined,
     size_bytes: typeof value.size_bytes === "number" ? value.size_bytes : undefined,
+    width: typeof value.width === "number" ? value.width : undefined,
+    height: typeof value.height === "number" ? value.height : undefined,
   };
 }
 
@@ -196,21 +206,14 @@ function AttachmentImagePreview({
   }
 
   return (
-    <Card className="overflow-hidden bg-background/60">
-      {src ? (
-        <ImagePreview
-          src={src}
-          alt={attachment.filename || "附件图片"}
-          wrapperClassName="flex w-full"
-          previewButtonClassName="w-full"
-          imageClassName="max-h-72 w-full object-contain"
-          downloadName={attachment.filename}
-          onError={() => setHidden(true)}
-        />
-      ) : (
-        <div className="h-32 w-48 animate-pulse bg-muted" />
-      )}
-    </Card>
+    <AssistantImagePreview
+      src={src}
+      alt={attachment.filename || "附件图片"}
+      downloadName={attachment.filename}
+      width={attachment.width}
+      height={attachment.height}
+      onError={() => setHidden(true)}
+    />
   );
 }
 
@@ -226,7 +229,7 @@ function AttachmentImagePreviews({
   }
 
   return (
-    <div className="mb-2 grid max-w-xs grid-cols-1 gap-2 sm:max-w-sm">
+    <div className="grid w-full grid-cols-1 gap-2">
       {attachments.map((attachment) => (
         <AttachmentImagePreview
           key={attachment.id}
@@ -235,6 +238,71 @@ function AttachmentImagePreviews({
         />
       ))}
     </div>
+  );
+}
+
+function generatedImageFromMetadata(metadata: Record<string, unknown>): TimelineImage | null {
+  const value = metadata.generated_image;
+  if (!isRecord(value)) return null;
+  if (
+    typeof value.asset_id !== "string" ||
+    (value.kind !== "partial" && value.kind !== "final") ||
+    typeof value.revision !== "number" ||
+    typeof value.content_type !== "string" ||
+    typeof value.size_bytes !== "number" ||
+    typeof value.width !== "number" ||
+    typeof value.height !== "number"
+  ) {
+    return null;
+  }
+  return {
+    asset_id: value.asset_id,
+    kind: value.kind,
+    revision: value.revision,
+    content_type: value.content_type,
+    size_bytes: value.size_bytes,
+    width: value.width,
+    height: value.height,
+    attachment_id: typeof value.attachment_id === "string" ? value.attachment_id : undefined,
+  };
+}
+
+function GeneratedImagePreview({
+  conversationId,
+  image,
+}: {
+  conversationId: string;
+  image: TimelineImage;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    void getGeneratedImageUrl(conversationId, image.asset_id)
+      .then((url) => {
+        if (!cancelled) setSrc(url);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, image.asset_id]);
+
+  if (failed) return null;
+  return (
+    <AssistantImagePreview
+      key={image.asset_id}
+      src={src}
+      alt={image.kind === "final" ? "生成的图片" : "图片生成预览"}
+      concealed={image.kind === "partial"}
+      width={image.width}
+      height={image.height}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -390,6 +458,7 @@ function MessageBody({
   const attachments = attachmentsFromMetadata(metadata);
   const imageAttachments = allowAttachmentPreviews ? attachments.filter(isImageAttachment) : [];
   const attachmentCount = attachmentCountFromMetadata(metadata);
+  const generatedImage = generatedImageFromMetadata(metadata);
 
   return (
     <div
@@ -414,6 +483,8 @@ function MessageBody({
             {message.content_text || "Request failed"}
           </p>
         </div>
+      ) : generatedImage ? (
+        <GeneratedImagePreview conversationId={message.conversation_id} image={generatedImage} />
       ) : message.content_text ? (
         <>
           <AttachmentImagePreviews

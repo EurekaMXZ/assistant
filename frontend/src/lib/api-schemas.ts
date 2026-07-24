@@ -132,6 +132,32 @@ export const presignedObjectUrlSchema = z.object({
   expires_at: dateTime,
 });
 
+export const generatedImageAssetSchema = z.object({
+  id: z.string(),
+  conversation_id: z.string(),
+  turn_id: z.string(),
+  turn_run_id: z.string(),
+  response_id: z.string().optional(),
+  item_id: z.string(),
+  kind: z.enum(["partial", "final"]),
+  revision: z.number().int().nonnegative(),
+  status: z.enum(["ready", "deleting"]),
+  content_type: z.string(),
+  size_bytes: z.number().int().positive(),
+  sha256: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  attachment_id: z.string().optional(),
+  expires_at: dateTime.optional(),
+  created_at: dateTime,
+  updated_at: dateTime,
+});
+
+export const generatedImageDownloadSchema = z.object({
+  asset: generatedImageAssetSchema,
+  download: presignedObjectUrlSchema,
+});
+
 export const storageUsageSchema = z.object({
   quota_bytes: z.number().int().nonnegative(),
   used_bytes: z.number().int().nonnegative(),
@@ -618,6 +644,19 @@ export const timelineItemSchema = z
     action: askUserActionSchema.optional(),
     answer: askUserAnswerSchema.optional(),
     metadata: metadata.optional(),
+    image: z
+      .object({
+        asset_id: z.string(),
+        kind: z.enum(["partial", "final"]),
+        revision: z.number().int().nonnegative(),
+        content_type: z.string(),
+        size_bytes: z.number().int().positive(),
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+        attachment_id: z.string().optional(),
+      })
+      .strict()
+      .optional(),
     created_at: dateTime,
   })
   .strict()

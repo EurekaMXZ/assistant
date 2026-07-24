@@ -522,7 +522,19 @@ export interface TimelineItem {
   action?: AskUserAction;
   answer?: AskUserAnswer;
   metadata?: Record<string, unknown>;
+  image?: TimelineImage;
   created_at: string;
+}
+
+export interface TimelineImage {
+  asset_id: string;
+  kind: "partial" | "final";
+  revision: number;
+  content_type: string;
+  size_bytes: number;
+  width: number;
+  height: number;
+  attachment_id?: string;
 }
 
 interface TimelineLink {

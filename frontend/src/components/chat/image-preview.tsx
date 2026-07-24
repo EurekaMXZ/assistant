@@ -22,6 +22,7 @@ interface ImagePreviewProps extends Omit<ComponentProps<"img">, "alt" | "src"> {
   fallbackClassName?: string;
   imageClassName?: string;
   previewButtonClassName?: string;
+  previewEnabled?: boolean;
   showActions?: boolean;
   src: string;
   streamdown?: boolean;
@@ -199,6 +200,7 @@ export function ImagePreview({
   onError,
   onLoad,
   previewButtonClassName,
+  previewEnabled = true,
   showActions = true,
   src,
   streamdown = false,
@@ -239,14 +241,16 @@ export function ImagePreview({
       <Button
         type="button"
         variant="ghost"
-        aria-label={`预览 ${alt || "图片"}`}
-        aria-haspopup="dialog"
-        aria-expanded={open}
+        aria-label={previewEnabled ? `预览 ${alt || "图片"}` : alt || "图片"}
+        aria-haspopup={previewEnabled ? "dialog" : undefined}
+        aria-expanded={previewEnabled ? open : undefined}
+        disabled={!previewEnabled}
         className={cn(
-          "relative h-auto min-h-0 max-w-full cursor-zoom-in overflow-hidden rounded-lg bg-transparent! p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          "relative h-auto min-h-0 max-w-full cursor-zoom-in overflow-hidden rounded-lg bg-transparent! p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default disabled:opacity-100",
           previewButtonClassName,
         )}
         onClick={(event) => {
+          if (!previewEnabled) return;
           event.preventDefault();
           event.stopPropagation();
           setOpen(true);
@@ -276,7 +280,7 @@ export function ImagePreview({
         />
       </Button>
 
-      {showActions && loaded ? (
+      {previewEnabled && showActions && loaded ? (
         <span className="absolute right-2 top-2 z-10 flex gap-1 rounded-md border border-border bg-background/80 p-1 opacity-100 transition-opacity md:opacity-0 md:group-focus-within/image:opacity-100 md:group-hover/image:opacity-100 supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:backdrop-blur-sm">
           <Button
             type="button"
@@ -311,7 +315,9 @@ export function ImagePreview({
         </span>
       ) : null}
 
-      <ImagePreviewDialog alt={alt} src={src} open={open} onOpenChange={setOpen} />
+      {previewEnabled ? (
+        <ImagePreviewDialog alt={alt} src={src} open={open} onOpenChange={setOpen} />
+      ) : null}
     </span>
   );
 }

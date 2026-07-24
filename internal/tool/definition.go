@@ -46,12 +46,16 @@ const (
 	AskUser                 = askUserName
 )
 
-func DefaultTools() []llm.ModelTool {
+func DefaultTools(partialImages ...int) []llm.ModelTool {
+	partialCount := 2
+	if len(partialImages) > 0 && partialImages[0] >= 1 && partialImages[0] <= 3 {
+		partialCount = partialImages[0]
+	}
 	return []llm.ModelTool{
 		conversationNamespaceDefinition(),
 		sandboxNamespaceDefinition(),
 		askUserDefinition(),
-		imageGenerationDefinition(),
+		imageGenerationDefinition(partialCount),
 	}
 }
 
@@ -94,8 +98,8 @@ func askUserDefinition() llm.ModelTool {
 	}
 }
 
-func DefaultToolsWithTavily() []llm.ModelTool {
-	tools := DefaultTools()
+func DefaultToolsWithTavily(partialImages ...int) []llm.ModelTool {
+	tools := DefaultTools(partialImages...)
 	return append(tools, internetNamespaceDefinition())
 }
 
@@ -133,14 +137,15 @@ func internetNamespaceDefinition() llm.ModelTool {
 	)
 }
 
-func imageGenerationDefinition() llm.ModelTool {
+func imageGenerationDefinition(partialImages int) llm.ModelTool {
 	return llm.ModelTool{
-		Type:         llm.ModelToolTypeImageGeneration,
-		Size:         "auto",
-		Quality:      "auto",
-		OutputFormat: "png",
-		Background:   "auto",
-		Moderation:   "auto",
+		Type:          llm.ModelToolTypeImageGeneration,
+		Size:          "auto",
+		Quality:       "auto",
+		OutputFormat:  "png",
+		Background:    "auto",
+		Moderation:    "auto",
+		PartialImages: partialImages,
 	}
 }
 

@@ -62,6 +62,11 @@ type ConversationAttachmentDownload struct {
 	Download   PresignedObjectURL `json:"download"`
 }
 
+type GeneratedImageDownload struct {
+	Asset    domain.GeneratedImageAsset `json:"asset"`
+	Download PresignedObjectURL         `json:"download"`
+}
+
 type SendMessageInput struct {
 	Content         string
 	AttachmentIDs   []string
@@ -303,6 +308,7 @@ type AttachmentUseCases struct {
 	CreateConversationAttachmentUpload   func(ctx context.Context, ownerUserID string, conversationID string, input CreateConversationAttachmentUploadInput) (*ConversationAttachmentUpload, error)
 	CompleteConversationAttachmentUpload func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, input CompleteConversationAttachmentUploadInput) (*domain.Attachment, error)
 	GetConversationAttachmentDownload    func(ctx context.Context, ownerUserID string, conversationID string, attachmentID string, download bool) (*ConversationAttachmentDownload, error)
+	GetGeneratedImageDownload            func(ctx context.Context, ownerUserID string, conversationID string, assetID string) (*GeneratedImageDownload, error)
 }
 
 type StorageUseCases struct {

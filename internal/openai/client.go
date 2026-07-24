@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,7 +215,8 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 	defer response.Body.Close()
 
 	result := &llm.ModelResult{
-		RawRequest: rawRequest,
+		RequestSizeBytes: int64(len(rawRequest)),
+		RequestSHA256:    requestSHA256(rawRequest),
 	}
 
 	reader := bufio.NewReader(response.Body)
@@ -255,17 +258,20 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 		}
 
 		raw := json.RawMessage(data)
-		result.StreamEvents = append(result.StreamEvents, append(json.RawMessage(nil), raw...))
+		streamRaw := sanitizeImageStreamEvent(raw)
+		result.StreamEvents = append(result.StreamEvents, append(json.RawMessage(nil), streamRaw...))
 
 		var envelope struct {
-			Type         string `json:"type"`
-			ResponseID   string `json:"response_id"`
-			ItemID       string `json:"item_id"`
-			OutputIndex  int    `json:"output_index"`
-			ContentIndex int    `json:"content_index"`
-			Delta        string `json:"delta"`
-			Text         string `json:"text"`
-			Error        *struct {
+			Type               string `json:"type"`
+			ResponseID         string `json:"response_id"`
+			ItemID             string `json:"item_id"`
+			OutputIndex        int    `json:"output_index"`
+			ContentIndex       int    `json:"content_index"`
+			Delta              string `json:"delta"`
+			Text               string `json:"text"`
+			PartialImageIndex  int    `json:"partial_image_index"`
+			PartialImageBase64 string `json:"partial_image_b64"`
+			Error              *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 			Response *struct {
@@ -303,6 +309,9 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 			}
 			if event.ResponseID == "" {
 				event.ResponseID = responseID
+				if event.ResponseID == "" {
+					event.ResponseID = result.ResponseID
+				}
 			}
 			if event.ItemID == "" {
 				event.ItemID = strings.TrimSpace(envelope.ItemID)
@@ -314,7 +323,7 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 				event.ContentIndex = envelope.ContentIndex
 			}
 			if len(event.Raw) == 0 {
-				event.Raw = append(json.RawMessage(nil), raw...)
+				event.Raw = append(json.RawMessage(nil), streamRaw...)
 			}
 			return handler(event)
 		}
@@ -340,6 +349,16 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 				result.FinalText = envelope.Text
 			}
 			if err := emit(llm.ModelEvent{Type: envelope.Type, Text: envelope.Text}); err != nil {
+				return err
+			}
+		case "response.image_generation_call.partial_image":
+			if err := emit(llm.ModelEvent{
+				Type: envelope.Type,
+				Image: &llm.ModelImageEvent{
+					PartialIndex: envelope.PartialImageIndex,
+					Base64:       envelope.PartialImageBase64,
+				},
+			}); err != nil {
 				return err
 			}
 		case "response.completed":
@@ -420,6 +439,57 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 	return result, nil
 }
 
+func requestSHA256(payload []byte) string {
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:])
+}
+
+func sanitizeImageStreamEvent(raw json.RawMessage) json.RawMessage {
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return append(json.RawMessage(nil), raw...)
+	}
+	delete(payload, "partial_image_b64")
+	if item, ok := payload["item"]; ok {
+		payload["item"] = sanitizeImageOutputItem(item)
+	}
+	if responseRaw, ok := payload["response"]; ok {
+		var response map[string]json.RawMessage
+		if json.Unmarshal(responseRaw, &response) == nil {
+			var output []json.RawMessage
+			if json.Unmarshal(response["output"], &output) == nil {
+				for index := range output {
+					output[index] = sanitizeImageOutputItem(output[index])
+				}
+				response["output"], _ = json.Marshal(output)
+			}
+			payload["response"], _ = json.Marshal(response)
+		}
+	}
+	sanitized, err := json.Marshal(payload)
+	if err != nil {
+		return append(json.RawMessage(nil), raw...)
+	}
+	return sanitized
+}
+
+func sanitizeImageOutputItem(raw json.RawMessage) json.RawMessage {
+	var item map[string]json.RawMessage
+	if json.Unmarshal(raw, &item) != nil {
+		return raw
+	}
+	var itemType string
+	if json.Unmarshal(item["type"], &itemType) != nil || itemType != llm.ModelItemImageGenerationCall {
+		return raw
+	}
+	delete(item, "result")
+	sanitized, err := json.Marshal(item)
+	if err != nil {
+		return raw
+	}
+	return sanitized
+}
+
 func (c *Client) sendResponseRequest(ctx context.Context, endpoint string, apiKey string, rawRequest []byte) (*http.Response, error) {
 	for retry := 0; ; retry++ {
 		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(rawRequest))
@@ -489,6 +559,15 @@ func marshalInputItems(items []llm.ModelItem) ([]any, error) {
 }
 
 func marshalInputItem(item llm.ModelItem) (any, error) {
+	if item.Type == llm.ModelItemImageGenerationCall {
+		return struct {
+			Type string `json:"type"`
+			ID   string `json:"id,omitempty"`
+		}{
+			Type: llm.ModelItemImageGenerationCall,
+			ID:   item.ID,
+		}, nil
+	}
 	if len(item.Raw) > 0 {
 		return item.Raw, nil
 	}
@@ -532,14 +611,6 @@ func marshalInputItem(item llm.ModelItem) (any, error) {
 			Type:   llm.ModelItemFunctionCallOutput,
 			CallID: item.CallID,
 			Output: item.Output,
-		}, nil
-	case llm.ModelItemImageGenerationCall:
-		return struct {
-			Type string `json:"type"`
-			ID   string `json:"id,omitempty"`
-		}{
-			Type: llm.ModelItemImageGenerationCall,
-			ID:   item.ID,
 		}, nil
 	default:
 		return nil, fmt.Errorf("marshal input item type %q: unsupported item type", item.Type)

@@ -48,6 +48,7 @@ func newDefaultTimelineEventChain() *timelineEventChain {
 		reasoningSummaryTimelineHandler{},
 		toolTimelineHandler{},
 		interactionTimelineHandler{},
+		generatedImageTimelineHandler{},
 		responseCompletedTimelineHandler{},
 		responseFailedTimelineHandler{},
 		turnDoneTimelineHandler{},
@@ -217,6 +218,16 @@ func (interactionTimelineHandler) Handle(reducer *timelineReducer, input normali
 
 func (toolTimelineHandler) Handle(reducer *timelineReducer, input normalizedTimelineEvent) ([]timelineMutation, error) {
 	return reducer.reduceTool(input.Event, input.CreatedAt)
+}
+
+type generatedImageTimelineHandler struct{}
+
+func (generatedImageTimelineHandler) EventTypes() []string {
+	return []string{stream.EventImagePreview, stream.EventImageCompleted}
+}
+
+func (generatedImageTimelineHandler) Handle(reducer *timelineReducer, input normalizedTimelineEvent) ([]timelineMutation, error) {
+	return reducer.reduceGeneratedImage(input.Event, input.CreatedAt)
 }
 
 type responseCompletedTimelineHandler struct{}

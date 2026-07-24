@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   applyAssistantTimelineSnapshot,
+  assistantImageMessageId,
   assistantTextMessageId,
   assistantTimelineThinkingState,
   ensureStreamingThinkingMessage,
   messagesFromConversationEvents,
   thinkingMessageId,
   upsertAssistantInteraction,
+  upsertAssistantImage,
   upsertAssistantTextContent,
 } from "./chat-state";
 import type { ConversationEvent, InteractionTimelineItem, Message, TimelineItem } from "./types";
@@ -136,6 +138,49 @@ describe("chat state transformations", () => {
     ];
     const replaced = applyAssistantTimelineSnapshot(appended, "turn-1", "conversation-1", snapshot);
     expect(replaced.at(-1)?.content_text).toBe("Hello");
+  });
+
+  it("replaces partial image revisions in one stable assistant message", () => {
+    const partial = {
+      id: "image:resp-1:ig-1",
+      type: "image_generation",
+      status: "generating",
+      image: {
+        asset_id: "asset-1",
+        kind: "partial" as const,
+        revision: 1,
+        content_type: "image/png",
+        size_bytes: 10,
+        width: 1024,
+        height: 1024,
+      },
+      created_at: "2026-01-01T00:00:01Z",
+    };
+    const final = {
+      ...partial,
+      status: "completed",
+      image: {
+        ...partial.image,
+        asset_id: "asset-final",
+        kind: "final" as const,
+        revision: 0,
+        attachment_id: "attachment-1",
+      },
+    };
+
+    const first = upsertAssistantImage([userMessage], "turn-1", "conversation-1", partial);
+    const completed = upsertAssistantImage(first, "turn-1", "conversation-1", final);
+
+    expect(completed.filter((message) => message.id.startsWith("assistant-image-"))).toHaveLength(
+      1,
+    );
+    expect(completed.at(-1)).toMatchObject({
+      id: assistantImageMessageId("turn-1", partial.id),
+      metadata: {
+        display_kind: "assistant_image_preview",
+        generated_image: { asset_id: "asset-final", kind: "final" },
+      },
+    });
   });
 
   it("projects one stable interaction message and hides thinking while awaiting input", () => {

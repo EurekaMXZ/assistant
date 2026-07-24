@@ -168,9 +168,9 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	if err != nil {
 		return nil, err
 	}
-	toolDefinitions := tool.DefaultTools()
+	toolDefinitions := tool.DefaultTools(settings.Workflow.ImageGenerationPartials)
 	if tavilyEnabled {
-		toolDefinitions = tool.DefaultToolsWithTavily()
+		toolDefinitions = tool.DefaultToolsWithTavily(settings.Workflow.ImageGenerationPartials)
 	}
 	staticCatalog := tool.StaticCatalog{
 		Tools:             toolDefinitions,
@@ -207,6 +207,7 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 		ContextAnchors:        artifactStore,
 		AttachmentBlobs:       artifactStore,
 		GeneratedAttachments:  workflows.GeneratedAttachments,
+		GeneratedImageAssets:  workflows.GeneratedImageAssets,
 		Streams:               streamPublisher,
 		ContextCache:          cacheStore,
 		SharedContextCache:    sharedContextCache,
@@ -222,7 +223,14 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 		return nil, fmt.Errorf("turn run repository does not support artifact reference listing")
 	}
 	runArtifactReaper := workflow.NewRunArtifactReaper(settings.RunArtifactCleanup, runArtifactReferences, artifactStore, logger)
-	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper, attachmentReaper, runArtifactReaper, kafkaStreamPublisher, streamRecovery), nil
+	generatedImageCleanup, ok := workflows.GeneratedImageAssets.(workflow.GeneratedImageAssetCleanupStore)
+	if !ok {
+		return nil, fmt.Errorf("generated image asset repository does not support preview cleanup")
+	}
+	generatedImageReaper := workflow.NewGeneratedImageReaper(workflow.GeneratedImageReaperSettings{
+		Interval: settings.AttachmentCleanup.Interval, BatchSize: settings.AttachmentCleanup.BatchSize,
+	}, generatedImageCleanup, artifactStore, logger)
+	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper, attachmentReaper, runArtifactReaper, generatedImageReaper, kafkaStreamPublisher, streamRecovery), nil
 }
 
 func buildSandboxRuntime(settings assistantsandbox.RuntimeSettings) (tool.SandboxManager, error) {

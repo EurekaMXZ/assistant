@@ -52,6 +52,11 @@ type GeneratedAttachmentStore interface {
 	UpsertAttachment(ctx context.Context, params assistantattachment.CreateAttachmentParams) (*domain.Attachment, error)
 }
 
+type GeneratedImageAssetStore interface {
+	UpsertGeneratedImageAsset(ctx context.Context, params domain.UpsertGeneratedImageAssetParams) (*domain.GeneratedImageAsset, error)
+	ListGeneratedImageAssetsByTurn(ctx context.Context, turnID string) ([]domain.GeneratedImageAsset, error)
+}
+
 type ConversationReader interface {
 	GetConversation(ctx context.Context, conversationID string) (*domain.Conversation, error)
 }

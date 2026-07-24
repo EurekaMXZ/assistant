@@ -903,7 +903,10 @@ func TestTurnRunnerPersistsTurnModelContext(t *testing.T) {
 }
 
 func TestTurnRunnerGeneratedImageDraftsPersistAttachments(t *testing.T) {
-	imageData := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3}
+	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4sUAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatalf("decode image fixture: %v", err)
+	}
 	blobs := &stubTurnArtifactStore{}
 	attachments := &stubGeneratedAttachmentStore{}
 	runner := &TurnRunner{
@@ -945,8 +948,21 @@ func TestTurnRunnerGeneratedImageDraftsPersistAttachments(t *testing.T) {
 	if string(blobs.data[params.ObjectKey]) != string(imageData) {
 		t.Fatalf("stored image bytes mismatch")
 	}
+	var attachmentMetadata struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
+	if err := json.Unmarshal(params.Metadata, &attachmentMetadata); err != nil {
+		t.Fatalf("decode attachment metadata: %v", err)
+	}
+	if attachmentMetadata.Width != 1 || attachmentMetadata.Height != 1 {
+		t.Fatalf("attachment dimensions = %dx%d, want 1x1", attachmentMetadata.Width, attachmentMetadata.Height)
+	}
 	if !strings.Contains(string(drafts[0].Metadata), `"display_kind":"assistant_image"`) || !strings.Contains(string(drafts[0].Metadata), `"attachment_ids"`) {
 		t.Fatalf("unexpected draft metadata: %s", drafts[0].Metadata)
+	}
+	if !strings.Contains(string(drafts[0].Metadata), `"width":1`) || !strings.Contains(string(drafts[0].Metadata), `"height":1`) {
+		t.Fatalf("draft metadata is missing image dimensions: %s", drafts[0].Metadata)
 	}
 }
 

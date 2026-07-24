@@ -30,6 +30,7 @@ type workflowAdapters struct {
 	Attachments          workflow.AttachmentStore
 	AttachmentCleanup    assistantattachment.CleanupRepository
 	GeneratedAttachments workflow.GeneratedAttachmentStore
+	GeneratedImageAssets workflow.GeneratedImageAssetStore
 	TurnRuns             workflow.TurnRunWorkflowStore
 	ToolCalls            workflow.ToolCallStore
 	StreamEvents         workflow.TurnStreamEventStore
@@ -52,6 +53,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 	conversationSandboxRepository := postgres.NewConversationSandboxRepository(pool)
 	conversationLocker := postgres.NewConversationLocker(pool)
 	attachmentRepository := postgres.NewAttachmentRepository(pool)
+	generatedImageAssetRepository := postgres.NewGeneratedImageAssetRepository(pool)
 	messageRepository := postgres.NewMessageRepository(pool)
 	turnRepository := postgres.NewTurnRepository(pool)
 	initialTurnRepository := postgres.NewInitialTurnRepository(pool)
@@ -95,13 +97,14 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Artifacts: toolArtifacts,
 	}
 	getTurnTimeline := server.GetTurnTimeline{
-		Turns:          turnRepository,
-		Events:         turnStreamEventRepository,
-		CompleteEvents: conversationEventRepository,
-		Runs:           turnRunRepository,
-		ToolCalls:      toolCallRepository,
-		Messages:       messageRepository,
-		Artifacts:      toolArtifacts,
+		Turns:           turnRepository,
+		Events:          turnStreamEventRepository,
+		CompleteEvents:  conversationEventRepository,
+		Runs:            turnRunRepository,
+		ToolCalls:       toolCallRepository,
+		Messages:        messageRepository,
+		Artifacts:       toolArtifacts,
+		GeneratedImages: generatedImageAssetRepository,
 	}
 	createSandbox := tool.CreateSandbox{
 		Sandboxes: conversationSandboxRepository,
@@ -319,6 +322,23 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				}
 				return &server.ConversationAttachmentDownload{Attachment: *attachment, Download: server.PresignedObjectURL{URL: presigned.URL, Method: presigned.Method, Headers: presigned.Headers, ExpiresAt: presigned.ExpiresAt}}, nil
 			},
+			GetGeneratedImageDownload: func(ctx context.Context, ownerUserID string, conversationID string, assetID string) (*server.GeneratedImageDownload, error) {
+				asset, err := generatedImageAssetRepository.GetGeneratedImageAsset(ctx, ownerUserID, conversationID, assetID)
+				if err != nil {
+					return nil, err
+				}
+				presigned, err := attachmentSigner.PresignDownload(ctx, asset.ObjectKey, "generated-image", false)
+				if err != nil {
+					return nil, err
+				}
+				return &server.GeneratedImageDownload{
+					Asset: *asset,
+					Download: server.PresignedObjectURL{
+						URL: presigned.URL, Method: presigned.Method,
+						Headers: presigned.Headers, ExpiresAt: presigned.ExpiresAt,
+					},
+				}, nil
+			},
 		},
 		Sandboxes: server.SandboxUseCases{
 			GetConversationSandbox: func(ctx context.Context, ownerUserID string, conversationID string) (*domain.ConversationSandbox, error) {
@@ -399,6 +419,7 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 		Attachments:          attachmentRepository,
 		AttachmentCleanup:    attachmentRepository,
 		GeneratedAttachments: attachmentRepository,
+		GeneratedImageAssets: generatedImageAssetRepository,
 		TurnRuns:             turnRunRepository,
 		ToolCalls:            toolCallRepository,
 		StreamEvents:         turnStreamEventRepository,

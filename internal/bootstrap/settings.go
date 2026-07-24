@@ -128,6 +128,8 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			CompactTriggerTokens:     cfg.CompactTriggerTokens,
 			WorkerLeaseTimeout:       cfg.WorkerLeaseTimeout,
 			OutboxBatchSize:          cfg.OutboxBatchSize,
+			ImageGenerationPartials:  cfg.ImageGenerationPartials,
+			ImagePreviewTTL:          cfg.ImagePreviewTTL,
 		},
 		Process: worker.Settings{
 			WorkerConcurrency:  cfg.WorkerConcurrency,

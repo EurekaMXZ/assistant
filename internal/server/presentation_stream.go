@@ -234,6 +234,7 @@ func filterImagePresentationItem(item TurnTimelineItem) TurnTimelineItem {
 		Title:       item.Title,
 		Status:      item.Status,
 		ContentText: item.ContentText,
+		Image:       item.Image,
 		CreatedAt:   item.CreatedAt,
 	}
 }

@@ -67,22 +67,6 @@ func (l *ContextLoader) hydrateModelItemImages(ctx context.Context, item llm.Mod
 	if err := json.Unmarshal(item.Raw, &message); err != nil {
 		return item, 0, nil
 	}
-	if rawRef, ok := message["result_ref"]; ok {
-		var ref modelImageReference
-		if err := json.Unmarshal(rawRef, &ref); err != nil {
-			return item, 0, fmt.Errorf("decode generated image reference: %w", err)
-		}
-		data, err := l.loadImageReferenceBytes(ctx, ref)
-		if err != nil {
-			return item, 0, err
-		}
-		result := base64.StdEncoding.EncodeToString(data)
-		message["result"], _ = json.Marshal(result)
-		delete(message, "result_ref")
-		item.Raw, err = json.Marshal(message)
-		item.Result = result
-		return item, int64(len(data)), err
-	}
 	var content []json.RawMessage
 	if err := json.Unmarshal(message["content"], &content); err != nil {
 		return item, 0, nil

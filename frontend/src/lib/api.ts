@@ -51,6 +51,7 @@ import {
   conversationShareSnapshotSchema,
   conversationSchema,
   conversationEventPageSchema,
+  generatedImageDownloadSchema,
   createMCPServerInputSchema,
   cursorPageSchema,
   initialTurnResultSchema,
@@ -996,6 +997,14 @@ export async function getConversationAttachmentUrl(
     `/conversations/${conversationId}/attachments/${attachmentId}${download ? "?disposition=attachment" : ""}`,
     {},
     z.object({ attachment: attachmentSchema, download: presignedObjectUrlSchema }),
+  ).then((result) => result.download.url);
+}
+
+export async function getGeneratedImageUrl(conversationId: string, assetId: string) {
+  return apiFetch(
+    `/conversations/${conversationId}/generated-images/${assetId}`,
+    {},
+    generatedImageDownloadSchema,
   ).then((result) => result.download.url);
 }
 

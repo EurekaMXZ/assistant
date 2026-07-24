@@ -602,3 +602,63 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 		t.Fatalf("image result length = %d, want %d", got, len(largeImageResult))
 	}
 }
+
+func TestStreamResponseSanitizesImageBase64BeforeEmittingEvents(t *testing.T) {
+	imageBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.created
+data: {"type":"response.created","response":{"id":"resp_1"}}
+
+event: response.image_generation_call.partial_image
+data: {"type":"response.image_generation_call.partial_image","item_id":"ig_1","output_index":0,"partial_image_index":1,"partial_image_b64":"` + imageBase64 + `"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{},"output":[{"id":"ig_1","type":"image_generation_call","status":"completed","result":"` + imageBase64 + `"}]}}
+
+`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL, Settings{HTTPClientTimeout: 5 * time.Second})
+	var events []llm.ModelEvent
+	result, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, func(event llm.ModelEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream response: %v", err)
+	}
+	if len(events) != 3 || events[1].Image == nil || events[1].Image.Base64 != imageBase64 {
+		t.Fatalf("unexpected image events: %#v", events)
+	}
+	if events[1].ResponseID != "resp_1" || strings.Contains(string(events[1].Raw), "partial_image_b64") {
+		t.Fatalf("partial event was not sanitized: %#v", events[1])
+	}
+	if strings.Contains(string(events[2].Raw), `"result"`) || strings.Contains(string(result.StreamEvents[2]), `"result"`) {
+		t.Fatalf("completion event still contains image result")
+	}
+	if len(result.OutputItems) != 1 || result.OutputItems[0].Result != imageBase64 {
+		t.Fatalf("model result lost final image data: %#v", result.OutputItems)
+	}
+}
+
+func TestMarshalRequestUsesImageGenerationIDWhenRawContainsReference(t *testing.T) {
+	client := New(Settings{HTTPClientTimeout: 5 * time.Second})
+	raw, err := client.MarshalRequest(llm.ModelRequest{
+		Model: "gpt-test",
+		Input: []llm.ModelItem{{
+			ID: "ig_1", Type: llm.ModelItemImageGenerationCall,
+			Raw: json.RawMessage(`{"id":"ig_1","type":"image_generation_call","status":"completed","result_ref":{"object_key":"generated.png"}}`),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if strings.Contains(string(raw), "result_ref") || strings.Contains(string(raw), "result") {
+		t.Fatalf("image reference leaked into provider request: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"type":"image_generation_call","id":"ig_1"`) {
+		t.Fatalf("image ID input missing: %s", raw)
+	}
+}

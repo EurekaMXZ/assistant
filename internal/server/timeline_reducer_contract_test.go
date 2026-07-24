@@ -36,6 +36,8 @@ func TestTimelineReducerDurableAndLiveContract(t *testing.T) {
 				{Type: responseEventOutputTextDone, Payload: `{"item_id":"message-1","output_index":1,"content_index":0,"sequence_number":22,"text":"Hello"}`},
 				{Type: stream.EventToolStarted, ToolName: "internet.search", Payload: `{"tool_call_record_id":"tool-1","call_id":"call-1","tool_name":"internet.search","status":"started","arguments":{"query":"contract"}}`},
 				{Type: stream.EventToolCompleted, ToolName: "internet.search", Payload: `{"tool_call_record_id":"tool-1","call_id":"call-1","tool_name":"internet.search","status":"completed","arguments":{"query":"contract"},"output":{"results":[]}}`},
+				{Type: stream.EventImagePreview, Payload: `{"response_id":"resp-contract","item_id":"image-1","output_index":2,"status":"generating","asset":{"id":"asset-partial","kind":"partial","revision":1,"content_type":"image/png","size_bytes":100,"width":1024,"height":1024}}`},
+				{Type: stream.EventImageCompleted, Payload: `{"response_id":"resp-contract","item_id":"image-1","output_index":2,"status":"completed","asset":{"id":"asset-final","kind":"final","revision":0,"content_type":"image/png","size_bytes":200,"width":1024,"height":1024,"attachment_id":"attachment-1"}}`},
 				{Type: stream.EventResponseCompleted, Payload: `{"type":"response.completed","response":{"id":"resp-contract","output":[{"id":"reasoning-1","type":"reasoning","summary":[{"type":"summary_text","text":"**Check**\n\nInspecting."}]},{"id":"message-1","type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Hello"}]},{"id":"image-1","type":"image_generation_call","status":"completed","revised_prompt":"A diagram","result":"image-data"}]}}`},
 				{Type: stream.EventTurnDone},
 			},

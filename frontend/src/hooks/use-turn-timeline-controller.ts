@@ -14,6 +14,7 @@ import type { TurnStreamFrame } from "@/lib/api-schemas";
 import {
   applyAssistantTimelineSnapshot,
   assistantOutputPhase,
+  upsertAssistantImage,
   assistantTextMessageId,
   assistantTimelineThinkingState,
   moveThinkingAfter,
@@ -31,6 +32,7 @@ import { runTurnStreamController } from "@/lib/turn-stream-controller";
 import {
   dispatchTurnStreamEvent,
   isAssistantInteractionItem,
+  isAssistantImageItem,
   isAssistantOutputItem,
   isTimelineItem,
   type ConversationPresentationUpdate,
@@ -186,8 +188,12 @@ export function useTurnTimelineController({
             const thinkingState = assistantTimelineThinkingState(turnId, snapshot.items);
             pendingDoneTextMessageIdRef.current =
               snapshot.status === "processing" ? thinkingState.pendingMessageId : null;
+            const messageItems =
+              snapshot.status === "completed" && mode !== "active"
+                ? snapshot.items.filter((item) => !isAssistantImageItem(item))
+                : snapshot.items;
             setMessages((previous) =>
-              applyAssistantTimelineSnapshot(previous, turnId, conversationId, snapshot.items),
+              applyAssistantTimelineSnapshot(previous, turnId, conversationId, messageItems),
             );
           }
         },
@@ -217,6 +223,9 @@ export function useTurnTimelineController({
             setMessages((previous) =>
               upsertAssistantInteraction(previous, turnId, conversationId, item),
             );
+          }
+          if (mirrorMessages && isAssistantImageItem(item)) {
+            setMessages((previous) => upsertAssistantImage(previous, turnId, conversationId, item));
           }
         },
         onItemDelta(delta) {
@@ -275,6 +284,9 @@ export function useTurnTimelineController({
             setMessages((previous) =>
               upsertAssistantInteraction(previous, turnId, conversationId, item),
             );
+          }
+          if (mirrorMessages && isAssistantImageItem(item)) {
+            setMessages((previous) => upsertAssistantImage(previous, turnId, conversationId, item));
           }
         },
         onTurnDone(done) {

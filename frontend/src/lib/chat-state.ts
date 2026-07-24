@@ -2,6 +2,7 @@ import type { PendingHomeTurn } from "./pending-home-turn";
 import { askUserInteractionSchema, messageSchema } from "./api-schemas";
 import type { ConversationEvent, InteractionTimelineItem, Message, TimelineItem } from "./types";
 import {
+  isAssistantImageItem,
   isAssistantInteractionItem,
   isAssistantOutputItem,
   isTimelineItem,
@@ -13,6 +14,10 @@ export function thinkingMessageId(turnId: string) {
 
 export function assistantTextMessageId(turnId: string, timelineItemId: string) {
   return `assistant-${turnId}-${timelineItemId}`;
+}
+
+export function assistantImageMessageId(turnId: string, timelineItemId: string) {
+  return `assistant-image-${turnId}-${timelineItemId}`;
 }
 
 function assistantErrorMessageId(turnId: string) {
@@ -331,6 +336,37 @@ export function upsertAssistantTextContent(
   return next;
 }
 
+export function upsertAssistantImage(
+  messages: Message[],
+  turnId: string,
+  conversationId: string,
+  item: TimelineItem,
+) {
+  if (!isAssistantImageItem(item)) return messages;
+  const id = assistantImageMessageId(turnId, item.id);
+  const metadata = {
+    display_kind: "assistant_image_preview",
+    timeline_item_id: item.id,
+    generated_image: item.image,
+  };
+  const index = messages.findIndex((message) => message.id === id);
+  if (index !== -1) {
+    return messages.map((message, messageIndex) =>
+      messageIndex === index
+        ? { ...message, metadata, created_at: item.created_at || message.created_at }
+        : message,
+    );
+  }
+  const next = [...messages];
+  const lastTurnIndex = next.findLastIndex((message) => message.turn_id === turnId);
+  next.splice(
+    lastTurnIndex === -1 ? next.length : lastTurnIndex + 1,
+    0,
+    buildAssistantMessage(turnId, conversationId, id, metadata, "", item.created_at),
+  );
+  return next;
+}
+
 export function moveThinkingAfter(messages: Message[], turnId: string, afterMessageId: string) {
   const markerId = thinkingMessageId(turnId);
   const marker = messages.find((message) => message.id === markerId);
@@ -406,7 +442,11 @@ function reorderAssistantTimelineMessages(
 ) {
   const itemRanks = new Map<string, number>();
   for (const item of items) {
-    if (isAssistantOutputItem(item) || isAssistantInteractionItem(item)) {
+    if (
+      isAssistantOutputItem(item) ||
+      isAssistantInteractionItem(item) ||
+      isAssistantImageItem(item)
+    ) {
       itemRanks.set(item.id, itemRanks.size);
     }
   }
@@ -414,6 +454,12 @@ function reorderAssistantTimelineMessages(
     if (message.turn_id !== turnId) return null;
     if (message.metadata?.display_kind === "ask_user") return message.id;
     const timelineItemId = message.metadata?.timeline_item_id;
+    if (
+      message.metadata?.display_kind === "assistant_image_preview" &&
+      typeof timelineItemId === "string"
+    ) {
+      return timelineItemId;
+    }
     return message.metadata?.display_kind === "assistant_text" && typeof timelineItemId === "string"
       ? timelineItemId
       : null;
@@ -447,6 +493,7 @@ export function applyAssistantTimelineSnapshot(
   const interactionItemIds = new Set(
     items.filter(isAssistantInteractionItem).map((item) => item.id),
   );
+  const imageItemIds = new Set(items.filter(isAssistantImageItem).map((item) => item.id));
   const retained = messages.filter((message) => {
     if (message.turn_id !== turnId) return true;
     if (message.metadata?.display_kind === "assistant_text") {
@@ -458,12 +505,21 @@ export function applyAssistantTimelineSnapshot(
     if (message.metadata?.display_kind === "ask_user") {
       return interactionItemIds.has(message.id);
     }
+    if (message.metadata?.display_kind === "assistant_image_preview") {
+      return (
+        typeof message.metadata?.timeline_item_id === "string" &&
+        imageItemIds.has(message.metadata.timeline_item_id)
+      );
+    }
     return true;
   });
   const projected = reorderAssistantTimelineMessages(
     items.reduce((next, item) => {
       if (isAssistantInteractionItem(item)) {
         return upsertAssistantInteraction(next, turnId, conversationId, item);
+      }
+      if (isAssistantImageItem(item)) {
+        return upsertAssistantImage(next, turnId, conversationId, item);
       }
       return isAssistantOutputItem(item) && item.content_text != null
         ? upsertAssistantTextContent(

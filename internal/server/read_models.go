@@ -147,7 +147,19 @@ type TurnTimelineItem struct {
 	Action           *tool.AskUserAction  `json:"action,omitempty"`
 	Answer           *tool.AskUserAnswer  `json:"answer,omitempty"`
 	Metadata         map[string]any       `json:"metadata,omitempty"`
+	Image            *TurnTimelineImage   `json:"image,omitempty"`
 	CreatedAt        time.Time            `json:"created_at"`
+}
+
+type TurnTimelineImage struct {
+	AssetID      string `json:"asset_id"`
+	Kind         string `json:"kind"`
+	Revision     int    `json:"revision"`
+	ContentType  string `json:"content_type"`
+	SizeBytes    int64  `json:"size_bytes"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	AttachmentID string `json:"attachment_id,omitempty"`
 }
 
 type TurnTimelineLink struct {

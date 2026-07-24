@@ -110,6 +110,10 @@ export function isAssistantInteractionItem(item: TimelineItem): item is Interact
   );
 }
 
+export function isAssistantImageItem(item: TimelineItem) {
+  return item.type === "image_generation" && item.image != null;
+}
+
 export function isTimelineItem(item: TimelineItem) {
   if (isAssistantOutputItem(item) || isAssistantInteractionItem(item)) return false;
   return !(item.type === "tool_call" && item.title?.trim() === "conversation.rename_title");

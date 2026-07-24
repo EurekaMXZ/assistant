@@ -66,6 +66,8 @@ const (
 	defaultSandboxCubeMaxOutputBytes = 1 << 20
 	defaultAgentSystemPromptFile     = "prompts/system.md"
 	defaultAgentCompactPromptFile    = "prompts/compact.md"
+	defaultImageGenerationPartials   = 2
+	defaultImagePreviewTTL           = 24 * time.Hour
 )
 
 type Config struct {
@@ -151,6 +153,8 @@ type Config struct {
 	CacheMaxConversations       int
 	CacheTailCapacity           int
 	HTTPClientTimeout           time.Duration
+	ImageGenerationPartials     int
+	ImagePreviewTTL             time.Duration
 }
 
 func Load() Config {
@@ -238,6 +242,8 @@ func Load() Config {
 		CacheMaxConversations:       getenvInt("CACHE_MAX_CONVERSATIONS", defaultCacheMaxConversations),
 		CacheTailCapacity:           getenvInt("CACHE_TAIL_CAPACITY", defaultCacheTailCapacity),
 		HTTPClientTimeout:           getenvDuration("HTTP_CLIENT_TIMEOUT", defaultHTTPClientTimeout),
+		ImageGenerationPartials:     getenvInt("IMAGE_GENERATION_PARTIAL_IMAGES", defaultImageGenerationPartials),
+		ImagePreviewTTL:             getenvDuration("IMAGE_GENERATION_PREVIEW_TTL", defaultImagePreviewTTL),
 	}
 }
 
@@ -375,6 +381,12 @@ func (c Config) ValidateWorker() error {
 	}
 	if err := c.validateS3(); err != nil {
 		return fmt.Errorf("invalid worker config: %w", err)
+	}
+	if c.ImageGenerationPartials < 0 || c.ImageGenerationPartials > 3 {
+		return errors.New("IMAGE_GENERATION_PARTIAL_IMAGES must be between 1 and 3")
+	}
+	if c.ImagePreviewTTL < 0 || (c.ImagePreviewTTL > 0 && c.ImagePreviewTTL <= c.S3PresignTTL) {
+		return errors.New("IMAGE_GENERATION_PREVIEW_TTL must be greater than S3_PRESIGN_TTL")
 	}
 
 	return nil

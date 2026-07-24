@@ -111,14 +111,15 @@ type ModelUsage struct {
 }
 
 type ModelResult struct {
-	ResponseID   string            `json:"response_id,omitempty"`
-	FinalText    string            `json:"final_text,omitempty"`
-	TextItems    []ModelTextItem   `json:"text_items,omitempty"`
-	Usage        ModelUsage        `json:"usage"`
-	RawRequest   json.RawMessage   `json:"raw_request,omitempty"`
-	RawResponse  json.RawMessage   `json:"raw_response,omitempty"`
-	OutputItems  []ModelItem       `json:"output_items,omitempty"`
-	StreamEvents []json.RawMessage `json:"-"`
+	ResponseID       string            `json:"response_id,omitempty"`
+	FinalText        string            `json:"final_text,omitempty"`
+	TextItems        []ModelTextItem   `json:"text_items,omitempty"`
+	Usage            ModelUsage        `json:"usage"`
+	RequestSizeBytes int64             `json:"request_size_bytes,omitempty"`
+	RequestSHA256    string            `json:"request_sha256,omitempty"`
+	RawResponse      json.RawMessage   `json:"raw_response,omitempty"`
+	OutputItems      []ModelItem       `json:"output_items,omitempty"`
+	StreamEvents     []json.RawMessage `json:"-"`
 }
 
 type ModelTextItem struct {
@@ -139,6 +140,12 @@ type ModelEvent struct {
 	ContentIndex int
 	Error        string
 	Raw          json.RawMessage
+	Image        *ModelImageEvent
+}
+
+type ModelImageEvent struct {
+	PartialIndex int
+	Base64       string
 }
 
 type ModelEventHandler func(ModelEvent) error

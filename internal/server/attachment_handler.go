@@ -70,3 +70,18 @@ func (a *API) handleGetConversationAttachment(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.JSON(http.StatusOK, result)
 }
+
+func (a *API) handleGetGeneratedImage(c *gin.Context) {
+	result, err := a.useCases.Attachments.GetGeneratedImageDownload(
+		c.Request.Context(),
+		currentUser(c).ID,
+		c.Param("conversationID"),
+		c.Param("assetID"),
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, result)
+}

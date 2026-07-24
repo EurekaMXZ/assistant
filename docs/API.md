@@ -747,6 +747,38 @@ Response: `200 OK`
 
 The S3 bucket CORS policy must allow the frontend origin to use `PUT`, `GET`, and `HEAD`, including the `Content-Type` and `Content-MD5` request headers.
 
+### GET `/conversations/:conversationID/generated-images/:assetID`
+
+Create a short-lived inline download URL for a generated-image preview or final generated image indexed for an owned conversation. The endpoint verifies conversation ownership and asset expiry, returns metadata plus a presigned S3 URL, and never proxies image bytes.
+
+```json
+{
+  "asset": {
+    "id": "asset_123",
+    "conversation_id": "conv_123",
+    "turn_id": "turn_123",
+    "turn_run_id": "run_123",
+    "item_id": "ig_123",
+    "kind": "partial",
+    "revision": 2,
+    "status": "ready",
+    "content_type": "image/png",
+    "size_bytes": 482311,
+    "sha256": "...",
+    "width": 1024,
+    "height": 1024,
+    "expires_at": "2026-07-25T12:00:00Z"
+  },
+  "download": {
+    "url": "https://objects.example.com/bucket/generated-image-previews/...?X-Amz-Signature=...",
+    "method": "GET",
+    "expires_at": "2026-07-24T12:15:00Z"
+  }
+}
+```
+
+Partial assets are transient, may return `404` after expiry, and do not count against user attachment quota. Final assets include `attachment_id` and follow the attachment lifecycle.
+
 Incomplete uploads expire after `S3_PENDING_UPLOAD_TTL`. A worker claims their database rows, removes their S3 objects, and then deletes the rows; failed object deletions remain claimed and are retried by the next reaper pass.
 
 ## Storage APIs
@@ -1100,6 +1132,8 @@ Example:
 ```
 
 The presentation layer uses the complete response to enrich canonical output items. Frontend clients terminate only on canonical `turn.done`.
+
+Image generation emits canonical `item.upsert` or `item.done` frames with `type: "image_generation"` and an `image` object containing only `asset_id`, `kind`, `revision`, content metadata, dimensions, and optional final `attachment_id`. The same item ID is reused for every partial revision and the final image, so clients replace the current preview in place. Image base64 is never returned through the presentation stream.
 
 #### `response.failed`
 

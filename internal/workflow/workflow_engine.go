@@ -35,6 +35,7 @@ type Dependencies struct {
 	ContextAnchors        ContextAnchorStore
 	Attachments           AttachmentStore
 	GeneratedAttachments  GeneratedAttachmentStore
+	GeneratedImageAssets  GeneratedImageAssetStore
 	AttachmentBlobs       AttachmentBlobStore
 	Streams               stream.Publisher
 	ContextCache          cache.ContextSnapshotCache
@@ -85,6 +86,7 @@ func New(deps Dependencies) *Engine {
 			conversations:        deps.Conversations,
 			profiles:             deps.Profiles,
 			generatedAttachments: deps.GeneratedAttachments,
+			generatedImageAssets: deps.GeneratedImageAssets,
 			sandboxes:            deps.ConversationSandboxes,
 			runs:                 deps.TurnRuns,
 			completeEvents:       runEvents,

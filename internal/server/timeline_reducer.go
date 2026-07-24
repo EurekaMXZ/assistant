@@ -539,17 +539,77 @@ func (r *timelineReducer) reduceResponseCompleted(event stream.Event, createdAt 
 			if status == "" || status == "generating" {
 				status = "completed"
 			}
+			itemID := stableTimelineImageGenerationItemID(responseID, output.ID, outputSlot, "", r.eventIndex)
 			item := TurnTimelineItem{
-				ID: stableTimelineImageGenerationItemID(responseID, output.ID, outputSlot, "", r.eventIndex), Type: turnTimelineItemImageGeneration,
+				ID: itemID, Type: turnTimelineItemImageGeneration,
 				Title: "图片生成", Status: status, ContentText: strings.TrimSpace(output.RevisedPrompt),
 				Metadata:  compactMetadata(map[string]any{"response_id": responseID, "item_id": strings.TrimSpace(output.ID), "output_index": outputSlot, "has_image_result": true}),
 				CreatedAt: createdAt,
+			}
+			if existing, found := r.item(itemID); found {
+				item.Image = existing.Image
 			}
 			r.store(item)
 			mutations = append(mutations, timelineMutation{Kind: timelineMutationDone, Item: item})
 		}
 	}
 	return mutations, nil
+}
+
+func (r *timelineReducer) reduceGeneratedImage(event stream.Event, createdAt time.Time) ([]timelineMutation, error) {
+	var payload struct {
+		ResponseID    string `json:"response_id"`
+		ItemID        string `json:"item_id"`
+		OutputIndex   int    `json:"output_index"`
+		Status        string `json:"status"`
+		RevisedPrompt string `json:"revised_prompt"`
+		Asset         struct {
+			ID           string `json:"id"`
+			Kind         string `json:"kind"`
+			Revision     int    `json:"revision"`
+			ContentType  string `json:"content_type"`
+			SizeBytes    int64  `json:"size_bytes"`
+			Width        int    `json:"width"`
+			Height       int    `json:"height"`
+			AttachmentID string `json:"attachment_id"`
+		} `json:"asset"`
+	}
+	if json.Unmarshal([]byte(event.Payload), &payload) != nil || strings.TrimSpace(payload.Asset.ID) == "" {
+		return nil, nil
+	}
+	responseID := strings.TrimSpace(payload.ResponseID)
+	if responseID == "" {
+		responseID = event.ResponseID
+	}
+	responseID = r.responseID(responseID)
+	itemID := strings.TrimSpace(payload.ItemID)
+	if itemID == "" {
+		itemID = event.ItemID
+	}
+	item := TurnTimelineItem{
+		ID:   stableTimelineImageGenerationItemID(responseID, itemID, payload.OutputIndex, event.RunID, r.eventIndex),
+		Type: turnTimelineItemImageGeneration, Title: "图片生成", Status: payload.Status,
+		ContentText: strings.TrimSpace(payload.RevisedPrompt), CreatedAt: createdAt,
+		Image: &TurnTimelineImage{
+			AssetID: payload.Asset.ID, Kind: payload.Asset.Kind, Revision: payload.Asset.Revision,
+			ContentType: payload.Asset.ContentType, SizeBytes: payload.Asset.SizeBytes,
+			Width: payload.Asset.Width, Height: payload.Asset.Height, AttachmentID: payload.Asset.AttachmentID,
+		},
+		Metadata: compactMetadata(map[string]any{
+			"response_id":  responseID,
+			"item_id":      itemID,
+			"output_index": payload.OutputIndex,
+		}),
+	}
+	if item.Status == "" {
+		item.Status = "generating"
+	}
+	r.store(item)
+	kind := timelineMutationUpsert
+	if event.Type == stream.EventImageCompleted || item.Status == "completed" {
+		kind = timelineMutationDone
+	}
+	return []timelineMutation{{Kind: kind, Item: item}}, nil
 }
 
 func (r *timelineReducer) reduceResponseFailed(event stream.Event, createdAt time.Time) []timelineMutation {
