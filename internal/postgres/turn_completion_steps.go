@@ -91,21 +91,19 @@ func insertAssistantMessage(ctx context.Context, tx pgx.Tx, turn *domain.Turn, a
 	return message, nil
 }
 
-func switchTurnVariantMessages(ctx context.Context, tx pgx.Tx, turn *domain.Turn) (int, int, error) {
-	if turn == nil || turn.RetryOfTurnID == "" {
-		return 0, 0, nil
-	}
+func activateTurnVariantMessages(ctx context.Context, tx pgx.Tx, rootTurnID string, selectedTurnID string) (int, int, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE messages
 		SET context_excluded = true
 		WHERE context_excluded = false
 			AND turn_id IN (
-				SELECT id
-				FROM turns
-				WHERE id = $1::uuid OR retry_of_turn_id = $1::uuid
+			SELECT id
+			FROM turns
+			WHERE id = $1::uuid OR retry_of_turn_id = $1::uuid
 			)
+			AND turn_id <> $2::uuid
 		RETURNING COALESCE(token_count, 0)
-	`, turn.RetryOfTurnID)
+	`, rootTurnID, selectedTurnID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("exclude previous turn variant: %w", err)
 	}
@@ -128,8 +126,29 @@ func switchTurnVariantMessages(ctx context.Context, tx pgx.Tx, turn *domain.Turn
 		SET context_excluded = false
 		WHERE turn_id = $1::uuid AND role = $2
 		RETURNING COALESCE(token_count, 0)
-	`, turn.ID, domain.RoleUser).Scan(&selectedUserTokens); err != nil {
-		return 0, 0, fmt.Errorf("activate retry user message: %w", err)
+	`, selectedTurnID, domain.RoleUser).Scan(&selectedUserTokens); err != nil {
+		return 0, 0, fmt.Errorf("activate selected user message: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_events
+		SET context_included = false
+		WHERE conversation_id = (SELECT conversation_id FROM turns WHERE id = $1::uuid)
+			AND turn_id IN (
+				SELECT id
+				FROM turns
+				WHERE id = $1::uuid OR retry_of_turn_id = $1::uuid
+			)
+	`, rootTurnID); err != nil {
+		return 0, 0, fmt.Errorf("exclude previous turn context events: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_events
+		SET context_included = true
+		WHERE conversation_id = (SELECT conversation_id FROM turns WHERE id = $1::uuid)
+			AND turn_id = $2::uuid
+			AND event_type = 'message.completed'
+	`, rootTurnID, selectedTurnID); err != nil {
+		return 0, 0, fmt.Errorf("activate selected turn context events: %w", err)
 	}
 	return tokens, selectedUserTokens, nil
 }

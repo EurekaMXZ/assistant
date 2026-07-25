@@ -568,6 +568,24 @@ func (r *TurnRunRepository) ListTurnRunsByTurn(ctx context.Context, turnID strin
 	return runs, nil
 }
 
+func (r *TurnRunRepository) GetInitialTurnRunRequestKey(ctx context.Context, turnID string) (string, error) {
+	var requestKey string
+	err := r.pool.QueryRow(ctx, `
+		SELECT request_blob_key
+		FROM turn_runs
+		WHERE turn_id = $1::uuid AND step_index = 1
+		ORDER BY attempt ASC, created_at ASC
+		LIMIT 1
+	`, turnID).Scan(&requestKey)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", domain.ErrNotFound
+		}
+		return "", fmt.Errorf("get initial turn run request: %w", err)
+	}
+	return requestKey, nil
+}
+
 func (r *TurnRunRepository) CompleteScheduledTurnRun(ctx context.Context, lease workflow.TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

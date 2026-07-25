@@ -255,7 +255,16 @@ func (r *TurnRunner) retryModelInput(ctx context.Context, conversationID string,
 	if sourceErr != nil {
 		return nil, sourceErr
 	}
-	raw, err := getCompressedArtifact(ctx, r.blobs, source.RequestBlobKey)
+	requestKey := source.RequestBlobKey
+	if initialRuns, ok := r.runs.(InitialTurnRunRequestStore); ok {
+		initialRequestKey, initialErr := initialRuns.GetInitialTurnRunRequestKey(ctx, sourceTurnID)
+		if initialErr == nil && strings.TrimSpace(initialRequestKey) != "" {
+			requestKey = initialRequestKey
+		} else if initialErr != nil && !errors.Is(initialErr, domain.ErrNotFound) {
+			return nil, initialErr
+		}
+	}
+	raw, err := getCompressedArtifact(ctx, r.blobs, requestKey)
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) {
 			return nil, fmt.Errorf("get retry source request: %w", err)

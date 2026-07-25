@@ -26,11 +26,6 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
-	replacedTokens, selectedUserTokens, err := switchTurnVariantMessages(ctx, tx, turn)
-	if err != nil {
-		return nil, nil, nil, false, err
-	}
-
 	assistantSeq := head.LastSeq
 	assistantMessages := make([]domain.Message, 0, len(assistantDrafts))
 	assistantTokens := 0
@@ -82,7 +77,7 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 		return nil, nil, nil, false, err
 	}
 
-	activeTokens := activeContextTokensAfterTurn(head, turn, summary, assistantTokens, replacedTokens, selectedUserTokens)
+	activeTokens := activeContextTokensAfterTurn(head, turn, summary, assistantTokens)
 	head, err = updateContextHeadAfterAssistant(ctx, tx, turn.ConversationID, assistantSeq, activeTokens, summary)
 	if err != nil {
 		return nil, nil, nil, false, err
@@ -100,7 +95,7 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 	return turn, assistantMessages, head, triggerCompact, nil
 }
 
-func activeContextTokensAfterTurn(head *domain.ContextHead, turn *domain.Turn, summary domain.TurnRunSummary, assistantTokens int, replacedTokens int, selectedUserTokens int) int {
+func activeContextTokensAfterTurn(head *domain.ContextHead, turn *domain.Turn, summary domain.TurnRunSummary, assistantTokens int) int {
 	providerTokens := summary.TotalTokens
 	if providerTokens <= 0 {
 		providerTokens = summary.InputTokens + summary.OutputTokens
@@ -108,13 +103,13 @@ func activeContextTokensAfterTurn(head *domain.ContextHead, turn *domain.Turn, s
 	if providerTokens > 0 {
 		return providerTokens
 	}
+	if turn != nil && turn.RetryOfTurnID != "" {
+		return max(0, head.ActiveContextTokens) + assistantTokens
+	}
 
 	activeTokens := assistantTokens
 	if head != nil {
 		activeTokens += head.ActiveContextTokens
-	}
-	if turn != nil && turn.RetryOfTurnID != "" {
-		activeTokens = max(0, activeTokens-assistantTokens-replacedTokens) + selectedUserTokens + assistantTokens
 	}
 	return activeTokens
 }

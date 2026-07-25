@@ -78,7 +78,7 @@ func TestActiveContextTokensAfterTurnUsesProviderTotal(t *testing.T) {
 	turn := &domain.Turn{}
 	summary := domain.TurnRunSummary{InputTokens: 800, OutputTokens: 100, TotalTokens: 900}
 
-	if got := activeContextTokensAfterTurn(head, turn, summary, 25, 0, 0); got != 900 {
+	if got := activeContextTokensAfterTurn(head, turn, summary, 25); got != 900 {
 		t.Fatalf("active tokens = %d, want provider total 900", got)
 	}
 }
@@ -86,7 +86,7 @@ func TestActiveContextTokensAfterTurnUsesProviderTotal(t *testing.T) {
 func TestActiveContextTokensAfterTurnFallsBackToLocalEstimate(t *testing.T) {
 	head := &domain.ContextHead{ActiveContextTokens: 125}
 
-	if got := activeContextTokensAfterTurn(head, &domain.Turn{}, domain.TurnRunSummary{}, 25, 0, 0); got != 150 {
+	if got := activeContextTokensAfterTurn(head, &domain.Turn{}, domain.TurnRunSummary{}, 25); got != 150 {
 		t.Fatalf("active tokens = %d, want local fallback 150", got)
 	}
 }

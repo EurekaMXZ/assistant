@@ -118,6 +118,10 @@ type TurnRunWorkflowStore interface {
 	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
 }
 
+type InitialTurnRunRequestStore interface {
+	GetInitialTurnRunRequestKey(ctx context.Context, turnID string) (string, error)
+}
+
 type TurnRunArtifactIndexer interface {
 	SetTurnRunArtifactMetadata(ctx context.Context, runID string, artifacts []RunArtifactMetadata) error
 }

@@ -330,7 +330,7 @@ func (r *TurnRepository) CreateRetryTurn(ctx context.Context, sourceTurnID strin
 		INSERT INTO messages (
 			conversation_id, turn_id, seq, role, content_text, token_count, metadata, context_excluded
 		)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, true)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, false)
 		RETURNING
 			id::text,
 			conversation_id::text,
@@ -357,13 +357,21 @@ func (r *TurnRepository) CreateRetryTurn(ctx context.Context, sourceTurnID strin
 		SchemaVersion:   1,
 		EventType:       "message.completed",
 		Payload:         messagePayload,
-		ContextIncluded: false,
+		ContextIncluded: true,
 	}); err != nil {
 		return nil, err
 	}
+	replacedTokens, selectedUserTokens, err := activateTurnVariantMessages(ctx, tx, root.ID, turn.ID)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE context_heads SET last_seq = $2 WHERE conversation_id = $1::uuid
-	`, root.ConversationID, nextSeq); err != nil {
+		UPDATE context_heads
+		SET last_seq = $2,
+			active_context_tokens = GREATEST(0, active_context_tokens - $3 + $4),
+			version = version + 1
+		WHERE conversation_id = $1::uuid
+	`, root.ConversationID, nextSeq, replacedTokens, selectedUserTokens); err != nil {
 		return nil, fmt.Errorf("advance context head for retry: %w", err)
 	}
 

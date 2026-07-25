@@ -173,6 +173,26 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	if completed.RetryOfTurnID != root.Turn.ID || !triggerCompact || head.ActiveContextTokens != editedTokens+retryTokens {
 		t.Fatalf("retry completion: turn=%#v head=%#v compact=%t", completed, head, triggerCompact)
 	}
+	var rootEventIncluded, retryEventIncluded bool
+	if err := pool.QueryRow(t.Context(), `
+		SELECT context_included
+		FROM conversation_events
+		WHERE turn_id = $1::uuid AND event_type = 'message.completed'
+		ORDER BY event_seq ASC LIMIT 1
+	`, root.Turn.ID).Scan(&rootEventIncluded); err != nil {
+		t.Fatalf("load root context event flag: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), `
+		SELECT context_included
+		FROM conversation_events
+		WHERE turn_id = $1::uuid AND event_type = 'message.completed'
+		ORDER BY event_seq ASC LIMIT 1
+	`, successfulRetry.Turn.ID).Scan(&retryEventIncluded); err != nil {
+		t.Fatalf("load retry context event flag: %v", err)
+	}
+	if rootEventIncluded || !retryEventIncluded {
+		t.Fatalf("context event flags root=%v retry=%v, want false/true", rootEventIncluded, retryEventIncluded)
+	}
 
 	rows, err := pool.Query(t.Context(), `
 		SELECT content_text, context_excluded
@@ -212,7 +232,7 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 		t.Fatalf("active user prompt = %q, want edited question", activeUserContent)
 	}
 
-	failedRetry, err := turns.CreateRetryTurn(t.Context(), successfulRetry.Turn.ID, CreateUserTurnParams{Content: "edited question", Metadata: root.Message.Metadata, ModelSnapshot: snapshot})
+	failedRetry, err := turns.CreateRetryTurn(t.Context(), successfulRetry.Turn.ID, CreateUserTurnParams{Content: "failed retry prompt", Metadata: root.Message.Metadata, ModelSnapshot: snapshot})
 	if err != nil {
 		t.Fatalf("create second retry: %v", err)
 	}
@@ -233,6 +253,17 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	}
 	if err := workflowTurns.FinalizeTurnFailure(t.Context(), failedRetry.Turn.ID, "", "retry_failed", "retry failed", 0); err != nil {
 		t.Fatalf("finalize retry failure: %v", err)
+	}
+	var activeFailedRetryPrompt string
+	if err := pool.QueryRow(t.Context(), `
+		SELECT content_text
+		FROM messages
+		WHERE turn_id = $1::uuid AND context_excluded = false
+	`, failedRetry.Turn.ID).Scan(&activeFailedRetryPrompt); err != nil {
+		t.Fatalf("load failed retry active prompt: %v", err)
+	}
+	if activeFailedRetryPrompt != "failed retry prompt" {
+		t.Fatalf("active failed retry prompt = %q, want failed retry prompt", activeFailedRetryPrompt)
 	}
 
 	var compactionRequests int

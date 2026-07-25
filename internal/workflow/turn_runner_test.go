@@ -91,6 +91,15 @@ type stubScheduledRunStore struct {
 	artifacts    []RunArtifactMetadata
 }
 
+type stubInitialTurnRunStore struct {
+	stubScheduledRunStore
+	initialRequestKey string
+}
+
+func (s *stubInitialTurnRunStore) GetInitialTurnRunRequestKey(context.Context, string) (string, error) {
+	return s.initialRequestKey, nil
+}
+
 type blockingCancellationModel struct {
 	started chan struct{}
 	once    sync.Once
@@ -560,6 +569,41 @@ func TestTurnRunnerRetryInputReplacesOriginalUserPrompt(t *testing.T) {
 	}
 	if items[1].Content != "edited prompt" || strings.Contains(string(items[1].Raw), "original") {
 		t.Fatalf("retry prompt was not replaced: %#v", items[1])
+	}
+}
+
+func TestTurnRunnerRetryInputUsesInitialRunRequest(t *testing.T) {
+	initialRequest, _, err := compressImmutableRunPayload([]byte(`{"input":[{"type":"message","role":"assistant","content":"context"},{"type":"message","role":"user","content":"original"}]}`))
+	if err != nil {
+		t.Fatalf("compress initial request: %v", err)
+	}
+	latestRequest, _, err := compressImmutableRunPayload([]byte(`{"input":[{"type":"message","role":"assistant","content":"context"},{"type":"message","role":"user","content":"original"},{"type":"function_call_output","call_id":"old-call","output":"old tool result"}]}`))
+	if err != nil {
+		t.Fatalf("compress latest request: %v", err)
+	}
+	artifacts := &stubTurnArtifactStore{data: map[string][]byte{
+		"initial-request.json.zst": latestRequest,
+		"step-1-request.json.zst":  initialRequest,
+	}}
+	runs := &stubInitialTurnRunStore{initialRequestKey: "step-1-request.json.zst"}
+	runner := &TurnRunner{
+		blobs:  artifacts,
+		runs:   runs,
+		store:  &stubTurnWorkflowStore{userMessage: &domain.Message{Role: domain.RoleUser, ContentText: "retry prompt"}, turn: &domain.Turn{RequestBlobKey: "initial-request.json.zst"}},
+		loader: &ContextLoader{},
+	}
+
+	items, err := runner.retryModelInput(t.Context(), "conv-1", "root-turn", "variant-turn")
+	if err != nil {
+		t.Fatalf("retryModelInput() error = %v", err)
+	}
+	if len(items) != 2 || items[1].Role != domain.RoleUser || items[1].Content != "retry prompt" {
+		t.Fatalf("retry input = %#v", items)
+	}
+	for _, item := range items {
+		if item.Type == llm.ModelItemFunctionCallOutput || strings.Contains(item.Content, "old tool result") {
+			t.Fatalf("retry input retained latest-run tool state: %#v", items)
+		}
 	}
 }
 
