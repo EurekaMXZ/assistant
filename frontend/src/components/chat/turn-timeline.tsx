@@ -278,7 +278,7 @@ export function TurnTimeline({
     <Button
       variant="ghost"
       size="sm"
-      className="h-auto justify-start gap-1.5 bg-transparent! px-0 py-0 font-normal text-muted-foreground hover:bg-transparent! hover:text-foreground dark:hover:bg-transparent!"
+      className="h-auto max-w-full shrink justify-start gap-1.5 whitespace-normal bg-transparent! px-0 py-0 font-normal text-muted-foreground hover:bg-transparent! hover:text-foreground dark:hover:bg-transparent!"
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -286,7 +286,9 @@ export function TurnTimeline({
       }}
     >
       <Sparkles className={cn("size-3.5", active && "animate-pulse")} />
-      <span className={cn("px-1 py-0.5", active && "animate-pulse")}>{buttonLabel}</span>
+      <span className={cn("min-w-0 break-words px-1 py-0.5 text-left", active && "animate-pulse")}>
+        {buttonLabel}
+      </span>
     </Button>
   );
 }

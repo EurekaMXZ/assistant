@@ -51,4 +51,20 @@ describe("turn timing", () => {
 
     expect(markup).toContain("Thought for 12 seconds");
   });
+
+  it("allows long activity labels to wrap within the timeline control", () => {
+    const markup = renderToStaticMarkup(
+      <TurnTimeline
+        turnId="turn-1"
+        isStreaming
+        activityLabel="Inspecting a long activity label that must fit a narrow mobile viewport"
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("max-w-full");
+    expect(markup).toContain("whitespace-normal");
+    expect(markup).toContain("min-w-0");
+    expect(markup).toContain("break-words");
+  });
 });
