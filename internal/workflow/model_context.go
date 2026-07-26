@@ -165,7 +165,7 @@ func truncateMiddle(value string, maxBytes int) string {
 }
 
 func compactTriggerTokenLimit(configured int, contextWindow int) int {
-	automatic := contextWindow * 9 / 10
+	automatic := contextWindow * 8 / 10
 	if automatic <= 0 {
 		return max(0, configured)
 	}

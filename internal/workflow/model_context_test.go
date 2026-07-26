@@ -7,18 +7,18 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/llm"
 )
 
-func TestCompactTriggerTokenLimitUsesNinetyPercentWindow(t *testing.T) {
-	if got := compactTriggerTokenLimit(0, 372_000); got != 334_800 {
-		t.Fatalf("automatic limit = %d, want 334800", got)
+func TestCompactTriggerTokenLimitUsesEightyPercentWindow(t *testing.T) {
+	if got := compactTriggerTokenLimit(0, 372_000); got != 297_600 {
+		t.Fatalf("automatic limit = %d, want 297600", got)
 	}
-	if got := compactTriggerTokenLimit(320_000, 372_000); got != 320_000 {
-		t.Fatalf("configured limit = %d, want 320000", got)
+	if got := compactTriggerTokenLimit(280_000, 372_000); got != 280_000 {
+		t.Fatalf("configured limit = %d, want 280000", got)
 	}
-	if got := compactTriggerTokenLimit(360_000, 372_000); got != 334_800 {
-		t.Fatalf("clamped limit = %d, want 334800", got)
+	if got := compactTriggerTokenLimit(360_000, 372_000); got != 297_600 {
+		t.Fatalf("clamped limit = %d, want 297600", got)
 	}
-	if got := compactTriggerTokenLimit(compactTriggerTokenLimit(0, 372_000), 128_000); got != 115_200 {
-		t.Fatalf("compaction-model limit = %d, want 115200", got)
+	if got := compactTriggerTokenLimit(compactTriggerTokenLimit(0, 372_000), 128_000); got != 102_400 {
+		t.Fatalf("compaction-model limit = %d, want 102400", got)
 	}
 }
 
