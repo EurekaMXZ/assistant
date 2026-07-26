@@ -14,8 +14,6 @@ import (
 )
 
 const toolRunProviderOpenAIResponses = "openai.responses"
-const defaultRemoteToolReplayMaxBytes = 16 * 1024
-const defaultModelToolOutputMaxTokens = 10_000
 
 type ToolRunInput struct {
 	Scope               tool.ToolScope
@@ -46,15 +44,13 @@ type ToolRunResult struct {
 }
 
 type ToolOrchestrator struct {
-	model                    llm.ModelClient
-	catalog                  tool.ToolCatalog
-	executor                 tool.ToolExecutor
-	publisher                stream.Publisher
-	artifacts                ToolArtifactStore
-	calls                    ToolCallStore
-	remoteToolReplayMaxBytes int
-	modelToolOutputMaxTokens int
-	preflight                ScheduledRunPreflight
+	model     llm.ModelClient
+	catalog   tool.ToolCatalog
+	executor  tool.ToolExecutor
+	publisher stream.Publisher
+	artifacts ToolArtifactStore
+	calls     ToolCallStore
+	preflight ScheduledRunPreflight
 }
 
 func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, executor tool.ToolExecutor, publisher stream.Publisher, artifacts ToolArtifactStore, calls ToolCallStore) *ToolOrchestrator {
@@ -248,30 +244,7 @@ func (o *ToolOrchestrator) publish(ctx context.Context, event stream.Event) {
 }
 
 func (o *ToolOrchestrator) replayOutputItems(items []llm.ModelItem) []llm.ModelItem {
-	replayed := cloneModelItems(items)
-	limit := o.remoteToolReplayLimit()
-	if limit <= 0 {
-		return replayed
-	}
-
-	for index := range replayed {
-		replayed[index] = clipRemoteReplayItem(replayed[index], limit)
-	}
-	return replayed
-}
-
-func (o *ToolOrchestrator) remoteToolReplayLimit() int {
-	if o == nil || o.remoteToolReplayMaxBytes <= 0 {
-		return defaultRemoteToolReplayMaxBytes
-	}
-	return o.remoteToolReplayMaxBytes
-}
-
-func (o *ToolOrchestrator) modelToolOutputTokenLimit() int {
-	if o == nil || o.modelToolOutputMaxTokens <= 0 {
-		return defaultModelToolOutputMaxTokens
-	}
-	return o.modelToolOutputMaxTokens
+	return cloneModelItems(items)
 }
 
 func functionCalls(result *llm.ModelResult) []llm.ModelItem {
@@ -350,86 +323,6 @@ func cloneModelItems(items []llm.ModelItem) []llm.ModelItem {
 		cloned = append(cloned, item)
 	}
 	return cloned
-}
-
-func clipRemoteReplayItem(item llm.ModelItem, maxBytes int) llm.ModelItem {
-	if item.Type != llm.ModelItemMCPCall || maxBytes <= 0 {
-		return item
-	}
-
-	output := strings.TrimSpace(item.Output)
-	if len(output) <= maxBytes {
-		return item
-	}
-
-	preview := output
-	if len(preview) > maxBytes {
-		preview = preview[:maxBytes]
-	}
-
-	summary, err := json.Marshal(map[string]any{
-		"truncated":           true,
-		"preview":             preview,
-		"original_size_bytes": len(output),
-		"note":                "assistant truncated remote tool output before replaying it to the next model step",
-	})
-	if err != nil {
-		return item
-	}
-
-	item.Output = string(summary)
-	if raw, err := replayRawModelItem(item); err == nil {
-		item.Raw = raw
-	}
-	return item
-}
-
-func replayRawModelItem(item llm.ModelItem) (json.RawMessage, error) {
-	switch item.Type {
-	case llm.ModelItemMCPCall:
-		payload := map[string]any{
-			"type":         llm.ModelItemMCPCall,
-			"server_label": item.ServerLabel,
-			"name":         item.Name,
-			"call_id":      item.CallID,
-		}
-		if len(item.Arguments) > 0 {
-			payload["arguments"] = rawJSONValue(item.Arguments)
-		}
-		if strings.TrimSpace(item.Output) != "" {
-			payload["output"] = rawJSONValue([]byte(item.Output))
-		}
-		if strings.TrimSpace(item.Error) != "" {
-			payload["error"] = map[string]any{"message": strings.TrimSpace(item.Error)}
-		}
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		return raw, nil
-	default:
-		if len(item.Raw) > 0 {
-			return append(json.RawMessage(nil), item.Raw...), nil
-		}
-		raw, err := json.Marshal(item)
-		if err != nil {
-			return nil, err
-		}
-		return raw, nil
-	}
-}
-
-func rawJSONValue(raw []byte) any {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
-		return ""
-	}
-
-	var decoded any
-	if json.Unmarshal([]byte(trimmed), &decoded) == nil {
-		return decoded
-	}
-	return trimmed
 }
 
 func describeToolCall(call tool.ToolCall) string {

@@ -611,7 +611,7 @@ func TestTurnRunnerRetryInputUsesInitialRunRequest(t *testing.T) {
 	}
 }
 
-func TestTurnRunnerRetryInputTruncatesRawToolOutput(t *testing.T) {
+func TestTurnRunnerRetryInputPreservesRawToolOutput(t *testing.T) {
 	toolOutput := strings.Repeat("x", 1_000)
 	request, err := json.Marshal(map[string]any{"input": []any{
 		map[string]any{"type": "message", "role": "assistant", "content": "context"},
@@ -626,23 +626,20 @@ func TestTurnRunnerRetryInputTruncatesRawToolOutput(t *testing.T) {
 		t.Fatalf("compress request: %v", err)
 	}
 	artifacts := &stubTurnArtifactStore{data: map[string][]byte{"conversations/conv-1/turns/root-turn/request.json.zst": compressedRequest}}
-	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, nil, nil)
-	orchestrator.modelToolOutputMaxTokens = 50
 	runner := &TurnRunner{
 		blobs: artifacts,
 		store: &stubTurnWorkflowStore{userMessage: &domain.Message{
 			Role: domain.RoleUser, ContentText: "edited prompt", ContextExcluded: true,
 		}, turn: &domain.Turn{RequestBlobKey: "conversations/conv-1/turns/root-turn/request.json.zst"}},
 		loader: &ContextLoader{},
-		tools:  orchestrator,
 	}
 
 	items, err := runner.retryModelInput(t.Context(), "conv-1", "root-turn", "variant-turn")
 	if err != nil {
 		t.Fatalf("retryModelInput() error = %v", err)
 	}
-	if len(items) != 3 || !strings.Contains(items[1].Output, "Warning: truncated output") || len(items[1].Raw) != 0 {
-		t.Fatalf("retry tool output was not bounded: %#v", items)
+	if len(items) != 3 || items[1].Output != toolOutput || len(items[1].Raw) == 0 {
+		t.Fatalf("retry tool output was not preserved: %#v", items)
 	}
 }
 

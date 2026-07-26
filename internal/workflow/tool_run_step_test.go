@@ -134,7 +134,7 @@ func TestScheduledRunPersistsContinuationForNextRequest(t *testing.T) {
 	}
 }
 
-func TestScheduledRunTruncatesModelVisibleToolOutputButPersistsFullArtifact(t *testing.T) {
+func TestScheduledRunPreservesFullModelVisibleToolOutput(t *testing.T) {
 	fullOutput := `{"value":"` + strings.Repeat("x", 1_000) + `"}`
 	functionTool := llm.ModelTool{Type: llm.ModelToolTypeFunction, Name: "lookup"}
 	model := &stubModelClient{results: []*llm.ModelResult{{
@@ -147,7 +147,6 @@ func TestScheduledRunTruncatesModelVisibleToolOutputButPersistsFullArtifact(t *t
 	}}}
 	artifacts := &stubToolArtifactStore{}
 	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{functionTool}}, executor, nil, artifacts, &stubToolCallStore{})
-	orchestrator.modelToolOutputMaxTokens = 50
 	state, _, err := orchestrator.PrepareScheduledRun(t.Context(), ToolRunInput{
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, Model: "gpt-test",
 		Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}},
@@ -164,8 +163,8 @@ func TestScheduledRunTruncatesModelVisibleToolOutputButPersistsFullArtifact(t *t
 	}
 
 	modelVisible := outcome.NextState.Request.Input[len(outcome.NextState.Request.Input)-1].Output
-	if !strings.Contains(modelVisible, "Warning: truncated output") || modelVisible == fullOutput {
-		t.Fatalf("model-visible output was not truncated: %q", modelVisible)
+	if modelVisible != fullOutput {
+		t.Fatalf("model-visible output = %q, want full output", modelVisible)
 	}
 	artifactKey := artifacts.ToolCallOutputKey("conv-1", "turn-1", "call-1")
 	if got := string(artifacts.data[artifactKey]); got != fullOutput {
@@ -173,10 +172,9 @@ func TestScheduledRunTruncatesModelVisibleToolOutputButPersistsFullArtifact(t *t
 	}
 }
 
-func TestLoadScheduledRunStateTruncatesRawToolOutput(t *testing.T) {
+func TestLoadScheduledRunStatePreservesRawToolOutput(t *testing.T) {
 	artifacts := &stubToolArtifactStore{}
 	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, artifacts, nil)
-	orchestrator.modelToolOutputMaxTokens = 50
 	rawOutput, err := json.Marshal(map[string]any{
 		"type": llm.ModelItemFunctionCallOutput, "call_id": "call-1", "output": strings.Repeat("x", 1_000),
 	})
@@ -199,8 +197,8 @@ func TestLoadScheduledRunStateTruncatesRawToolOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load state: %v", err)
 	}
-	if !strings.Contains(loaded.Request.Input[1].Output, "Warning: truncated output") {
-		t.Fatalf("raw output was not truncated: %#v", loaded.Request.Input[1])
+	if string(loaded.Request.Input[1].Raw) != string(rawOutput) {
+		t.Fatalf("raw output was modified: %#v", loaded.Request.Input[1])
 	}
 }
 

@@ -134,7 +134,7 @@ func TestAccountPersonalizationContextIsNotPersistedAsConversationContext(t *tes
 	}
 	persisted := buildModelContextItems(initial, initial, &llm.ModelResult{
 		OutputItems: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleAssistant, Content: "answer"}},
-	}, 1_000)
+	})
 	if len(persisted) != 1 || persisted[0].Role != domain.RoleAssistant || isAccountPersonalizationContext(persisted[0]) {
 		t.Fatalf("personalization leaked into persisted context: %#v", persisted)
 	}

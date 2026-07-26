@@ -278,7 +278,7 @@ func TestToolExecutionReceivesStableRequestKey(t *testing.T) {
 	run := &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 2}
 	call := tool.ToolCall{CallID: "call-1", Name: "side-effect"}
 
-	if _, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{TurnID: "turn-1"}, []tool.ToolCall{call}, -1); err != nil {
+	if _, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{TurnID: "turn-1"}, []tool.ToolCall{call}); err != nil {
 		t.Fatalf("execute tool call: %v", err)
 	}
 	if len(executor.calls) != 1 || executor.calls[0].RequestKey != "run-1:call-1" {
@@ -294,7 +294,7 @@ func TestToolFailureReturnsModelOutputAndReplaysIt(t *testing.T) {
 	run := &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}
 	call := tool.ToolCall{CallID: "call-1", Namespace: "sandbox", Name: "create"}
 
-	input, scope, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call}, -1)
+	input, scope, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call})
 	if err != nil {
 		t.Fatalf("execute failed tool call: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestToolFailureReturnsModelOutputAndReplaysIt(t *testing.T) {
 	}
 
 	executor.calls = nil
-	replayed, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call}, -1)
+	replayed, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call})
 	if err != nil {
 		t.Fatalf("replay failed tool call: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestToolFailureWithUncertainOutcomeReturnsModelOutput(t *testing.T) {
 	executor := &stubToolExecutor{err: errors.New("connection dropped after request")}
 	store := &stubToolCallStore{}
 	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, &stubToolArtifactStore{}, store)
-	input, _, err := orchestrator.executeLocalToolCalls(t.Context(), &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{{CallID: "call-1", Namespace: "sandbox", Name: "create"}}, -1)
+	input, _, err := orchestrator.executeLocalToolCalls(t.Context(), &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{{CallID: "call-1", Namespace: "sandbox", Name: "create"}})
 	if err != nil {
 		t.Fatalf("execute uncertain tool outcome: %v", err)
 	}

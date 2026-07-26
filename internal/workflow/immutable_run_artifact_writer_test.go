@@ -125,6 +125,25 @@ func TestCompleteRunCheckpointItemsDoesNotDuplicateToolChain(t *testing.T) {
 	}
 }
 
+func TestCompleteRunCheckpointItemsRetainsReplacementContext(t *testing.T) {
+	checkpoint := llm.ModelItem{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: formatConversationCheckpoint("model summary")}
+	state := &ScheduledRunState{
+		InitialInputCount: 1,
+		Request:           llm.ModelRequest{Input: []llm.ModelItem{checkpoint}},
+	}
+	outcome := &ScheduledRunOutcome{ContextItems: []llm.ModelItem{{
+		Type: llm.ModelItemMessage, Role: domain.RoleAssistant, Content: "answer",
+	}}}
+
+	items, err := completeRunCheckpointItems(state, outcome)
+	if err != nil {
+		t.Fatalf("complete checkpoint: %v", err)
+	}
+	if len(items) != 2 || items[0].Content != checkpoint.Content || items[1].Content != "answer" {
+		t.Fatalf("checkpoint items = %#v", items)
+	}
+}
+
 func TestPersistImmutableRunFailureIndexesFailureArtifact(t *testing.T) {
 	artifacts := &immutableArtifactStoreStub{}
 	runs := &stubScheduledRunStore{}

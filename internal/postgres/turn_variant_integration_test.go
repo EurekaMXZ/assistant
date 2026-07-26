@@ -280,8 +280,8 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	`, conversationID, workflow.EventContextCompactionRequest).Scan(&compactionRequests); err != nil {
 		t.Fatalf("count compaction requests: %v", err)
 	}
-	if compactionRequests != 3 {
-		t.Fatalf("compaction request count = %d, want 3", compactionRequests)
+	if compactionRequests != 0 {
+		t.Fatalf("compaction request count = %d, want 0", compactionRequests)
 	}
 
 	next, err := turns.CreateUserTurn(t.Context(), CreateUserTurnParams{

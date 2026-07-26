@@ -43,8 +43,6 @@ const (
 	defaultS3UploadReaperInterval    = 5 * time.Minute
 	defaultS3UploadReaperBatchSize   = 100
 	defaultOpenAIUserAgent           = "assistant"
-	defaultRemoteToolReplayMaxBytes  = 16384
-	defaultModelToolOutputMaxTokens  = 10000
 	defaultCompactOutputTokens       = 1536
 	defaultCompactTriggerTokens      = 0
 	defaultCacheMaxConversations     = 1024
@@ -148,8 +146,6 @@ type Config struct {
 	AgentCompactPromptFile      string
 	AgentSystemPrompt           string
 	AgentCompactPrompt          string
-	RemoteToolReplayMaxBytes    int
-	ModelToolOutputMaxTokens    int
 	CompactMaxOutputTokens      int
 	CompactTriggerTokens        int
 	CacheMaxConversations       int
@@ -238,8 +234,6 @@ func Load() Config {
 		SandboxCommandMaxTimeout:    getenvDuration("SANDBOX_COMMAND_MAX_TIMEOUT", defaultSandboxCommandMaxTimeout),
 		AgentSystemPromptFile:       getenv("AGENT_SYSTEM_PROMPT_FILE", defaultAgentSystemPromptFile),
 		AgentCompactPromptFile:      getenv("AGENT_COMPACT_PROMPT_FILE", defaultAgentCompactPromptFile),
-		RemoteToolReplayMaxBytes:    getenvInt("REMOTE_TOOL_REPLAY_MAX_BYTES", defaultRemoteToolReplayMaxBytes),
-		ModelToolOutputMaxTokens:    getenvInt("AGENT_MODEL_TOOL_OUTPUT_MAX_TOKENS", defaultModelToolOutputMaxTokens),
 		CompactMaxOutputTokens:      getenvInt("AGENT_COMPACT_MAX_OUTPUT_TOKENS", defaultCompactOutputTokens),
 		CompactTriggerTokens:        getenvInt("AGENT_COMPACT_TRIGGER_TOKENS", defaultCompactTriggerTokens),
 		CacheMaxConversations:       getenvInt("CACHE_MAX_CONVERSATIONS", defaultCacheMaxConversations),

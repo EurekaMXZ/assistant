@@ -3,24 +3,23 @@ package workflow
 import (
 	"context"
 	"fmt"
-
-	"github.com/EurekaMXZ/assistant/internal/domain"
-	"github.com/EurekaMXZ/assistant/internal/llm"
 )
+
+const maxToolContinuationOutputSafeTokens = 4_096
 
 type ContextPreflight struct {
 	settings  WorkflowSettings
-	loader    *ContextLoader
 	compactor RequestContextCompactor
 	locker    ConversationLocker
 }
 
 type RequestContextCompactor interface {
-	CompactForRequest(ctx context.Context, event WorkflowEvent) (bool, error)
+	CanonicalInputLimit(ctx context.Context, state *ScheduledRunState) (int, error)
+	Compact(ctx context.Context, state *ScheduledRunState) (*ScheduledRunState, bool, error)
 }
 
 func (p *ContextPreflight) Prepare(ctx context.Context, state *ScheduledRunState) (*ScheduledRunState, error) {
-	if p == nil || state == nil || state.Request.ContextWindowTokens <= 0 || p.loader == nil || p.compactor == nil {
+	if p == nil || state == nil || state.Request.ContextWindowTokens <= 0 || p.compactor == nil {
 		return state, nil
 	}
 	conversationID := state.Scope.ConversationID
@@ -33,47 +32,23 @@ func (p *ContextPreflight) Prepare(ctx context.Context, state *ScheduledRunState
 		if state.InitialInputCount < 0 || state.InitialInputCount > len(state.Request.Input) {
 			return fmt.Errorf("invalid scheduled run initial input count")
 		}
-		used := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
-		threshold := compactTriggerTokenLimit(p.settings.CompactTriggerTokens, state.Request.ContextWindowTokens)
-		limit := modelRequestInputLimit(state.Request.ContextWindowTokens, state.Request.MaxOutputTokens)
-		needsCompaction := threshold > 0 && used >= threshold
-		if limit > 0 && used > limit {
-			needsCompaction = true
-		}
-		if !needsCompaction {
-			prepared = state
-			return nil
-		}
-
-		compacted, err := p.compactor.CompactForRequest(lockCtx, WorkflowEvent{
-			EventType:      EventTurnAccepted,
-			ConversationID: conversationID,
-			TurnID:         state.Scope.TurnID,
-		})
+		target, err := p.compactionTarget(lockCtx, state)
 		if err != nil {
 			return err
 		}
-		if !compacted {
+		used := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+		if target <= 0 || used < target {
 			prepared = state
 			return p.validateAdmission(state)
 		}
 
-		hot, _, err := p.loader.EnsureHotContext(lockCtx, conversationID)
+		candidate, compacted, err := p.compactor.Compact(lockCtx, state)
 		if err != nil {
 			return err
 		}
-		if hot == nil {
-			return fmt.Errorf("compaction returned no conversation context")
+		if !compacted {
+			return fmt.Errorf("context requires compaction but no replacement context was produced")
 		}
-		candidate, err := cloneScheduledRunState(state)
-		if err != nil {
-			return err
-		}
-		base := buildTurnModelInput(hot)
-		base = insertAccountPersonalizationContext(base, accountPersonalizationContext(state.Request.Input))
-		suffix := cloneModelItems(state.Request.Input[state.InitialInputCount:])
-		candidate.Request.Input = append(base, suffix...)
-		candidate.InitialInputCount = len(base)
 		if err := p.validateAdmission(candidate); err != nil {
 			return err
 		}
@@ -91,18 +66,30 @@ func (p *ContextPreflight) Prepare(ctx context.Context, state *ScheduledRunState
 	return prepared, nil
 }
 
-func accountPersonalizationContext(input []llm.ModelItem) *llm.ModelItem {
-	for index := len(input) - 1; index >= 0; index-- {
-		if input[index].Type != llm.ModelItemMessage || input[index].Role != domain.RoleUser {
-			continue
-		}
-		if index == 0 || !isAccountPersonalizationContext(input[index-1]) {
-			return nil
-		}
-		personalization := cloneModelItems(input[index-1 : index])
-		return &personalization[0]
+func (p *ContextPreflight) compactionTarget(ctx context.Context, state *ScheduledRunState) (int, error) {
+	mainLimit := modelRequestInputLimit(state.Request.ContextWindowTokens, state.Request.MaxOutputTokens)
+	if mainLimit <= 0 {
+		return 0, nil
 	}
-	return nil
+	trigger := compactTriggerTokenLimit(p.settings.CompactTriggerTokens, state.Request.ContextWindowTokens)
+	if trigger <= 0 || mainLimit < trigger {
+		trigger = mainLimit
+	}
+	compactionLimit, err := p.compactor.CanonicalInputLimit(ctx, state)
+	if err != nil {
+		return 0, err
+	}
+	if len(state.Request.Tools) > 0 {
+		reserve := state.Request.MaxOutputTokens + maxToolContinuationOutputSafeTokens
+		if compactionLimit <= reserve {
+			return 0, fmt.Errorf("compaction model cannot accommodate a bounded tool continuation")
+		}
+		compactionLimit = max(0, compactionLimit-reserve)
+	}
+	if compactionLimit > 0 && compactionLimit < trigger {
+		trigger = compactionLimit
+	}
+	return trigger, nil
 }
 
 func (p *ContextPreflight) validateAdmission(state *ScheduledRunState) error {

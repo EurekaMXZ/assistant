@@ -3,9 +3,7 @@ package workflow
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
@@ -19,7 +17,7 @@ const (
 	modelContextSafetyOverheadTokens        = 256
 )
 
-func buildModelContextItems(initialInput []llm.ModelItem, currentInput []llm.ModelItem, final *llm.ModelResult, toolOutputMaxTokens int) []llm.ModelItem {
+func buildModelContextItems(initialInput []llm.ModelItem, currentInput []llm.ModelItem, final *llm.ModelResult) []llm.ModelItem {
 	var items []llm.ModelItem
 	if len(currentInput) > len(initialInput) {
 		items = append(items, cloneModelItems(currentInput[len(initialInput):])...)
@@ -34,7 +32,7 @@ func buildModelContextItems(initialInput []llm.ModelItem, currentInput []llm.Mod
 			Content: strings.TrimSpace(final.FinalText),
 		})
 	}
-	return truncateModelContextItems(items, toolOutputMaxTokens)
+	return items
 }
 
 func estimateModelContextTokens(instructions string, items []llm.ModelItem, tools []llm.ModelTool) int {
@@ -96,88 +94,6 @@ func estimateStructuredMessageTokens(raw json.RawMessage) (int, bool) {
 	return tokens, true
 }
 
-func truncateModelContextItems(items []llm.ModelItem, maxTokens int) []llm.ModelItem {
-	truncated := cloneModelItems(items)
-	for index := range truncated {
-		truncated[index] = truncateModelContextItem(truncated[index], maxTokens)
-	}
-	return truncated
-}
-
-func truncateModelContextItem(item llm.ModelItem, maxTokens int) llm.ModelItem {
-	if item.Type != llm.ModelItemFunctionCallOutput {
-		return item
-	}
-	if item.Output == "" && len(item.Raw) > 0 {
-		var payload struct {
-			CallID string `json:"call_id"`
-			Output string `json:"output"`
-		}
-		if json.Unmarshal(item.Raw, &payload) == nil {
-			item.CallID = payload.CallID
-			item.Output = payload.Output
-		}
-	}
-	if maxTokens <= 0 {
-		item.Output = ""
-		item.Raw = nil
-		return item
-	}
-	maxBytes := maxTokens * 4
-	output := strings.ToValidUTF8(item.Output, "\ufffd")
-	if len(output) <= maxBytes {
-		item.Output = output
-		return item
-	}
-
-	originalTokens := domain.EstimateByteTokens(len(output))
-	totalLines := strings.Count(output, "\n") + 1
-	header := fmt.Sprintf(
-		"Warning: truncated output (original token count: %d)\nTotal output lines: %d\n\n",
-		originalTokens,
-		totalLines,
-	)
-	if len(header) >= maxBytes {
-		item.Output = truncateMiddle(header, maxBytes)
-		item.Raw = nil
-		return item
-	}
-	item.Output = header + truncateMiddle(output, max(0, maxBytes-len(header)))
-	item.Raw = nil
-	return item
-}
-
-func truncateMiddle(value string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(value) <= maxBytes {
-		return value
-	}
-	marker := fmt.Sprintf("... %d tokens truncated ...", domain.EstimateByteTokens(len(value)-maxBytes))
-	for range 2 {
-		if len(marker) >= maxBytes {
-			return marker[:maxBytes]
-		}
-		retainedBytes := maxBytes - len(marker)
-		leftBytes := retainedBytes / 2
-		rightBytes := retainedBytes - leftBytes
-		for leftBytes > 0 && !utf8.ValidString(value[:leftBytes]) {
-			leftBytes--
-		}
-		rightStart := len(value) - rightBytes
-		for rightStart < len(value) && !utf8.ValidString(value[rightStart:]) {
-			rightStart++
-		}
-		nextMarker := fmt.Sprintf("... %d tokens truncated ...", domain.EstimateByteTokens(rightStart-leftBytes))
-		if len(nextMarker) == len(marker) {
-			return value[:leftBytes] + nextMarker + value[rightStart:]
-		}
-		marker = nextMarker
-	}
-	return marker[:min(len(marker), maxBytes)]
-}
-
 func compactTriggerTokenLimit(configured int, contextWindow int) int {
 	automatic := contextWindow * 8 / 10
 	if automatic <= 0 {
@@ -187,15 +103,6 @@ func compactTriggerTokenLimit(configured int, contextWindow int) int {
 		return automatic
 	}
 	return configured
-}
-
-func remainingToolOutputTokens(request llm.ModelRequest, input []llm.ModelItem) int {
-	if request.ContextWindowTokens <= 0 {
-		return -1
-	}
-	usedTokens := estimateSafeModelContextTokens(request.Instructions, input, request.Tools)
-	usableTokens := modelRequestInputLimit(request.ContextWindowTokens, request.MaxOutputTokens)
-	return max(0, usableTokens-usedTokens)
 }
 
 func modelRequestInputLimit(contextWindowTokens int, maxOutputTokens int) int {

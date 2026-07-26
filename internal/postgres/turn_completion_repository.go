@@ -84,9 +84,6 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 	}
 
 	triggerCompact := shouldRequestCompaction(head, compactTriggerTokens)
-	if err := enqueueCompactionRequest(ctx, tx, turn, triggerCompact); err != nil {
-		return nil, nil, nil, false, err
-	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, nil, false, fmt.Errorf("commit turn success: %w", err)

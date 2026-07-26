@@ -49,7 +49,6 @@ type Engine struct {
 	locker        ConversationLocker
 	conversations ConversationReader
 	turns         *TurnRunner
-	compactor     *ContextCompactor
 	outbox        *OutboxRelay
 	requeue       *StaleTurnRequeuer
 }
@@ -68,24 +67,18 @@ func New(deps Dependencies) *Engine {
 		attachmentBlobs: deps.AttachmentBlobs,
 	}
 	orchestrator := NewToolOrchestrator(deps.Model, deps.ToolCatalog, deps.ToolExecutor, deps.Streams, deps.ToolArtifacts, deps.ToolCalls)
-	orchestrator.remoteToolReplayMaxBytes = deps.Settings.RemoteToolReplayMaxBytes
-	orchestrator.modelToolOutputMaxTokens = deps.Settings.ModelToolOutputMaxTokens
 	compactor := &ContextCompactor{
-		settings:      deps.Settings,
-		store:         deps.Contexts,
-		model:         deps.Model,
-		blobs:         deps.ContextAnchors,
-		checkpoints:   checkpointStore,
-		cache:         deps.ContextCompaction,
-		loader:        loader,
-		tools:         orchestrator,
-		sandboxes:     deps.ConversationSandboxes,
-		models:        deps.Models,
-		billing:       deps.BillingUsage,
-		conversations: deps.Conversations,
+		settings:    deps.Settings,
+		store:       deps.Contexts,
+		model:       deps.Model,
+		blobs:       deps.ContextAnchors,
+		checkpoints: checkpointStore,
+		cache:       deps.ContextCompaction,
+		models:      deps.Models,
+		billing:     deps.BillingUsage,
 	}
 	orchestrator.preflight = &ContextPreflight{
-		settings: deps.Settings, loader: loader, compactor: compactor, locker: deps.Locker,
+		settings: deps.Settings, compactor: compactor, locker: deps.Locker,
 	}
 
 	return &Engine{
@@ -109,7 +102,6 @@ func New(deps Dependencies) *Engine {
 			completeEvents:       runEvents,
 			models:               deps.Models,
 		},
-		compactor: compactor,
 		outbox: &OutboxRelay{
 			settings: deps.Settings,
 			store:    deps.Outbox,
@@ -128,11 +120,6 @@ func (e *Engine) HandleWorkflowEvent(ctx context.Context, event WorkflowEvent) e
 			return nil
 		}
 		err := e.locker.WithConversationLock(ctx, event.ConversationID, func(ctx context.Context) error {
-			if e.compactor != nil {
-				if err := e.compactor.HandleRequested(ctx, event); err != nil {
-					return err
-				}
-			}
 			return e.turns.HandleAccepted(ctx, event)
 		})
 		return e.ignoreDeletedConversation(ctx, event.ConversationID, err)
@@ -149,13 +136,7 @@ func (e *Engine) HandleWorkflowEvent(ctx context.Context, event WorkflowEvent) e
 	case EventTurnCancellationRequested:
 		return e.turns.HandleCancellationRequested(ctx, event)
 	case EventContextCompactionRequest:
-		if event.ConversationID == "" {
-			return nil
-		}
-		err := e.locker.WithConversationLock(ctx, event.ConversationID, func(ctx context.Context) error {
-			return e.compactor.HandleRequested(ctx, event)
-		})
-		return e.ignoreDeletedConversation(ctx, event.ConversationID, err)
+		return nil
 	default:
 		return nil
 	}

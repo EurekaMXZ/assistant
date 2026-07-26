@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
-	"github.com/EurekaMXZ/assistant/internal/workflow"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -219,16 +218,4 @@ func updateContextHeadAfterAssistant(ctx context.Context, tx pgx.Tx, conversatio
 
 func shouldRequestCompaction(head *domain.ContextHead, compactTriggerTokens int) bool {
 	return head != nil && compactTriggerTokens > 0 && head.ActiveContextTokens >= compactTriggerTokens && head.RawTailStartSeq <= head.LastSeq
-}
-
-func enqueueCompactionRequest(ctx context.Context, tx pgx.Tx, turn *domain.Turn, triggerCompact bool) error {
-	if !triggerCompact {
-		return nil
-	}
-
-	return insertOutboxEvent(ctx, tx, outboxInsert{
-		EventType:      workflow.EventContextCompactionRequest,
-		ConversationID: turn.ConversationID,
-		TurnID:         turn.ID,
-	})
 }

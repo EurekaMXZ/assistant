@@ -61,12 +61,6 @@ func (r *WorkflowTurnRepository) FinalizeTurnFailure(ctx context.Context, turnID
 	}); err != nil {
 		return err
 	}
-	if turn.RetryOfTurnID != "" {
-		if err := enqueueCompactionRequest(ctx, tx, turn, true); err != nil {
-			return err
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit turn failure: %w", err)
 	}

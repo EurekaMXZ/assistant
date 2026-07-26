@@ -775,9 +775,6 @@ func (r *TurnRunRepository) failBillingSettlement(
 		domain.TurnPublicErrorBillingRequired); err != nil {
 		return nil, fmt.Errorf("fail turn billing settlement: %w", err)
 	}
-	if err := enqueueRetryCompactionIfNeeded(ctx, tx, run.TurnID, compactTriggerTokens); err != nil {
-		return nil, err
-	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO billing_usage_events (
 			request_key, owner_user_id, conversation_id, turn_id, turn_run_id, workflow, attempt,
@@ -893,9 +890,6 @@ func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease work
 	`, run.TurnID).Scan(&modelID, &modelRevision, &modelPriceID, &modelSnapshot, &ownerUserID, &conversationID); err != nil {
 		return nil, fmt.Errorf("load failed turn billing snapshot: %w", err)
 	}
-	if err := enqueueRetryCompactionIfNeeded(ctx, tx, run.TurnID, compactTriggerTokens); err != nil {
-		return nil, err
-	}
 	var execution domain.ModelExecutionSnapshot
 	_ = json.Unmarshal(modelSnapshot, &execution)
 	if _, err := tx.Exec(ctx, `
@@ -916,23 +910,4 @@ func (r *TurnRunRepository) FailScheduledTurnRun(ctx context.Context, lease work
 		return nil, fmt.Errorf("commit turn run failure: %w", err)
 	}
 	return run, nil
-}
-
-func enqueueRetryCompactionIfNeeded(ctx context.Context, tx pgx.Tx, turnID string, compactTriggerTokens int) error {
-	var conversationID, retryOfTurnID string
-	if err := tx.QueryRow(ctx, `
-		SELECT conversation_id::text, COALESCE(retry_of_turn_id::text, '')
-		FROM turns
-		WHERE id = $1::uuid
-	`, turnID).Scan(&conversationID, &retryOfTurnID); err != nil {
-		return fmt.Errorf("load failed retry turn: %w", err)
-	}
-	if retryOfTurnID == "" {
-		return nil
-	}
-	head, err := queryContextHeadForUpdate(ctx, tx, conversationID)
-	if err != nil {
-		return err
-	}
-	return enqueueCompactionRequest(ctx, tx, &domain.Turn{ID: turnID, ConversationID: conversationID}, shouldRequestCompaction(head, compactTriggerTokens))
 }

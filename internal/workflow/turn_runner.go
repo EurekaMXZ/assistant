@@ -311,7 +311,6 @@ func (r *TurnRunner) retryModelInput(ctx context.Context, conversationID string,
 			}
 			item.CallID = output.CallID
 			item.Output = output.Output
-			item = truncateModelContextItem(item, r.tools.modelToolOutputTokenLimit())
 		}
 		items = append(items, item)
 		if header.Role == domain.RoleUser {

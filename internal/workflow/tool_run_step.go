@@ -73,7 +73,7 @@ func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRu
 		ReasoningSummary:    input.ReasoningSummary,
 		TextVerbosity:       input.TextVerbosity,
 		Instructions:        input.Instructions,
-		Input:               truncateModelContextItems(input.Input, o.modelToolOutputTokenLimit()),
+		Input:               cloneModelItems(input.Input),
 		Tools:               tools,
 		PromptCacheKey:      input.PromptCacheKey,
 		MaxOutputTokens:     input.MaxOutputTokens,
@@ -205,7 +205,7 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 			return fmt.Errorf("tool action %s is not implemented yet", describeModelItem(*action))
 		}
 		initialInput := state.Request.Input[:state.InitialInputCount]
-		outcome.ContextItems = buildModelContextItems(initialInput, state.Request.Input, result, o.modelToolOutputTokenLimit())
+		outcome.ContextItems = buildModelContextItems(initialInput, state.Request.Input, result)
 		outcome.Postprocessed = true
 		return nil
 	}
@@ -215,9 +215,8 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 
 	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
 	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
-	toolOutputBudget := remainingToolOutputTokens(state.Request, nextInput)
 	toolOutputStart := len(nextInput)
-	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, localCalls, toolOutputBudget)
+	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, localCalls)
 	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])
 	if err != nil {
 		return err
@@ -281,7 +280,6 @@ func (o *ToolOrchestrator) LoadScheduledRunState(ctx context.Context, key string
 	if state.StepIndex <= 0 || state.InitialInputCount < 0 || state.InitialInputCount > len(state.Request.Input) {
 		return nil, fmt.Errorf("invalid scheduled run state")
 	}
-	state.Request.Input = truncateModelContextItems(state.Request.Input, o.modelToolOutputTokenLimit())
 	return &state, nil
 }
 
