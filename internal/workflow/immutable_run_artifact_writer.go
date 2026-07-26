@@ -190,7 +190,10 @@ func completeRunCheckpointItems(state *ScheduledRunState, outcome *ScheduledRunO
 	if state == nil {
 		return nil, fmt.Errorf("build run checkpoint: scheduled run state is required")
 	}
-	items := cloneModelItems(state.Request.Input)
+	if state.InitialInputCount < 0 || state.InitialInputCount > len(state.Request.Input) {
+		return nil, fmt.Errorf("build run checkpoint: invalid initial input count")
+	}
+	items := cloneModelItems(state.Request.Input[:state.InitialInputCount])
 	items = append(items, cloneModelItems(outcome.ContextItems)...)
 	return items, nil
 }

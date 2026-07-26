@@ -96,6 +96,9 @@ func (r *WorkflowTurnRepository) FinalizeTurnSuccess(ctx context.Context, turnID
 }
 
 func activeContextTokensAfterTurn(head *domain.ContextHead, turn *domain.Turn, summary domain.TurnRunSummary, assistantTokens int) int {
+	if summary.ReplayContextTokens > 0 {
+		return summary.ReplayContextTokens
+	}
 	providerTokens := summary.TotalTokens
 	if providerTokens <= 0 {
 		providerTokens = summary.InputTokens + summary.OutputTokens

@@ -32,7 +32,7 @@ func TestPersistImmutableRunSuccessWritesCompleteCheckpointAndMetadata(t *testin
 	runs := &stubScheduledRunStore{}
 	runner := &TurnRunner{blobs: artifacts, runs: runs}
 	run := &domain.TurnRun{ID: "run-1", TurnID: "turn-1", StepIndex: 1}
-	state := &ScheduledRunState{Request: llm.ModelRequest{Input: []llm.ModelItem{{
+	state := &ScheduledRunState{InitialInputCount: 1, Request: llm.ModelRequest{Input: []llm.ModelItem{{
 		Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "history",
 	}}}}
 	outcome := &ScheduledRunOutcome{
@@ -77,6 +77,35 @@ func TestPersistImmutableRunSuccessWritesCompleteCheckpointAndMetadata(t *testin
 		if !ok || metadata.ObjectKey == "" || metadata.SHA256 == "" || metadata.CompressedSize <= 0 || metadata.UncompressedSize <= 0 {
 			t.Fatalf("metadata for %s = %#v", name, metadata)
 		}
+	}
+}
+
+func TestCompleteRunCheckpointItemsDoesNotDuplicateToolChain(t *testing.T) {
+	functionCall := llm.ModelItem{Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup"}
+	functionOutput := llm.ModelItem{Type: llm.ModelItemFunctionCallOutput, CallID: "call-1", Output: "result"}
+	state := &ScheduledRunState{
+		InitialInputCount: 1,
+		Request: llm.ModelRequest{Input: []llm.ModelItem{
+			{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"},
+			functionCall,
+			functionOutput,
+		}},
+	}
+	outcome := &ScheduledRunOutcome{ContextItems: []llm.ModelItem{
+		functionCall,
+		functionOutput,
+		{Type: llm.ModelItemMessage, Role: domain.RoleAssistant, Content: "answer"},
+	}}
+
+	items, err := completeRunCheckpointItems(state, outcome)
+	if err != nil {
+		t.Fatalf("complete run checkpoint items: %v", err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("checkpoint item count = %d, want 4: %#v", len(items), items)
+	}
+	if items[0].Content != "research" || items[1].CallID != "call-1" || items[2].Output != "result" || items[3].Content != "answer" {
+		t.Fatalf("checkpoint items = %#v", items)
 	}
 }
 

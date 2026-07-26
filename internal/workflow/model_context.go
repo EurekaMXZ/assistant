@@ -175,14 +175,11 @@ func compactTriggerTokenLimit(configured int, contextWindow int) int {
 	return configured
 }
 
-func remainingToolOutputTokens(request llm.ModelRequest, input []llm.ModelItem, providerTotalTokens int) int {
+func remainingToolOutputTokens(request llm.ModelRequest, input []llm.ModelItem) int {
 	if request.ContextWindowTokens <= 0 {
 		return -1
 	}
-	usedTokens := providerTotalTokens
-	if usedTokens <= 0 {
-		usedTokens = estimateModelContextTokens(request.Instructions, input, request.Tools)
-	}
+	usedTokens := estimateModelContextTokens(request.Instructions, input, request.Tools)
 	usableTokens := request.ContextWindowTokens * 95 / 100
 	return max(0, usableTokens-usedTokens)
 }

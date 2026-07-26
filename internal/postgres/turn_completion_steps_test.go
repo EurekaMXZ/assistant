@@ -83,6 +83,16 @@ func TestActiveContextTokensAfterTurnUsesProviderTotal(t *testing.T) {
 	}
 }
 
+func TestActiveContextTokensAfterTurnUsesReplayEstimate(t *testing.T) {
+	head := &domain.ContextHead{ActiveContextTokens: 125}
+	turn := &domain.Turn{}
+	summary := domain.TurnRunSummary{InputTokens: 800, OutputTokens: 100, TotalTokens: 900, ReplayContextTokens: 320}
+
+	if got := activeContextTokensAfterTurn(head, turn, summary, 25); got != 320 {
+		t.Fatalf("active tokens = %d, want replay estimate 320", got)
+	}
+}
+
 func TestActiveContextTokensAfterTurnFallsBackToLocalEstimate(t *testing.T) {
 	head := &domain.ContextHead{ActiveContextTokens: 125}
 

@@ -55,11 +55,11 @@ func TestEstimateModelContextTokensIncludesInstructionsItemsAndTools(t *testing.
 
 func TestRemainingToolOutputTokensUsesNinetyFivePercentWindow(t *testing.T) {
 	request := llm.ModelRequest{ContextWindowTokens: 1_000}
-	if got := remainingToolOutputTokens(request, nil, 900); got != 50 {
-		t.Fatalf("remaining tool output tokens = %d, want 50", got)
-	}
-	if got := remainingToolOutputTokens(request, nil, 960); got != 0 {
-		t.Fatalf("remaining tool output tokens = %d, want 0", got)
+	input := []llm.ModelItem{{Type: llm.ModelItemMessage, Content: strings.Repeat("x", 3_600)}}
+	used := estimateModelContextTokens(request.Instructions, input, request.Tools)
+	want := max(0, 950-used)
+	if got := remainingToolOutputTokens(request, input); got != want {
+		t.Fatalf("remaining tool output tokens = %d, want %d", got, want)
 	}
 }
 

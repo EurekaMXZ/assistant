@@ -60,6 +60,7 @@ type TurnRunSummary struct {
 	InputTokens         int
 	OutputTokens        int
 	TotalTokens         int
+	ReplayContextTokens int
 	ContextWindowTokens int
 	Model               string
 }

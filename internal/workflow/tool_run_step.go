@@ -193,7 +193,7 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 
 	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
 	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
-	toolOutputBudget := remainingToolOutputTokens(state.Request, nextInput, result.Usage.TotalTokens)
+	toolOutputBudget := remainingToolOutputTokens(state.Request, nextInput)
 	toolOutputStart := len(nextInput)
 	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, localCalls, toolOutputBudget)
 	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])

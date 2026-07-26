@@ -694,6 +694,18 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 	}
 	responseKey := run.ResponseBlobKey
 	toolRun := &ToolRunResult{Model: outcome.Model, Tools: outcome.Tools, ContextItems: outcome.ContextItems}
+	state, err := r.tools.LoadScheduledRunState(ctx, run.StateBlobKey)
+	if err != nil {
+		return r.failTurn(ctx, turn, run.RequestBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	if err := r.hydrateScheduledRunState(ctx, run.TurnID, state); err != nil {
+		return r.failTurn(ctx, turn, run.RequestBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	checkpointItems, err := completeRunCheckpointItems(state, outcome)
+	if err != nil {
+		return r.failTurn(ctx, turn, run.RequestBlobKey, domain.TurnErrorTurnFinalizeFailed, domain.TurnPublicErrorRequestProcessing, err)
+	}
+	replayContextTokens := estimateModelContextTokens(state.Request.Instructions, checkpointItems, state.Request.Tools)
 	if err := r.persistTurnModelContext(ctx, turn, toolRun); err != nil {
 		return r.failTurn(ctx, turn, run.RequestBlobKey, domain.TurnErrorModelContextBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
@@ -702,7 +714,8 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		CheckpointChecksum: immutableRunArtifactChecksum(run.ArtifactMetadata, immutableRunCheckpointArtifact),
 		RequestBlobKey:     run.RequestBlobKey, ResponseBlobKey: responseKey, ResponseID: outcome.Model.ResponseID,
 		InputTokens: outcome.Model.Usage.InputTokens, OutputTokens: outcome.Model.Usage.OutputTokens,
-		TotalTokens: outcome.Model.Usage.TotalTokens, ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,
+		TotalTokens: outcome.Model.Usage.TotalTokens, ReplayContextTokens: replayContextTokens,
+		ContextWindowTokens: outcome.ContextWindowTokens, Model: run.Model,
 	}
 	assistantDrafts := assistantMessageDraftsFromRun(toolRun, outcome.Model)
 	attachmentDrafts, err := assistantAttachmentDraftsFromItems(outcome.ContextItems, turn.ConversationID, turn.ID)
