@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	immutableRunRequestArtifact       = "request.json.zst"
-	immutableRunResponseArtifact      = "response.json.zst"
-	immutableRunOutputItemsArtifact   = "output-items.json.zst"
-	immutableRunToolResultsArtifact   = "tool-results.json.zst"
-	immutableRunPresentationArtifact  = "presentation-events.json.zst"
-	immutableRunCheckpointArtifact    = "context-checkpoint.json.zst"
-	immutableRunFailureArtifact       = "failure.json.zst"
-	immutableRunArtifactSchemaVersion = 1
-	immutableRunArtifactContentType   = "application/zstd"
+	immutableRunRequestArtifact         = "request.json.zst"
+	immutableRunDispatchRequestArtifact = "dispatch-request.json.zst"
+	immutableRunResponseArtifact        = "response.json.zst"
+	immutableRunOutputItemsArtifact     = "output-items.json.zst"
+	immutableRunToolResultsArtifact     = "tool-results.json.zst"
+	immutableRunPresentationArtifact    = "presentation-events.json.zst"
+	immutableRunCheckpointArtifact      = "context-checkpoint.json.zst"
+	immutableRunFailureArtifact         = "failure.json.zst"
+	immutableRunArtifactSchemaVersion   = 1
+	immutableRunArtifactContentType     = "application/zstd"
 )
 
 func compressImmutableRunPayload(payload []byte) ([]byte, string, error) {

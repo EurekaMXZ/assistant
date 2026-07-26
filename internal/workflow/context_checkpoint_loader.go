@@ -61,6 +61,10 @@ func (l *ContextLoader) loadCheckpointSnapshot(ctx context.Context, conversation
 	if err != nil {
 		return nil, false, err
 	}
+	tail, err := l.loadSnapshotTail(ctx, conversationID, head)
+	if err != nil {
+		return nil, false, err
+	}
 	now := time.Now().UTC()
 	return &cache.ContextSnapshot{
 		ConversationID:           conversationID,
@@ -76,8 +80,9 @@ func (l *ContextLoader) loadCheckpointSnapshot(ctx context.Context, conversation
 		RawTailStartSeq:          head.RawTailStartSeq,
 		LastSeq:                  head.LastSeq,
 		ActiveTokens:             head.ActiveContextTokens,
-		TailCacheStartSeq:        head.RawTailStartSeq,
-		TailCacheEndSeq:          head.LastSeq,
+		TailCacheStartSeq:        tailCacheStartSeq(head, tail),
+		TailCacheEndSeq:          tailCacheEndSeq(head, tail),
+		Tail:                     tail,
 		ModelInput:               items,
 		ModelInputReady:          true,
 		UpdatedAt:                now,

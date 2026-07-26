@@ -54,6 +54,7 @@ type ToolOrchestrator struct {
 	calls                    ToolCallStore
 	remoteToolReplayMaxBytes int
 	modelToolOutputMaxTokens int
+	preflight                ScheduledRunPreflight
 }
 
 func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, executor tool.ToolExecutor, publisher stream.Publisher, artifacts ToolArtifactStore, calls ToolCallStore) *ToolOrchestrator {

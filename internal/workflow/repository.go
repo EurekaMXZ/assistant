@@ -32,6 +32,7 @@ type WorkflowContextRepository interface {
 	HasActiveRetry(ctx context.Context, conversationID string) (bool, error)
 	ListRawTailMessages(ctx context.Context, conversationID string, fromSeq int64, toSeq int64) ([]domain.Message, error)
 	CompleteCompaction(ctx context.Context, conversationID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error)
+	CompletePreflightCompaction(ctx context.Context, conversationID string, turnID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error)
 }
 
 type CompleteEventStore interface {

@@ -75,6 +75,10 @@ func (s *stubRunnerContextStore) CompleteCompaction(context.Context, string, dom
 	return s.head, nil
 }
 
+func (s *stubRunnerContextStore) CompletePreflightCompaction(context.Context, string, string, domain.AnchorObject, int64, int) (*domain.ContextHead, error) {
+	return s.head, nil
+}
+
 type stubScheduledRunStore struct {
 	started      int
 	completed    int
@@ -845,6 +849,8 @@ func TestTurnRunnerRequestedEventExecutesOneRequestThenReschedules(t *testing.T)
 	}}}
 	artifacts := &stubToolArtifactStore{}
 	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}}}, executor, &recordingPublisher{}, artifacts, nil)
+	preflight := &recordingScheduledRunPreflight{}
+	orchestrator.preflight = preflight
 	state := &ScheduledRunState{
 		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
@@ -877,6 +883,9 @@ func TestTurnRunnerRequestedEventExecutesOneRequestThenReschedules(t *testing.T)
 	}
 	if runs.completed != 1 || runs.scheduled != 1 || runs.checkpoints != 2 {
 		t.Fatalf("completed=%d scheduled=%d checkpoints=%d, want 1, 1, 2", runs.completed, runs.scheduled, runs.checkpoints)
+	}
+	if preflight.calls != 2 {
+		t.Fatalf("preflight calls = %d, want final dispatch and continuation", preflight.calls)
 	}
 }
 

@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -10,6 +11,14 @@ import (
 )
 
 func (r *TurnRunner) persistImmutableRunRequest(ctx context.Context, conversationID string, turnID string, stepIndex int, runID string, payload []byte) error {
+	err := r.persistImmutableRunRequestArtifact(ctx, conversationID, turnID, stepIndex, runID, immutableRunRequestArtifact, payload)
+	if !errors.Is(err, domain.ErrConflict) {
+		return err
+	}
+	return r.persistImmutableRunRequestArtifact(ctx, conversationID, turnID, stepIndex, runID, immutableRunDispatchRequestArtifact, payload)
+}
+
+func (r *TurnRunner) persistImmutableRunRequestArtifact(ctx context.Context, conversationID string, turnID string, stepIndex int, runID string, name string, payload []byte) error {
 	writer, ok := r.blobs.(ImmutableRunArtifactStore)
 	if !ok || writer == nil {
 		return nil
@@ -18,13 +27,13 @@ func (r *TurnRunner) persistImmutableRunRequest(ctx context.Context, conversatio
 	if err != nil {
 		return err
 	}
-	key := writer.ImmutableRunArtifactKey(conversationID, turnID, stepIndex, runID, immutableRunRequestArtifact)
+	key := writer.ImmutableRunArtifactKey(conversationID, turnID, stepIndex, runID, name)
 	if err := writer.PutImmutableBytes(ctx, key, compressed, immutableRunArtifactContentType); err != nil {
 		return fmt.Errorf("persist immutable run request: %w", err)
 	}
 	if indexer, ok := r.runs.(TurnRunArtifactIndexer); ok {
 		if err := indexer.SetTurnRunArtifactMetadata(ctx, runID, []RunArtifactMetadata{{
-			Name: immutableRunRequestArtifact, ObjectKey: key, ContentType: immutableRunArtifactContentType,
+			Name: name, ObjectKey: key, ContentType: immutableRunArtifactContentType,
 			UncompressedSize: int64(len(payload)), CompressedSize: int64(len(compressed)), SHA256: checksum,
 			SchemaVersion: immutableRunArtifactSchemaVersion,
 		}}); err != nil {

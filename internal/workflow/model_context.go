@@ -13,6 +13,12 @@ import (
 
 const turnModelContextContentType = "application/json"
 
+const (
+	modelContextSafetyMultiplierNumerator   = 140
+	modelContextSafetyMultiplierDenominator = 100
+	modelContextSafetyOverheadTokens        = 256
+)
+
 func buildModelContextItems(initialInput []llm.ModelItem, currentInput []llm.ModelItem, final *llm.ModelResult, toolOutputMaxTokens int) []llm.ModelItem {
 	var items []llm.ModelItem
 	if len(currentInput) > len(initialInput) {
@@ -56,6 +62,14 @@ func estimateModelContextTokens(instructions string, items []llm.ModelItem, tool
 		}
 	}
 	return tokens
+}
+
+func estimateSafeModelContextTokens(instructions string, items []llm.ModelItem, tools []llm.ModelTool) int {
+	base := estimateModelContextTokens(instructions, items, tools)
+	if base <= 0 {
+		return 0
+	}
+	return (base*modelContextSafetyMultiplierNumerator+modelContextSafetyMultiplierDenominator-1)/modelContextSafetyMultiplierDenominator + modelContextSafetyOverheadTokens
 }
 
 func estimateStructuredMessageTokens(raw json.RawMessage) (int, bool) {
@@ -179,8 +193,8 @@ func remainingToolOutputTokens(request llm.ModelRequest, input []llm.ModelItem) 
 	if request.ContextWindowTokens <= 0 {
 		return -1
 	}
-	usedTokens := estimateModelContextTokens(request.Instructions, input, request.Tools)
-	usableTokens := request.ContextWindowTokens * 95 / 100
+	usedTokens := estimateSafeModelContextTokens(request.Instructions, input, request.Tools)
+	usableTokens := modelRequestInputLimit(request.ContextWindowTokens, request.MaxOutputTokens)
 	return max(0, usableTokens-usedTokens)
 }
 

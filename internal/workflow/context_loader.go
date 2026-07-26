@@ -287,6 +287,10 @@ func (l *ContextLoader) loadEventSnapshot(ctx context.Context, conversationID st
 	if err != nil {
 		return nil, false, err
 	}
+	tail, err := l.loadSnapshotTail(ctx, conversationID, head)
+	if err != nil {
+		return nil, false, err
+	}
 	now := time.Now().UTC()
 	return &cache.ContextSnapshot{
 		ConversationID:           conversationID,
@@ -302,12 +306,20 @@ func (l *ContextLoader) loadEventSnapshot(ctx context.Context, conversationID st
 		RawTailStartSeq:          head.RawTailStartSeq,
 		LastSeq:                  head.LastSeq,
 		ActiveTokens:             head.ActiveContextTokens,
-		TailCacheStartSeq:        head.RawTailStartSeq,
-		TailCacheEndSeq:          head.LastSeq,
+		TailCacheStartSeq:        tailCacheStartSeq(head, tail),
+		TailCacheEndSeq:          tailCacheEndSeq(head, tail),
+		Tail:                     tail,
 		ModelInput:               items,
 		ModelInputReady:          true,
 		UpdatedAt:                now,
 	}, true, nil
+}
+
+func (l *ContextLoader) loadSnapshotTail(ctx context.Context, conversationID string, head *domain.ContextHead) ([]domain.Message, error) {
+	if l == nil || l.store == nil || head == nil || head.RawTailStartSeq > head.LastSeq {
+		return nil, nil
+	}
+	return l.store.ListRawTailMessages(ctx, conversationID, head.RawTailStartSeq, head.LastSeq)
 }
 
 func (l *ContextLoader) modelInputItemsForMessage(ctx context.Context, conversationID string, message domain.Message) ([]llm.ModelItem, error) {

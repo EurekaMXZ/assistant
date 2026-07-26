@@ -14,6 +14,10 @@ import (
 
 const scheduledRunStateVersion = 1
 
+type ScheduledRunPreflight interface {
+	Prepare(ctx context.Context, state *ScheduledRunState) (*ScheduledRunState, error)
+}
+
 type ScheduledRunState struct {
 	Version           int              `json:"version"`
 	StepIndex         int              `json:"step_index"`
@@ -76,21 +80,39 @@ func (o *ToolOrchestrator) PrepareScheduledRun(ctx context.Context, input ToolRu
 		Metadata:            cloneStringMap(input.Metadata),
 		ParallelToolCalls:   input.ParallelToolCalls,
 	}
-	rawRequest, err := o.model.MarshalRequest(request)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal scheduled model request: %w", err)
-	}
-	rawRequest, err = canonicalScheduledRunRequest(rawRequest, request.Input)
-	if err != nil {
-		return nil, nil, err
-	}
 	if initialInputCount < 0 || initialInputCount > len(request.Input) {
 		initialInputCount = len(request.Input)
 	}
-	return &ScheduledRunState{
+	state := &ScheduledRunState{
 		Version: scheduledRunStateVersion, StepIndex: stepIndex,
 		InitialInputCount: initialInputCount, Scope: cloneToolScope(input.Scope), Request: request,
-	}, rawRequest, nil
+	}
+	return o.PreflightScheduledRun(ctx, state)
+}
+
+func (o *ToolOrchestrator) PreflightScheduledRun(ctx context.Context, state *ScheduledRunState) (*ScheduledRunState, json.RawMessage, error) {
+	if o == nil || o.model == nil || state == nil {
+		return nil, nil, fmt.Errorf("scheduled model context requires orchestrator and state")
+	}
+	var err error
+	if o.preflight != nil {
+		state, err = o.preflight.Prepare(ctx, state)
+		if err != nil {
+			return nil, nil, fmt.Errorf("prepare scheduled model context: %w", err)
+		}
+		if state == nil {
+			return nil, nil, errors.New("scheduled model context preflight returned no state")
+		}
+	}
+	rawRequest, err := o.model.MarshalRequest(state.Request)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal scheduled model request: %w", err)
+	}
+	rawRequest, err = canonicalScheduledRunRequest(rawRequest, state.Request.Input)
+	if err != nil {
+		return nil, nil, err
+	}
+	return state, rawRequest, nil
 }
 
 func canonicalScheduledRunRequest(providerRequest json.RawMessage, items []llm.ModelItem) (json.RawMessage, error) {
@@ -142,8 +164,8 @@ func (o *ToolOrchestrator) RequestScheduledRun(ctx context.Context, state *Sched
 		ContextWindowTokens: state.Request.ContextWindowTokens,
 		Tools:               cloneModelTools(state.Request.Tools),
 	}
-	inputTokens := estimateModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
-	if inputLimit := modelRequestInputLimit(state.Request.ContextWindowTokens, 0); inputLimit > 0 && inputTokens > inputLimit {
+	inputTokens := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	if inputLimit := modelRequestInputLimit(state.Request.ContextWindowTokens, state.Request.MaxOutputTokens); inputLimit > 0 && inputTokens > inputLimit {
 		return outcome, fmt.Errorf("scheduled model input estimate %d exceeds context limit", inputTokens)
 	}
 	result, err := o.model.StreamResponse(ctx, state.Request, handler)

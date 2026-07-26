@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -95,6 +96,17 @@ func (r *WorkflowContextRepository) ListRawTailMessages(ctx context.Context, con
 }
 
 func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conversationID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
+	return r.completeCompaction(ctx, conversationID, "", anchor, expectedLastSeq, activeContextTokens)
+}
+
+func (r *WorkflowContextRepository) CompletePreflightCompaction(ctx context.Context, conversationID string, turnID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
+	if strings.TrimSpace(turnID) == "" {
+		return nil, fmt.Errorf("preflight compaction requires a turn id")
+	}
+	return r.completeCompaction(ctx, conversationID, turnID, anchor, expectedLastSeq, activeContextTokens)
+}
+
+func (r *WorkflowContextRepository) completeCompaction(ctx context.Context, conversationID string, activeRetryTurnID string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -105,20 +117,39 @@ func (r *WorkflowContextRepository) CompleteCompaction(ctx context.Context, conv
 	if err != nil {
 		return nil, err
 	}
-	var activeRetry bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM turns
-			WHERE conversation_id = $1::uuid
-				AND retry_of_turn_id IS NOT NULL
-				AND status IN ($2, $3, $4, $5, $6)
-		)
-	`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput, domain.TurnStatusCancelRequested).Scan(&activeRetry); err != nil {
-		return nil, fmt.Errorf("check active retry before compaction: %w", err)
-	}
-	if activeRetry {
-		return nil, domain.ErrConflict
+	if activeRetryTurnID == "" {
+		var activeRetry bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM turns
+				WHERE conversation_id = $1::uuid
+					AND retry_of_turn_id IS NOT NULL
+					AND status IN ($2, $3, $4, $5, $6)
+			)
+		`, conversationID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput, domain.TurnStatusCancelRequested).Scan(&activeRetry); err != nil {
+			return nil, fmt.Errorf("check active retry before compaction: %w", err)
+		}
+		if activeRetry {
+			return nil, domain.ErrConflict
+		}
+	} else {
+		var otherActiveRetry bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM turns
+				WHERE conversation_id = $1::uuid
+					AND retry_of_turn_id IS NOT NULL
+					AND id <> $2::uuid
+					AND status IN ($3, $4, $5, $6, $7)
+			)
+		`, conversationID, activeRetryTurnID, domain.TurnStatusAccepted, domain.TurnStatusContextReady, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput, domain.TurnStatusCancelRequested).Scan(&otherActiveRetry); err != nil {
+			return nil, fmt.Errorf("check competing active retry before preflight compaction: %w", err)
+		}
+		if otherActiveRetry {
+			return nil, domain.ErrConflict
+		}
 	}
 
 	if head.LastSeq != expectedLastSeq || anchor.CoveredUntilSeq > expectedLastSeq {

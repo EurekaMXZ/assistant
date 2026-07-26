@@ -297,3 +297,35 @@ func TestContextLoaderRejectsCheckpointChecksumMismatch(t *testing.T) {
 		t.Fatalf("checkpoint error = %v", err)
 	}
 }
+
+func TestContextLoaderCheckpointSnapshotHydratesRawTail(t *testing.T) {
+	payload, err := json.Marshal(immutableContextCheckpoint{
+		SchemaVersion: immutableRunArtifactSchemaVersion, ConversationID: "conv-1",
+		ModelItems: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "history"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal checkpoint: %v", err)
+	}
+	compressed, checksum, err := compressImmutableRunPayload(payload)
+	if err != nil {
+		t.Fatalf("compress checkpoint: %v", err)
+	}
+	store := &stubRunnerContextStore{messages: []domain.Message{{Seq: 2, Role: domain.RoleUser, ContentText: "pending"}}}
+	loader := &ContextLoader{
+		store:          store,
+		modelContexts:  &stubContextLoaderArtifactStore{data: map[string][]byte{"checkpoint": compressed}},
+		completeEvents: &stubCompleteEventStore{},
+	}
+	head := &domain.ContextHead{
+		LatestCheckpointKey: "checkpoint", LatestCheckpointChecksum: checksum,
+		RawTailStartSeq: 2, LastSeq: 2,
+	}
+
+	snapshot, found, err := loader.loadCheckpointSnapshot(t.Context(), "conv-1", head)
+	if err != nil || !found {
+		t.Fatalf("load checkpoint snapshot: found=%t err=%v", found, err)
+	}
+	if len(snapshot.Tail) != 1 || snapshot.Tail[0].ContentText != "pending" {
+		t.Fatalf("checkpoint snapshot tail = %#v", snapshot.Tail)
+	}
+}

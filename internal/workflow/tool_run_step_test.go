@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -10,6 +11,15 @@ import (
 	"github.com/EurekaMXZ/assistant/internal/llm"
 	"github.com/EurekaMXZ/assistant/internal/tool"
 )
+
+type recordingScheduledRunPreflight struct {
+	calls int
+}
+
+func (p *recordingScheduledRunPreflight) Prepare(_ context.Context, state *ScheduledRunState) (*ScheduledRunState, error) {
+	p.calls++
+	return state, nil
+}
 
 func TestScheduledRunExecutesExactlyOneModelRequest(t *testing.T) {
 	model := &stubModelClient{
@@ -78,6 +88,8 @@ func TestScheduledRunPersistsContinuationForNextRequest(t *testing.T) {
 	}}}
 	artifacts := &stubToolArtifactStore{}
 	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{functionTool}}, executor, nil, artifacts, &stubToolCallStore{})
+	preflight := &recordingScheduledRunPreflight{}
+	orchestrator.preflight = preflight
 	input := ToolRunInput{
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, Model: "gpt-test",
 		PromptCacheKey: "assistant-conversation-cache",
@@ -105,6 +117,9 @@ func TestScheduledRunPersistsContinuationForNextRequest(t *testing.T) {
 	}
 	if len(outcome.NextState.Request.Input) != 3 {
 		t.Fatalf("next request input = %#v", outcome.NextState.Request.Input)
+	}
+	if preflight.calls != 2 {
+		t.Fatalf("preflight calls = %d, want 2 for initial and continuation", preflight.calls)
 	}
 	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), outcome.NextState.Scope, outcome.NextState, outcome.NextRequest)
 	if err != nil {

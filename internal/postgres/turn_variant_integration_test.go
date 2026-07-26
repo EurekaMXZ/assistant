@@ -248,6 +248,13 @@ func TestRetryTurnVariantLifecycleIntegration(t *testing.T) {
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("compaction during retry error = %v, want conflict", err)
 	}
+	currentHead, err := contexts.GetContextHead(t.Context(), conversationID)
+	if err != nil {
+		t.Fatalf("get context head for retry preflight: %v", err)
+	}
+	if _, err := contexts.CompletePreflightCompaction(t.Context(), conversationID, failedRetry.Turn.ID, domain.AnchorObject{CoveredUntilSeq: 1}, currentHead.LastSeq, 1); err != nil {
+		t.Fatalf("preflight compaction for active retry: %v", err)
+	}
 	if _, err := pool.Exec(t.Context(), `UPDATE turns SET status = $2 WHERE id = $1::uuid`, failedRetry.Turn.ID, domain.TurnStatusContextReady); err != nil {
 		t.Fatalf("mark second retry context ready: %v", err)
 	}

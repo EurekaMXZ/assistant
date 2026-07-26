@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -13,6 +14,21 @@ import (
 
 type immutableArtifactStoreStub struct {
 	stubTurnArtifactStore
+}
+
+type immutableConflictArtifactStoreStub struct {
+	immutableArtifactStoreStub
+}
+
+func (s *immutableConflictArtifactStoreStub) PutImmutableBytes(_ context.Context, key string, data []byte, _ string) error {
+	if s.data == nil {
+		s.data = make(map[string][]byte)
+	}
+	if existing, ok := s.data[key]; ok && !bytes.Equal(existing, data) {
+		return domain.ErrConflict
+	}
+	s.data[key] = append([]byte(nil), data...)
+	return nil
 }
 
 func (s *immutableArtifactStoreStub) PutImmutableBytes(_ context.Context, key string, data []byte, _ string) error {
@@ -120,6 +136,22 @@ func TestPersistImmutableRunFailureIndexesFailureArtifact(t *testing.T) {
 	}
 	if len(runs.artifacts) != 1 || runs.artifacts[0].Name != immutableRunFailureArtifact || !strings.HasSuffix(runs.artifacts[0].ObjectKey, "/failure.json.zst") {
 		t.Fatalf("failure metadata = %#v", runs.artifacts)
+	}
+}
+
+func TestPersistImmutableRunRequestPreservesEarlierArtifactOnDispatchRewrite(t *testing.T) {
+	artifacts := &immutableConflictArtifactStoreStub{}
+	runs := &stubScheduledRunStore{}
+	runner := &TurnRunner{blobs: artifacts, runs: runs}
+
+	if err := runner.persistImmutableRunRequest(t.Context(), "conv-1", "turn-1", 1, "run-1", []byte(`{"input":"before"}`)); err != nil {
+		t.Fatalf("persist initial request: %v", err)
+	}
+	if err := runner.persistImmutableRunRequest(t.Context(), "conv-1", "turn-1", 1, "run-1", []byte(`{"input":"after"}`)); err != nil {
+		t.Fatalf("persist rewritten dispatch request: %v", err)
+	}
+	if len(runs.artifacts) != 2 || runs.artifacts[1].Name != immutableRunDispatchRequestArtifact {
+		t.Fatalf("request artifact metadata = %#v", runs.artifacts)
 	}
 }
 

@@ -208,8 +208,8 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	if err != nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
-	requestTokens := estimateModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
-	if requestTokens > modelRequestInputLimit(execution.ContextWindowTokens, 0) {
+	requestTokens := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	if requestTokens > modelRequestInputLimit(execution.ContextWindowTokens, state.Request.MaxOutputTokens) {
 		return r.failTurn(ctx, turn, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing,
 			fmt.Errorf("model request input estimate %d exceeds context limit", requestTokens))
 	}
@@ -217,18 +217,12 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	if err != nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestBlobFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
-	runID, err := r.runs.StartTurnRun(ctx, event.TurnID, toolRunProviderOpenAIResponses, execution.UpstreamModel, runRequestKey, stateKey)
+	_, err = r.runs.StartTurnRun(ctx, event.TurnID, toolRunProviderOpenAIResponses, execution.UpstreamModel, runRequestKey, stateKey)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
 			return nil
 		}
 		return err
-	}
-	run, err := r.runs.GetTurnRun(ctx, runID)
-	if err == nil && run != nil {
-		if err := r.persistImmutableRunRequest(ctx, event.ConversationID, event.TurnID, run.StepIndex, run.ID, rawRequest); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -433,9 +427,6 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		}
 		return err
 	}
-	if err := r.ensureImmutableRunRequest(ctx, event.ConversationID, claimed); err != nil {
-		return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
-	}
 	runCtx, stop := startTurnRunLeaseHeartbeat(executionParent, r.runs, lease, r.settings.WorkerLeaseTimeout)
 	stopLease = stop
 	if runCtx.Err() != nil {
@@ -446,6 +437,9 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	responseKey := claimed.ResponseBlobKey
 	resultKey := claimed.ResultBlobKey
 	if strings.TrimSpace(claimed.ResultBlobKey) != "" {
+		if err := r.ensureImmutableRunRequest(runCtx, event.ConversationID, claimed); err != nil {
+			return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+		}
 		outcome, err = r.tools.LoadScheduledRunOutcome(runCtx, claimed.ResultBlobKey)
 		if err != nil {
 			return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
@@ -466,8 +460,29 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, recoverErr)
 		}
 		if found {
+			if err := r.ensureImmutableRunRequest(runCtx, event.ConversationID, claimed); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+			}
 			outcome, responseKey, resultKey = recovered, recoveredResponseKey, recoveredResultKey
 		} else {
+			var rawRequest json.RawMessage
+			state, rawRequest, err = r.tools.PreflightScheduledRun(runCtx, state)
+			if err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+			}
+			stateKey, requestKey, err := r.tools.PersistScheduledRunState(runCtx, state.Scope, state, rawRequest)
+			if err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+			}
+			if claimed.StateBlobKey != "" && claimed.StateBlobKey != stateKey {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, fmt.Errorf("preflight state key changed from %q to %q", claimed.StateBlobKey, stateKey))
+			}
+			if claimed.RequestBlobKey != "" && claimed.RequestBlobKey != requestKey {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, fmt.Errorf("preflight request key changed from %q to %q", claimed.RequestBlobKey, requestKey))
+			}
+			if err := r.persistImmutableRunRequest(runCtx, event.ConversationID, claimed.TurnID, claimed.StepIndex, claimed.ID, rawRequest); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, err)
+			}
 			providerState, cloneErr := cloneScheduledRunState(state)
 			if cloneErr != nil {
 				return r.failScheduledTurnRun(ctx, event, claimed, lease, nil, cloneErr)
@@ -678,14 +693,14 @@ func (r *TurnRunner) finishScheduledTurnRun(ctx context.Context, event WorkflowE
 		if err != nil {
 			return err
 		}
-		nextRunID, err := r.runs.ScheduleNextTurnRun(ctx, run.TurnID, run.ID, outcome.NextState.StepIndex, toolRunProviderOpenAIResponses, outcome.NextState.Request.Model, requestKey, stateKey)
+		_, err = r.runs.ScheduleNextTurnRun(ctx, run.TurnID, run.ID, outcome.NextState.StepIndex, toolRunProviderOpenAIResponses, outcome.NextState.Request.Model, requestKey, stateKey)
 		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		return r.persistImmutableRunRequest(ctx, event.ConversationID, run.TurnID, outcome.NextState.StepIndex, nextRunID, outcome.NextRequest)
+		return nil
 	}
 
 	turn := &domain.Turn{ID: run.TurnID, ConversationID: event.ConversationID}

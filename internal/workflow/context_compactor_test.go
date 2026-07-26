@@ -45,7 +45,7 @@ func (s *stubCompactionContextStore) ListRawTailMessages(context.Context, string
 	return append([]domain.Message(nil), s.messages...), nil
 }
 
-func (s *stubCompactionContextStore) CompleteCompaction(_ context.Context, _ string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
+func (s *stubCompactionContextStore) complete(anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
 	s.anchor = anchor
 	s.expectedLastSeq = expectedLastSeq
 	s.activeTokens = activeContextTokens
@@ -56,6 +56,14 @@ func (s *stubCompactionContextStore) CompleteCompaction(_ context.Context, _ str
 	updated.RawTailStartSeq = anchor.CoveredUntilSeq + 1
 	updated.ActiveContextTokens = activeContextTokens
 	return &updated, nil
+}
+
+func (s *stubCompactionContextStore) CompleteCompaction(_ context.Context, _ string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
+	return s.complete(anchor, expectedLastSeq, activeContextTokens)
+}
+
+func (s *stubCompactionContextStore) CompletePreflightCompaction(_ context.Context, _ string, _ string, anchor domain.AnchorObject, expectedLastSeq int64, activeContextTokens int) (*domain.ContextHead, error) {
+	return s.complete(anchor, expectedLastSeq, activeContextTokens)
 }
 
 type stubCompactionAnchorStore struct {
@@ -92,7 +100,8 @@ func TestContextCompactorRetainsRecentTurnsAndReusesTurnPrefix(t *testing.T) {
 			LastSeq:             6,
 			ActiveContextTokens: 60,
 		},
-		messages: messages,
+		messages:    messages,
+		activeRetry: true,
 	}
 	model := &stubModelClient{results: []*llm.ModelResult{{FinalText: "durable summary"}}}
 	cacheStore := cache.New(8, 16)
@@ -121,8 +130,12 @@ func TestContextCompactorRetainsRecentTurnsAndReusesTurnPrefix(t *testing.T) {
 		conversations: ownedConversationReader(),
 	}
 
-	if err := compactor.HandleRequested(t.Context(), WorkflowEvent{EventType: EventContextCompactionRequest, ConversationID: "conv-1", TurnID: "turn-1"}); err != nil {
+	compacted, err := compactor.CompactForRequest(t.Context(), WorkflowEvent{EventType: EventContextCompactionRequest, ConversationID: "conv-1", TurnID: "turn-1"})
+	if err != nil {
 		t.Fatalf("compact context: %v", err)
+	}
+	if !compacted {
+		t.Fatal("preflight compaction did not compact an active retry context")
 	}
 	if len(model.streamRequests) != 1 {
 		t.Fatalf("model requests = %d, want 1", len(model.streamRequests))
@@ -248,7 +261,7 @@ func TestEmergencyCompactionInputFitsVisibleTranscriptToLimit(t *testing.T) {
 	if len(input) != 2 {
 		t.Fatalf("emergency input = %#v", input)
 	}
-	if got := estimateModelContextTokens("system", input, nil); got > 500 {
+	if got := estimateSafeModelContextTokens("system", input, nil); got > 500 {
 		t.Fatalf("emergency input estimate = %d, want at most 500", got)
 	}
 	if !strings.Contains(input[0].Content, "tokens truncated") {

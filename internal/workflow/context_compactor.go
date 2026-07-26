@@ -36,19 +36,28 @@ type ContextCompactor struct {
 }
 
 func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEvent) error {
+	_, err := c.compact(ctx, event, false)
+	return err
+}
+
+func (c *ContextCompactor) CompactForRequest(ctx context.Context, event WorkflowEvent) (bool, error) {
+	return c.compact(ctx, event, true)
+}
+
+func (c *ContextCompactor) compact(ctx context.Context, event WorkflowEvent, force bool) (bool, error) {
 	activeRetry, err := c.store.HasActiveRetry(ctx, event.ConversationID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if activeRetry {
-		return nil
+	if activeRetry && !force {
+		return false, nil
 	}
 	hot, head, err := c.loader.EnsureHotContext(ctx, event.ConversationID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if hot == nil || head == nil {
-		return nil
+		return false, nil
 	}
 	compactTriggerTokens := c.settings.CompactTriggerTokens
 	var turnExecution *domain.ModelExecutionSnapshot
@@ -56,50 +65,69 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		var resolveErr error
 		turnExecution, resolveErr = c.models.GetTurnExecution(ctx, event.TurnID)
 		if resolveErr != nil {
-			return resolveErr
+			return false, resolveErr
 		}
 		if turnExecution != nil {
 			compactTriggerTokens = compactTriggerTokenLimit(compactTriggerTokens, turnExecution.ContextWindowTokens)
 		}
 	}
 	if c.models == nil {
-		return errors.New("model catalog is not configured")
+		return false, errors.New("model catalog is not configured")
 	}
 	execution, err := c.models.ResolveExecution(ctx, "", true)
 	if err != nil {
 		if !errors.Is(err, domain.ErrInvalidInput) || turnExecution == nil {
-			return err
+			return false, err
 		}
 		execution = turnExecution
 	}
 	if execution == nil {
-		return errors.New("compaction model execution snapshot is unavailable")
+		return false, errors.New("compaction model execution snapshot is unavailable")
 	}
 	if err := validateExecutionSnapshot(execution); err != nil {
-		return err
+		return false, err
 	}
 	compactTriggerTokens = compactTriggerTokenLimit(compactTriggerTokens, execution.ContextWindowTokens)
-	if compactTriggerTokens <= 0 || head.ActiveContextTokens < compactTriggerTokens || head.RawTailStartSeq > head.LastSeq {
-		return nil
+	if !force && (compactTriggerTokens <= 0 || head.ActiveContextTokens < compactTriggerTokens || head.RawTailStartSeq > head.LastSeq) {
+		return false, nil
 	}
 	instructions := c.settings.AgentSystemPrompt
 	ownerUserID := ""
 	if c.conversations != nil {
 		conversation, conversationErr := c.conversations.GetConversation(ctx, event.ConversationID)
 		if conversationErr != nil {
-			return conversationErr
+			return false, conversationErr
 		}
 		if conversation != nil {
 			ownerUserID = conversation.OwnerUserID
 		}
 	}
-	compactedMessages, retainedMessages := splitCompactionMessagesForEvent(contextMessages(hot.Tail), event.EventType)
+	tail := hot.Tail
+	if head.RawTailStartSeq <= head.LastSeq {
+		tail, err = c.store.ListRawTailMessages(ctx, event.ConversationID, head.RawTailStartSeq, head.LastSeq)
+		if err != nil {
+			return false, err
+		}
+	}
+	historyAnchor := hot.Anchor
+	if historyAnchor == nil && head.AnchorKey != "" {
+		var anchor domain.AnchorObject
+		if err := c.blobs.GetJSON(ctx, head.AnchorKey, &anchor); err != nil {
+			return false, err
+		}
+		historyAnchor = &cache.ContextAnchor{
+			ConversationID: anchor.ConversationID, Generation: anchor.Generation,
+			CoveredFromSeq: anchor.CoveredFromSeq, CoveredUntilSeq: anchor.CoveredUntilSeq,
+			Role: anchor.Role, Content: anchor.Content, TokenCount: anchor.TokenCount,
+		}
+	}
+	compactedMessages, retainedMessages := splitCompactionMessagesForEvent(contextMessages(tail), event.EventType)
 	if len(compactedMessages) == 0 {
-		return nil
+		return false, nil
 	}
 	compactPrompt := strings.TrimSpace(c.settings.AgentCompactPrompt)
 	if compactPrompt == "" {
-		return errors.New("compaction prompt is empty")
+		return false, errors.New("compaction prompt is empty")
 	}
 	var tools []llm.ModelTool
 	var reasoningEffort, reasoningSummary, textVerbosity string
@@ -122,7 +150,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		return nil
 	}
 	if err := configureExecution(); err != nil {
-		return err
+		return false, err
 	}
 	fallbackExecution := turnExecution
 	if fallbackExecution == execution {
@@ -130,15 +158,15 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	}
 	var input []llm.ModelItem
 	for {
-		compactionContext := &cache.ContextSnapshot{Anchor: hot.Anchor, Tail: compactedMessages}
+		compactionContext := &cache.ContextSnapshot{Anchor: historyAnchor, Tail: compactedMessages}
 		if err := c.loader.loadConversationModelInput(ctx, event.ConversationID, compactionContext); err != nil {
-			return err
+			return false, err
 		}
 		input = truncateModelContextItems(buildConversationHistoryInput(compactionContext), c.tools.modelToolOutputTokenLimit())
 		input = append(input, llm.ModelItem{
 			Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: compactPrompt,
 		})
-		if estimateModelContextTokens(instructions, input, tools) <= inputLimit {
+		if estimateSafeModelContextTokens(instructions, input, tools) <= inputLimit {
 			break
 		}
 		boundary := previousCompactionTurnBoundary(compactedMessages)
@@ -147,15 +175,15 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 				execution = fallbackExecution
 				fallbackExecution = nil
 				if err := configureExecution(); err != nil {
-					return err
+					return false, err
 				}
 				continue
 			}
-			input = emergencyCompactionInput(hot.Anchor, compactedMessages, compactPrompt, inputLimit, instructions, tools)
-			if len(input) > 0 && estimateModelContextTokens(instructions, input, tools) <= inputLimit {
+			input = emergencyCompactionInput(historyAnchor, compactedMessages, compactPrompt, inputLimit, instructions, tools)
+			if len(input) > 0 && estimateSafeModelContextTokens(instructions, input, tools) <= inputLimit {
 				break
 			}
-			return errors.New("oldest conversation turn exceeds compaction model context window")
+			return false, errors.New("oldest conversation turn exceeds compaction model context window")
 		}
 		retainedMessages = append(append([]domain.Message(nil), compactedMessages[boundary:]...), retainedMessages...)
 		compactedMessages = compactedMessages[:boundary]
@@ -191,23 +219,23 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 			_ = c.billing.RecordCompactionUsage(ctx, event.ConversationID, event.TurnID,
 				fmt.Sprintf("compaction:%s:g%d", event.ConversationID, head.AnchorGeneration+1), *execution, result, err.Error())
 		}
-		return err
+		return false, err
 	}
 	if c.billing != nil {
 		if err := c.billing.RecordCompactionUsage(ctx, event.ConversationID, event.TurnID,
 			fmt.Sprintf("compaction:%s:g%d", event.ConversationID, head.AnchorGeneration+1), *execution, result, ""); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	if result == nil {
 		err = errors.New("empty compaction result")
-		return err
+		return false, err
 	}
 	content := strings.TrimSpace(result.FinalText)
 	if content == "" {
 		err = errors.New("empty compaction output")
-		return err
+		return false, err
 	}
 
 	checkpoint := formatConversationCheckpoint(content)
@@ -224,7 +252,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	}
 
 	if err := c.blobs.PutJSON(ctx, anchor.ObjectKey, anchor); err != nil {
-		return err
+		return false, err
 	}
 
 	postCompactionContext := &cache.ContextSnapshot{
@@ -236,7 +264,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		Tail: retainedMessages,
 	}
 	if err := c.loader.loadConversationModelInput(ctx, event.ConversationID, postCompactionContext); err != nil {
-		return err
+		return false, err
 	}
 	postCompactionInput := truncateModelContextItems(buildConversationHistoryInput(postCompactionContext), c.tools.modelToolOutputTokenLimit())
 	contextTools := tools
@@ -245,10 +273,10 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 	} else if turnExecution != nil && turnExecution.SupportsTools && len(contextTools) == 0 {
 		contextTools, err = c.compactionTools(ctx, event.ConversationID, ownerUserID)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	activeContextTokens := estimateModelContextTokens(instructions, postCompactionInput, contextTools)
+	activeContextTokens := estimateSafeModelContextTokens(instructions, postCompactionInput, contextTools)
 	if c.checkpoints != nil {
 		checkpointPayload, marshalErr := json.Marshal(immutableContextCheckpoint{
 			SchemaVersion:  immutableRunArtifactSchemaVersion,
@@ -257,24 +285,29 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 			ModelItems:     postCompactionInput,
 		})
 		if marshalErr != nil {
-			return fmt.Errorf("marshal compacted context checkpoint: %w", marshalErr)
+			return false, fmt.Errorf("marshal compacted context checkpoint: %w", marshalErr)
 		}
 		compressed, checksum, compressErr := compressImmutableRunPayload(checkpointPayload)
 		if compressErr != nil {
-			return compressErr
+			return false, compressErr
 		}
 		anchor.CheckpointKey = c.checkpoints.ContextCheckpointKey(event.ConversationID, head.Version+1)
 		anchor.CheckpointChecksum = checksum
 		if err := c.checkpoints.PutImmutableBytes(ctx, anchor.CheckpointKey, compressed, immutableRunArtifactContentType); err != nil {
-			return fmt.Errorf("persist compacted context checkpoint: %w", err)
+			return false, fmt.Errorf("persist compacted context checkpoint: %w", err)
 		}
 	}
-	updatedHead, err := c.store.CompleteCompaction(ctx, event.ConversationID, anchor, head.LastSeq, activeContextTokens)
+	var updatedHead *domain.ContextHead
+	if force {
+		updatedHead, err = c.store.CompletePreflightCompaction(ctx, event.ConversationID, event.TurnID, anchor, head.LastSeq, activeContextTokens)
+	} else {
+		updatedHead, err = c.store.CompleteCompaction(ctx, event.ConversationID, anchor, head.LastSeq, activeContextTokens)
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 
 	c.cache.ReplaceWithCompacted(event.ConversationID, &cache.ContextAnchor{
@@ -290,7 +323,7 @@ func (c *ContextCompactor) HandleRequested(ctx context.Context, event WorkflowEv
 		_, _, _ = c.loader.EnsureHotContext(ctx, event.ConversationID)
 	}
 
-	return nil
+	return true, nil
 }
 
 func contextMessages(messages []domain.Message) []domain.Message {
@@ -361,7 +394,7 @@ func previousCompactionTurnBoundary(messages []domain.Message) int {
 
 func emergencyCompactionInput(anchor *cache.ContextAnchor, messages []domain.Message, compactPrompt string, inputLimit int, instructions string, tools []llm.ModelTool) []llm.ModelItem {
 	prompt := llm.ModelItem{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: compactPrompt}
-	reservedTokens := estimateModelContextTokens(instructions, []llm.ModelItem{prompt}, tools) + 128
+	reservedTokens := estimateSafeModelContextTokens(instructions, []llm.ModelItem{prompt}, tools) + 128
 	if inputLimit <= reservedTokens {
 		return nil
 	}
@@ -379,7 +412,8 @@ func emergencyCompactionInput(anchor *cache.ContextAnchor, messages []domain.Mes
 	if transcript.Len() == 0 {
 		return nil
 	}
-	history := truncateMiddle(strings.TrimSpace(transcript.String()), (inputLimit-reservedTokens)*4)
+	historyBudget := (inputLimit - reservedTokens) * modelContextSafetyMultiplierDenominator / modelContextSafetyMultiplierNumerator
+	history := truncateMiddle(strings.TrimSpace(transcript.String()), historyBudget*4)
 	return []llm.ModelItem{
 		{
 			Type: llm.ModelItemMessage, Role: domain.RoleUser,

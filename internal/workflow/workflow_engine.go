@@ -70,6 +70,23 @@ func New(deps Dependencies) *Engine {
 	orchestrator := NewToolOrchestrator(deps.Model, deps.ToolCatalog, deps.ToolExecutor, deps.Streams, deps.ToolArtifacts, deps.ToolCalls)
 	orchestrator.remoteToolReplayMaxBytes = deps.Settings.RemoteToolReplayMaxBytes
 	orchestrator.modelToolOutputMaxTokens = deps.Settings.ModelToolOutputMaxTokens
+	compactor := &ContextCompactor{
+		settings:      deps.Settings,
+		store:         deps.Contexts,
+		model:         deps.Model,
+		blobs:         deps.ContextAnchors,
+		checkpoints:   checkpointStore,
+		cache:         deps.ContextCompaction,
+		loader:        loader,
+		tools:         orchestrator,
+		sandboxes:     deps.ConversationSandboxes,
+		models:        deps.Models,
+		billing:       deps.BillingUsage,
+		conversations: deps.Conversations,
+	}
+	orchestrator.preflight = &ContextPreflight{
+		settings: deps.Settings, loader: loader, compactor: compactor, locker: deps.Locker,
+	}
 
 	return &Engine{
 		locker:        deps.Locker,
@@ -92,20 +109,7 @@ func New(deps Dependencies) *Engine {
 			completeEvents:       runEvents,
 			models:               deps.Models,
 		},
-		compactor: &ContextCompactor{
-			settings:      deps.Settings,
-			store:         deps.Contexts,
-			model:         deps.Model,
-			blobs:         deps.ContextAnchors,
-			checkpoints:   checkpointStore,
-			cache:         deps.ContextCompaction,
-			loader:        loader,
-			tools:         orchestrator,
-			sandboxes:     deps.ConversationSandboxes,
-			models:        deps.Models,
-			billing:       deps.BillingUsage,
-			conversations: deps.Conversations,
-		},
+		compactor: compactor,
 		outbox: &OutboxRelay{
 			settings: deps.Settings,
 			store:    deps.Outbox,
