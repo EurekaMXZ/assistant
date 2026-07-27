@@ -129,10 +129,11 @@ describe("personalization location settings", () => {
     const { PersonalizationSettings } = await import("./personalization-settings");
     await act(async () => {
       root.render(<PersonalizationSettings />);
-      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(mocks.loadAMap).toHaveBeenCalledTimes(1));
     });
 
-    await vi.waitFor(() => expect(mocks.loadAMap).toHaveBeenCalledTimes(1));
     expect(container.textContent).toContain("我的位置");
     expect(container.querySelector('[aria-label="删除我的位置"]')).not.toBeNull();
   });
@@ -141,9 +142,10 @@ describe("personalization location settings", () => {
     const { PersonalizationSettings } = await import("./personalization-settings");
     await act(async () => {
       root.render(<PersonalizationSettings />);
-      await Promise.resolve();
     });
-    await vi.waitFor(() => expect(mocks.loadAMap).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await vi.waitFor(() => expect(mocks.loadAMap).toHaveBeenCalledTimes(1));
+    });
 
     const input = container.querySelector<HTMLInputElement>('input[placeholder="搜索地址或地点"]');
     expect(input).not.toBeNull();
