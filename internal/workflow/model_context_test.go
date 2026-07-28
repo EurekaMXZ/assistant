@@ -37,4 +37,25 @@ func TestEstimateModelContextTokensUsesFixedImageEstimate(t *testing.T) {
 	if tokens < 2_000 || tokens > 2_100 {
 		t.Fatalf("image estimate = %d, want fixed estimate near 2000", tokens)
 	}
+
+	referencedTokens := estimateModelContextTokens("", []llm.ModelItem{{
+		Type: llm.ModelItemImageGenerationCall,
+		Raw:  []byte(`{"type":"image_generation_call","result_ref":{"object_key":"generated.png"}}`),
+	}}, nil)
+	if referencedTokens < 2_000 || referencedTokens > 2_100 {
+		t.Fatalf("generated image estimate = %d, want fixed estimate near 2000", referencedTokens)
+	}
+}
+
+func TestMarshalModelContextPreservesExternalizedGeneratedImageReference(t *testing.T) {
+	data, err := marshalModelContextItems([]llm.ModelItem{{
+		ID: "image-1", Type: llm.ModelItemImageGenerationCall, Result: "image-base64",
+		Raw: []byte(`{"type":"image_generation_call","result_ref":{"object_key":"generated.png"}}`),
+	}})
+	if err != nil {
+		t.Fatalf("marshal model context: %v", err)
+	}
+	if !strings.Contains(string(data), `"result_ref"`) || strings.Contains(string(data), "image-base64") {
+		t.Fatalf("serialized image context = %s", data)
+	}
 }

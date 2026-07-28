@@ -38,6 +38,10 @@ func buildModelContextItems(initialInput []llm.ModelItem, currentInput []llm.Mod
 func estimateModelContextTokens(instructions string, items []llm.ModelItem, tools []llm.ModelTool) int {
 	tokens := domain.EstimateTokens(instructions)
 	for _, item := range items {
+		if item.Type == llm.ModelItemImageGenerationCall && strings.Contains(string(item.Raw), `"result_ref"`) {
+			tokens += domain.EstimatedImageInputTokens
+			continue
+		}
 		if len(item.Raw) > 0 {
 			if rawTokens, ok := estimateStructuredMessageTokens(item.Raw); ok {
 				tokens += rawTokens

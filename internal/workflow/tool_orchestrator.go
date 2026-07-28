@@ -318,7 +318,9 @@ func cloneModelItems(items []llm.ModelItem) []llm.ModelItem {
 		item.Raw = append(json.RawMessage(nil), item.Raw...)
 		if item.Type == llm.ModelItemImageGenerationCall {
 			item.Result = ""
-			item.Raw = nil
+			if !strings.Contains(string(item.Raw), `"result_ref"`) {
+				item.Raw = nil
+			}
 		}
 		cloned = append(cloned, item)
 	}

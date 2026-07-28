@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
 )
 
@@ -45,8 +46,9 @@ func (l *ContextLoader) hydrateScheduledRunImages(ctx context.Context, state *Sc
 		return nil
 	}
 	var totalBytes int64
-	for index := range state.Request.Input {
-		hydrated, hydratedBytes, err := l.hydrateModelItemImages(ctx, state.Request.Input[index])
+	input := make([]llm.ModelItem, 0, len(state.Request.Input))
+	for _, item := range state.Request.Input {
+		generatedImage, handled, hydratedBytes, err := l.hydrateGeneratedImageCall(ctx, item)
 		if err != nil {
 			return err
 		}
@@ -54,9 +56,58 @@ func (l *ContextLoader) hydrateScheduledRunImages(ctx context.Context, state *Sc
 		if totalBytes > maxProviderTotalImageBytes {
 			return fmt.Errorf("provider request images exceed %d bytes", maxProviderTotalImageBytes)
 		}
-		state.Request.Input[index] = hydrated
+		if handled {
+			if generatedImage != nil {
+				input = append(input, *generatedImage)
+			}
+			continue
+		}
+
+		hydrated, hydratedBytes, err := l.hydrateModelItemImages(ctx, item)
+		if err != nil {
+			return err
+		}
+		totalBytes += hydratedBytes
+		if totalBytes > maxProviderTotalImageBytes {
+			return fmt.Errorf("provider request images exceed %d bytes", maxProviderTotalImageBytes)
+		}
+		input = append(input, hydrated)
 	}
+	state.Request.Input = input
 	return nil
+}
+
+func (l *ContextLoader) hydrateGeneratedImageCall(ctx context.Context, item llm.ModelItem) (*llm.ModelItem, bool, int64, error) {
+	if item.Type != llm.ModelItemImageGenerationCall {
+		return nil, false, 0, nil
+	}
+
+	var payload struct {
+		ResultRef *modelImageReference `json:"result_ref"`
+	}
+	if json.Unmarshal(item.Raw, &payload) != nil || payload.ResultRef == nil {
+		return nil, true, 0, nil
+	}
+
+	data, err := l.loadImageReferenceBytes(ctx, *payload.ResultRef)
+	if err != nil {
+		return nil, true, 0, err
+	}
+	raw, err := json.Marshal(map[string]any{
+		"type": llm.ModelItemMessage,
+		"role": domain.RoleUser,
+		"content": []map[string]string{
+			{"type": "input_text", "text": "Image generated earlier in this conversation."},
+			{
+				"type":      "input_image",
+				"image_url": "data:" + payload.ResultRef.ContentType + ";base64," + base64.StdEncoding.EncodeToString(data),
+			},
+		},
+	})
+	if err != nil {
+		return nil, true, 0, fmt.Errorf("marshal generated image input: %w", err)
+	}
+	return &llm.ModelItem{Type: llm.ModelItemMessage, Role: domain.RoleUser, Raw: raw}, true, int64(len(data)), nil
 }
 
 func (l *ContextLoader) hydrateModelItemImages(ctx context.Context, item llm.ModelItem) (llm.ModelItem, int64, error) {

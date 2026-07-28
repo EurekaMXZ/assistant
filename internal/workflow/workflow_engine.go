@@ -76,6 +76,7 @@ func New(deps Dependencies) *Engine {
 		cache:       deps.ContextCompaction,
 		models:      deps.Models,
 		billing:     deps.BillingUsage,
+		loader:      loader,
 	}
 	orchestrator.preflight = &ContextPreflight{
 		settings: deps.Settings, compactor: compactor, locker: deps.Locker,

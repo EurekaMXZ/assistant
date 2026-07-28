@@ -21,6 +21,7 @@ type ContextCompactor struct {
 	cache       cache.ContextCompactionCache
 	models      ModelCatalogResolver
 	billing     CompactionUsageRecorder
+	loader      *ContextLoader
 }
 
 func (c *ContextCompactor) Compact(ctx context.Context, state *ScheduledRunState) (*ScheduledRunState, bool, error) {
@@ -31,7 +32,16 @@ func (c *ContextCompactor) Compact(ctx context.Context, state *ScheduledRunState
 	if err != nil {
 		return nil, false, err
 	}
-	input := append(cloneModelItems(state.Request.Input), prompt)
+	providerState, err := cloneScheduledRunState(state)
+	if err != nil {
+		return nil, false, err
+	}
+	if c.loader != nil {
+		if err := c.loader.hydrateScheduledRunImages(ctx, providerState); err != nil {
+			return nil, false, err
+		}
+	}
+	input := append(cloneModelItems(providerState.Request.Input), prompt)
 	if estimateSafeModelContextTokens(c.settings.AgentSystemPrompt, input, state.Request.Tools) > inputLimit {
 		return nil, false, errors.New("canonical context exceeds compaction model context window")
 	}

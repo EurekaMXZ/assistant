@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/EurekaMXZ/assistant/internal/cache"
@@ -107,5 +108,36 @@ func TestContextCompactorPassesCanonicalItemsUnchangedToModel(t *testing.T) {
 	}
 	if anchors.anchor.CoveredUntilSeq != 1 || anchors.anchor.Content == "" {
 		t.Fatalf("replacement anchor = %#v", anchors.anchor)
+	}
+}
+
+func TestContextCompactorHydratesExternalizedGeneratedImage(t *testing.T) {
+	store := &canonicalCompactionStore{head: &domain.ContextHead{ConversationID: "conv-1", LastSeq: 1, RawTailStartSeq: 1}}
+	anchors := &canonicalAnchorStore{}
+	model := &stubModelClient{results: []*llm.ModelResult{{FinalText: "Image summarized."}}}
+	execution := testExecutionSnapshot()
+	execution.ContextWindowTokens = 10_000
+	compactor := &ContextCompactor{
+		settings: WorkflowSettings{AgentSystemPrompt: "system", AgentCompactPrompt: "Summarize this complete context.", CompactMaxOutputTokens: 256},
+		store:    store, model: model, blobs: anchors, cache: cache.New(4, 4),
+		models: &stubTurnExecutionReader{execution: execution},
+		loader: &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{
+			data: map[string][]byte{"generated.png": []byte("pngdata")},
+		}},
+	}
+	state := &ScheduledRunState{
+		StepIndex: 1, InitialInputCount: 1, Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{ContextWindowTokens: execution.ContextWindowTokens, Input: []llm.ModelItem{{
+			ID: "image-1", Type: llm.ModelItemImageGenerationCall,
+			Raw: json.RawMessage(`{"type":"image_generation_call","result_ref":{"attachment_id":"attachment-1","object_key":"generated.png","content_type":"image/png","size_bytes":7}}`),
+		}}},
+	}
+
+	if _, didCompact, err := compactor.Compact(t.Context(), state); err != nil || !didCompact {
+		t.Fatalf("compact image context: didCompact=%t err=%v", didCompact, err)
+	}
+	request := model.streamRequests[0]
+	if request.Input[0].Type != llm.ModelItemMessage || !strings.Contains(string(request.Input[0].Raw), `data:image/png;base64,cG5nZGF0YQ==`) {
+		t.Fatalf("compaction request image = %#v", request.Input[0])
 	}
 }

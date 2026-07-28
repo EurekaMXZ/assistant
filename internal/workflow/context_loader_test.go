@@ -211,6 +211,34 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 	}
 }
 
+func TestContextLoaderHydratesExternalizedGeneratedImageAndOmitsLegacyCall(t *testing.T) {
+	loader := &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{
+		data: map[string][]byte{"generated.png": []byte("pngdata")},
+	}}
+	state := &ScheduledRunState{Request: llm.ModelRequest{Input: []llm.ModelItem{
+		{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "Describe the image"},
+		{
+			ID: "image-with-reference", Type: llm.ModelItemImageGenerationCall,
+			Raw: json.RawMessage(`{"type":"image_generation_call","result_ref":{"attachment_id":"attachment-1","object_key":"generated.png","content_type":"image/png","size_bytes":7}}`),
+		},
+		{ID: "legacy-image", Type: llm.ModelItemImageGenerationCall},
+	}}}
+
+	if err := loader.hydrateScheduledRunImages(t.Context(), state); err != nil {
+		t.Fatalf("hydrate provider images: %v", err)
+	}
+	if len(state.Request.Input) != 2 {
+		t.Fatalf("provider input = %#v, want referenced image and no legacy image call", state.Request.Input)
+	}
+	if state.Request.Input[1].Type != llm.ModelItemMessage || state.Request.Input[1].Role != domain.RoleUser {
+		t.Fatalf("generated image input = %#v", state.Request.Input[1])
+	}
+	raw := string(state.Request.Input[1].Raw)
+	if !strings.Contains(raw, `"type":"input_image"`) || !strings.Contains(raw, `data:image/png;base64,cG5nZGF0YQ==`) {
+		t.Fatalf("generated image was not hydrated: %s", raw)
+	}
+}
+
 func TestContextLoaderRejectsCorruptedImageAttachment(t *testing.T) {
 	loader := &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{data: map[string][]byte{"image": []byte("bad")}}}
 	_, err := loader.hydrateImageReference(t.Context(), modelImageReference{
