@@ -123,7 +123,7 @@ func (r *ToolCallRepository) ScheduleToolExecutionPlan(ctx context.Context, inpu
 	return records, nil
 }
 
-func (r *ToolCallRepository) ClaimQueuedToolCall(ctx context.Context, toolCallID string, _ time.Duration) (*domain.ToolCallRecord, workflow.ToolCallLease, error) {
+func (r *ToolCallRepository) ClaimQueuedToolCall(ctx context.Context, toolCallID string, leaseTimeout time.Duration) (*domain.ToolCallRecord, workflow.ToolCallLease, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, workflow.ToolCallLease{}, fmt.Errorf("begin tool call claim: %w", err)
@@ -132,12 +132,16 @@ func (r *ToolCallRepository) ClaimQueuedToolCall(ctx context.Context, toolCallID
 	token := uuid.NewString()
 	record, err := scanToolCall(tx.QueryRow(ctx, `
 		UPDATE tool_calls tc
-		SET status = $2, lease_token = $3::uuid, leased_at = now(), started_at = COALESCE(tc.started_at, now())
+		SET status = $2,
+			execution_attempt = CASE WHEN tc.status = $4 THEN tc.execution_attempt + 1 ELSE tc.execution_attempt END,
+			lease_token = $3::uuid, leased_at = now(), started_at = COALESCE(tc.started_at, now())
 		FROM turn_runs tr
 		WHERE tc.id = $1::uuid AND tr.id = tc.turn_run_id
-		  AND tc.status = $4 AND tr.status = $5
+		  AND tr.status = $5
+		  AND (tc.status = $6 OR (tc.status = $4 AND tc.leased_at < now() - $7::interval))
 		RETURNING `+toolCallColumns,
-		toolCallID, domain.ToolCallStatusRunning, token, domain.ToolCallStatusQueued, domain.TurnRunStatusWaitingTools))
+		toolCallID, domain.ToolCallStatusRunning, token, domain.ToolCallStatusRunning, domain.TurnRunStatusWaitingTools,
+		domain.ToolCallStatusQueued, leaseInterval(leaseTimeout)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, workflow.ToolCallLease{}, domain.ErrConflict
@@ -354,6 +358,13 @@ func maxInt(left int, right int) int {
 		return left
 	}
 	return right
+}
+
+func leaseInterval(timeout time.Duration) string {
+	if timeout <= 0 {
+		timeout = time.Minute
+	}
+	return timeout.String()
 }
 
 var _ workflow.ToolExecutionWorkflowStore = (*ToolCallRepository)(nil)

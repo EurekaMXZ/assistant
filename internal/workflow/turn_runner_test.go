@@ -138,6 +138,20 @@ func TestTurnRunnerCancelActiveRun(t *testing.T) {
 	}
 }
 
+func TestTurnRunnerUsesIndependentActorLeaseTimeouts(t *testing.T) {
+	runner := &TurnRunner{settings: WorkflowSettings{
+		WorkerLeaseTimeout:    time.Minute,
+		LLMClientLeaseTimeout: 3 * time.Minute,
+		ExecutionLeaseTimeout: 5 * time.Minute,
+	}}
+	if got := runner.llmClientLeaseTimeout(); got != 3*time.Minute {
+		t.Fatalf("LLM client lease timeout = %v, want 3m", got)
+	}
+	if got := runner.executionLeaseTimeout(); got != 5*time.Minute {
+		t.Fatalf("execution lease timeout = %v, want 5m", got)
+	}
+}
+
 func TestTurnRunnerCancellationPublishesTerminalStreamEvent(t *testing.T) {
 	runs := &stubScheduledRunStore{}
 	publisher := &recordingPublisher{}

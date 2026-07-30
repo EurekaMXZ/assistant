@@ -61,12 +61,8 @@ func New(logger *log.Logger, engine workflowEngine, settings Settings, writer Wo
 func (s *Service) Run(ctx context.Context) error {
 	defer s.closeWriter()
 
-	workerCount := s.settings.WorkerConcurrency
-	if workerCount <= 0 {
-		workerCount = 1
-	}
-
-	s.logger.Printf("worker service starting with concurrency=%d", workerCount)
+	llmActors, executionActors := s.actorCounts()
+	s.logger.Printf("worker service starting with llm_actors=%d execution_actors=%d", llmActors, executionActors)
 
 	var wg sync.WaitGroup
 
@@ -98,12 +94,50 @@ func (s *Service) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.consume(ctx, workerCount)
+		s.consume(ctx, llmActors, executionActors)
 	}()
 
 	<-ctx.Done()
 	wg.Wait()
 	return nil
+}
+
+func (s *Service) actorCounts() (int, int) {
+	llmActors := s.settings.LLMClientActors
+	executionActors := s.settings.ExecutionActors
+	if llmActors > 0 && executionActors > 0 {
+		return llmActors, executionActors
+	}
+	legacyBudget := s.settings.WorkerActorBudget
+	if legacyBudget <= 0 {
+		legacyBudget = s.settings.WorkerConcurrency
+	}
+	if legacyBudget <= 0 {
+		legacyBudget = 2
+	}
+	legacyLLM, legacyExecution := splitActorCounts(legacyBudget)
+	if llmActors <= 0 {
+		llmActors = legacyLLM
+	}
+	if executionActors <= 0 {
+		executionActors = legacyExecution
+	}
+	return llmActors, executionActors
+}
+
+func splitActorCounts(budget int) (int, int) {
+	if budget < 2 {
+		return 1, 1
+	}
+	llmActors := budget / 2
+	if llmActors < 1 {
+		llmActors = 1
+	}
+	executionActors := budget - llmActors
+	if executionActors < 1 {
+		executionActors = 1
+	}
+	return llmActors, executionActors
 }
 
 func (s *Service) workflowReader() WorkflowReader {

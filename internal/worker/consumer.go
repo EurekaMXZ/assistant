@@ -13,11 +13,19 @@ import (
 
 const maxQueuedWorkflowEvents = 1024
 
+type workflowTaskRole uint8
+
+const (
+	workflowTaskRoleLLM workflowTaskRole = iota
+	workflowTaskRoleExecution
+)
+
 type workflowTask struct {
 	message    kafka.Message
 	event      workflow.WorkflowEvent
 	offset     *trackedOffset
 	decodeErr  error
+	role       workflowTaskRole
 	bypassLane bool
 }
 
@@ -32,7 +40,7 @@ type conversationLane struct {
 	ready   bool
 }
 
-func (s *Service) consume(ctx context.Context, workerCount int) {
+func (s *Service) consume(ctx context.Context, actorCounts ...int) {
 	reader := s.workflowReader()
 	if reader == nil {
 		s.logger.Print("worker missing workflow reader factory")
@@ -49,14 +57,27 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 		<-ctx.Done()
 		closeReader()
 	}()
-	if workerCount <= 0 {
-		workerCount = 1
+
+	llmActors, executionActors := s.actorCounts()
+	if len(actorCounts) > 0 && actorCounts[0] > 0 {
+		llmActors = actorCounts[0]
+	}
+	if len(actorCounts) > 1 && actorCounts[1] > 0 {
+		executionActors = actorCounts[1]
+	}
+	if llmActors <= 0 {
+		llmActors = 1
+	}
+	if executionActors <= 0 {
+		executionActors = 1
 	}
 
-	fetched := make(chan kafka.Message, workerCount)
-	jobs := make(chan *workflowTask)
-	results := make(chan workflowTaskResult, workerCount)
-	retries := make(chan string, maxQueuedWorkflowEvents)
+	fetched := make(chan kafka.Message, llmActors+executionActors)
+	llmJobs := make(chan *workflowTask)
+	executionJobs := make(chan *workflowTask)
+	results := make(chan workflowTaskResult, llmActors+executionActors)
+	llmRetries := make(chan string, maxQueuedWorkflowEvents)
+	executionRetries := make(chan *workflowTask, maxQueuedWorkflowEvents)
 
 	var workers sync.WaitGroup
 	workers.Add(1)
@@ -64,11 +85,18 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 		defer workers.Done()
 		s.fetchWorkflowMessages(ctx, reader, fetched)
 	}()
-	for slot := 1; slot <= workerCount; slot++ {
+	for slot := 1; slot <= llmActors; slot++ {
 		workers.Add(1)
 		go func(slot int) {
 			defer workers.Done()
-			s.runWorkflowSlot(ctx, slot, jobs, results)
+			s.runWorkflowActor(ctx, "llm", slot, llmJobs, results)
+		}(slot)
+	}
+	for slot := 1; slot <= executionActors; slot++ {
+		workers.Add(1)
+		go func(slot int) {
+			defer workers.Done()
+			s.runWorkflowActor(ctx, "execution", slot, executionJobs, results)
 		}(slot)
 	}
 	defer workers.Wait()
@@ -76,21 +104,19 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 	lanes := make(map[string]*conversationLane)
 	ready := make([]string, 0)
 	readyCancellations := make([]*workflowTask, 0)
+	executionReady := make([]*workflowTask, 0)
 	tracker := newOffsetTracker()
 	queuedCount := 0
+	executionRunning := 0
 	commitTicker := time.NewTicker(time.Second)
 	defer commitTicker.Stop()
 
 	for {
-		var nextJob *workflowTask
-		var jobCh chan *workflowTask
-		var fetchedCh <-chan kafka.Message
-		if queuedCount < maxQueuedWorkflowEvents {
-			fetchedCh = fetched
-		}
+		var nextLLM *workflowTask
+		var llmJobCh chan *workflowTask
 		if len(readyCancellations) > 0 {
-			nextJob = readyCancellations[0]
-			jobCh = jobs
+			nextLLM = readyCancellations[0]
+			llmJobCh = llmJobs
 		} else if len(ready) > 0 {
 			conversationID := ready[0]
 			lane := lanes[conversationID]
@@ -98,11 +124,20 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 				ready = ready[1:]
 				continue
 			}
-			nextJob = lane.pending[0]
-			jobCh = jobs
+			nextLLM = lane.pending[0]
+			llmJobCh = llmJobs
 		}
-		if jobCh != nil {
-			fetchedCh = nil
+
+		var nextExecution *workflowTask
+		var executionJobCh chan *workflowTask
+		if len(readyCancellations) == 0 && len(executionReady) > 0 && executionRunning < executionActors {
+			nextExecution = executionReady[0]
+			executionJobCh = executionJobs
+		}
+
+		var fetchedCh <-chan kafka.Message
+		if queuedCount < maxQueuedWorkflowEvents && llmJobCh == nil && executionJobCh == nil {
+			fetchedCh = fetched
 		}
 
 		select {
@@ -123,13 +158,19 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 				}
 				task.decodeErr = err
 			}
+			task.role = workflowTaskRoleForEvent(task.event.EventType)
+			queuedCount++
+			if task.role == workflowTaskRoleExecution {
+				executionReady = append(executionReady, task)
+				continue
+			}
+
 			lane := lanes[task.event.ConversationID]
 			if lane == nil {
 				lane = &conversationLane{}
 				lanes[task.event.ConversationID] = lane
 			}
 			lane.pending = append(lane.pending, task)
-			queuedCount++
 			if task.event.EventType == workflow.EventTurnCancellationRequested && lane.running {
 				task.bypassLane = true
 				lane.pending = lane.pending[:len(lane.pending)-1]
@@ -137,16 +178,19 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 			} else {
 				ready = enqueueReadyConversation(ready, task.event.ConversationID, lane)
 			}
-		case jobCh <- nextJob:
-			if nextJob.bypassLane {
+		case llmJobCh <- nextLLM:
+			if nextLLM.bypassLane {
 				readyCancellations = readyCancellations[1:]
 				break
 			}
-			conversationID := nextJob.event.ConversationID
+			conversationID := nextLLM.event.ConversationID
 			lane := lanes[conversationID]
 			lane.running = true
 			lane.ready = false
 			ready = ready[1:]
+		case executionJobCh <- nextExecution:
+			executionReady = executionReady[1:]
+			executionRunning++
 		case result := <-results:
 			if result.task.bypassLane {
 				conversationID := result.task.event.ConversationID
@@ -167,6 +211,20 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 				s.commitReadyOffsets(ctx, reader, tracker)
 				continue
 			}
+
+			if result.task.role == workflowTaskRoleExecution {
+				executionRunning--
+				if result.err != nil {
+					s.logger.Printf("handle %s: %v", result.task.event.EventType, result.err)
+					go s.retryExecution(ctx, executionRetries, result.task)
+					continue
+				}
+				tracker.complete(result.task.offset)
+				queuedCount--
+				s.commitReadyOffsets(ctx, reader, tracker)
+				continue
+			}
+
 			conversationID := result.task.event.ConversationID
 			lane := lanes[conversationID]
 			if lane == nil || len(lane.pending) == 0 || lane.pending[0] != result.task {
@@ -175,7 +233,7 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 			lane.running = false
 			if result.err != nil {
 				s.logger.Printf("handle %s: %v", result.task.event.EventType, result.err)
-				go s.retryConversation(ctx, retries, conversationID)
+				go s.retryConversation(ctx, llmRetries, conversationID)
 				continue
 			}
 
@@ -188,13 +246,24 @@ func (s *Service) consume(ctx context.Context, workerCount int) {
 				ready = enqueueReadyConversation(ready, conversationID, lane)
 			}
 			s.commitReadyOffsets(ctx, reader, tracker)
-		case conversationID := <-retries:
+		case conversationID := <-llmRetries:
 			lane := lanes[conversationID]
 			ready = enqueueReadyConversation(ready, conversationID, lane)
+		case task := <-executionRetries:
+			if task != nil {
+				executionReady = append(executionReady, task)
+			}
 		case <-commitTicker.C:
 			s.commitReadyOffsets(ctx, reader, tracker)
 		}
 	}
+}
+
+func workflowTaskRoleForEvent(eventType string) workflowTaskRole {
+	if eventType == workflow.EventToolCallRequested {
+		return workflowTaskRoleExecution
+	}
+	return workflowTaskRoleLLM
 }
 
 func (s *Service) fetchWorkflowMessages(ctx context.Context, reader WorkflowReader, fetched chan<- kafka.Message) {
@@ -204,7 +273,7 @@ func (s *Service) fetchWorkflowMessages(ctx context.Context, reader WorkflowRead
 			if ctx.Err() != nil {
 				return
 			}
-			s.logger.Printf("fetch workflow message: %v", err)
+			s.logger.Printf("fetch workflow event: %v", err)
 			s.sleepFor(time.Second)
 			continue
 		}
@@ -217,7 +286,7 @@ func (s *Service) fetchWorkflowMessages(ctx context.Context, reader WorkflowRead
 	}
 }
 
-func (s *Service) runWorkflowSlot(ctx context.Context, _ int, jobs <-chan *workflowTask, results chan<- workflowTaskResult) {
+func (s *Service) runWorkflowActor(ctx context.Context, role string, slot int, jobs <-chan *workflowTask, results chan<- workflowTaskResult) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -226,6 +295,9 @@ func (s *Service) runWorkflowSlot(ctx context.Context, _ int, jobs <-chan *workf
 			err := task.decodeErr
 			if err == nil {
 				err = s.engine.HandleWorkflowEvent(ctx, task.event)
+			}
+			if err != nil && s.logger != nil {
+				s.logger.Printf("%s actor %d completed %s with error: %v", role, slot, task.event.EventType, err)
 			}
 			select {
 			case <-ctx.Done():
@@ -237,11 +309,33 @@ func (s *Service) runWorkflowSlot(ctx context.Context, _ int, jobs <-chan *workf
 }
 
 func (s *Service) retryConversation(ctx context.Context, retries chan<- string, conversationID string) {
-	s.sleepFor(time.Second)
+	s.sleepFor(s.llmRetryDelay())
 	select {
 	case <-ctx.Done():
 	case retries <- conversationID:
 	}
+}
+
+func (s *Service) retryExecution(ctx context.Context, retries chan<- *workflowTask, task *workflowTask) {
+	s.sleepFor(s.executionRetryDelay())
+	select {
+	case <-ctx.Done():
+	case retries <- task:
+	}
+}
+
+func (s *Service) llmRetryDelay() time.Duration {
+	if s != nil && s.settings.LLMClientPollInterval > 0 {
+		return s.settings.LLMClientPollInterval
+	}
+	return time.Second
+}
+
+func (s *Service) executionRetryDelay() time.Duration {
+	if s != nil && s.settings.ExecutionPollInterval > 0 {
+		return s.settings.ExecutionPollInterval
+	}
+	return time.Second
 }
 
 func (s *Service) commitReadyOffsets(ctx context.Context, reader WorkflowReader, tracker *offsetTracker) {

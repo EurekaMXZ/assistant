@@ -104,6 +104,27 @@ func TestLoadReadsStreamReplayTTL(t *testing.T) {
 	}
 }
 
+func TestLoadReadsIndependentWorkerActorSettings(t *testing.T) {
+	t.Setenv("WORKER_ACTOR_BUDGET", "6")
+	t.Setenv("LLM_CLIENT_ACTORS", "2")
+	t.Setenv("EXECUTION_ACTORS", "4")
+	t.Setenv("LLM_CLIENT_POLL_INTERVAL", "3s")
+	t.Setenv("EXECUTION_POLL_INTERVAL", "5s")
+	t.Setenv("LLM_CLIENT_LEASE_TIMEOUT", "4m")
+	t.Setenv("EXECUTION_LEASE_TIMEOUT", "6m")
+
+	cfg := Load()
+	if cfg.WorkerActorBudget != 6 || cfg.LLMClientActors != 2 || cfg.ExecutionActors != 4 {
+		t.Fatalf("unexpected worker actor settings: %+v", cfg)
+	}
+	if cfg.LLMClientPollInterval != 3*time.Second || cfg.ExecutionPollInterval != 5*time.Second {
+		t.Fatalf("unexpected worker poll settings: %+v", cfg)
+	}
+	if cfg.LLMClientLeaseTimeout != 4*time.Minute || cfg.ExecutionLeaseTimeout != 6*time.Minute {
+		t.Fatalf("unexpected worker lease settings: %+v", cfg)
+	}
+}
+
 func TestLoadDoesNotDefaultWebOrigin(t *testing.T) {
 	t.Setenv("WEB_ORIGIN", "")
 
@@ -221,6 +242,14 @@ func TestValidateWorkerRequiresBridgeURL(t *testing.T) {
 	err := cfg.ValidateWorker()
 	if err == nil || !strings.Contains(err.Error(), "SANDBOX_BRIDGE_URL") {
 		t.Fatalf("ValidateWorker error = %v, want missing SANDBOX_BRIDGE_URL", err)
+	}
+}
+
+func TestValidateWorkerRejectsActorBudgetOverflow(t *testing.T) {
+	cfg := validWorkerConfig()
+	cfg.WorkerActorBudget = 3
+	if err := cfg.ValidateWorker(); err == nil || !strings.Contains(err.Error(), "WORKER_ACTOR_BUDGET") {
+		t.Fatalf("ValidateWorker error = %v, want actor budget rejection", err)
 	}
 }
 
@@ -384,6 +413,13 @@ func validWorkerConfig() Config {
 		ProviderCredentialMasterKey: "credential-master-key",
 		AgentSystemPromptFile:       "prompts/system.md",
 		AgentCompactPromptFile:      "prompts/compact.md",
+		WorkerActorBudget:           4,
+		LLMClientActors:             2,
+		ExecutionActors:             2,
+		LLMClientPollInterval:       2 * time.Second,
+		ExecutionPollInterval:       2 * time.Second,
+		LLMClientLeaseTimeout:       2 * time.Minute,
+		ExecutionLeaseTimeout:       2 * time.Minute,
 		SandboxBridgeURL:            "http://127.0.0.1:8787",
 		SandboxIdleStopAfter:        15 * time.Minute,
 		SandboxStoppedRetention:     24 * time.Hour,

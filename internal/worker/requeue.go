@@ -6,7 +6,14 @@ import (
 )
 
 func (s *Service) requeueLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.settings.WorkerLeaseTimeout / 2)
+	leaseTimeout := s.settings.LLMClientLeaseTimeout
+	if leaseTimeout <= 0 {
+		leaseTimeout = s.settings.WorkerLeaseTimeout
+	}
+	if leaseTimeout <= 0 {
+		leaseTimeout = time.Minute
+	}
+	ticker := time.NewTicker(leaseTimeout / 2)
 	defer ticker.Stop()
 
 	for {

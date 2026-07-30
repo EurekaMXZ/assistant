@@ -117,8 +117,15 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 		KafkaWorkflowTopic:        "assistant.workflow",
 		KafkaConsumerGroup:        "assistant-workers",
 		WorkerConcurrency:         4,
+		WorkerActorBudget:         6,
+		LLMClientActors:           2,
+		ExecutionActors:           4,
 		WorkerPollInterval:        2 * time.Second,
 		WorkerLeaseTimeout:        3 * time.Minute,
+		LLMClientPollInterval:     3 * time.Second,
+		ExecutionPollInterval:     4 * time.Second,
+		LLMClientLeaseTimeout:     5 * time.Minute,
+		ExecutionLeaseTimeout:     6 * time.Minute,
 		AgentSystemPrompt:         "system",
 		AgentCompactPrompt:        "compact",
 		CompactMaxOutputTokens:    800,
@@ -159,7 +166,10 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 	if settings.Workflow.OutboxBatchSize != 88 || settings.Workflow.TokenEstimateMultiplier != 125 {
 		t.Fatalf("unexpected workflow settings: %+v", settings.Workflow)
 	}
-	if settings.Process.WorkerLeaseTimeout != 3*time.Minute || settings.Process.WorkerConcurrency != 4 {
+	if settings.Process.WorkerLeaseTimeout != 3*time.Minute || settings.Process.WorkerConcurrency != 4 || settings.Process.WorkerActorBudget != 6 || settings.Process.LLMClientActors != 2 || settings.Process.ExecutionActors != 4 {
 		t.Fatalf("unexpected worker process settings: %+v", settings.Process)
+	}
+	if settings.Process.LLMClientPollInterval != 3*time.Second || settings.Process.ExecutionPollInterval != 4*time.Second || settings.Process.LLMClientLeaseTimeout != 5*time.Minute || settings.Process.ExecutionLeaseTimeout != 6*time.Minute {
+		t.Fatalf("unexpected independent worker settings: %+v", settings.Process)
 	}
 }

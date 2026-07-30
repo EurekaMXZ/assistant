@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/domain"
@@ -428,7 +429,7 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 		}
 		return err
 	}
-	runCtx, stop := startTurnRunLeaseHeartbeat(executionParent, r.runs, lease, r.settings.WorkerLeaseTimeout)
+	runCtx, stop := startTurnRunLeaseHeartbeat(executionParent, r.runs, lease, r.llmClientLeaseTimeout())
 	stopLease = stop
 	if runCtx.Err() != nil {
 		return nil
@@ -702,7 +703,7 @@ func (r *TurnRunner) HandleToolCallRequested(ctx context.Context, event Workflow
 	if r == nil || r.executionStore == nil || strings.TrimSpace(event.ToolCallID) == "" {
 		return nil
 	}
-	record, lease, err := r.executionStore.ClaimQueuedToolCall(ctx, event.ToolCallID, r.settings.WorkerLeaseTimeout)
+	record, lease, err := r.executionStore.ClaimQueuedToolCall(ctx, event.ToolCallID, r.executionLeaseTimeout())
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
 			return nil
@@ -759,6 +760,26 @@ func (r *TurnRunner) HandleToolCallRequested(ctx context.Context, event Workflow
 		ConversationID: event.ConversationID, TurnID: record.TurnID, TurnRunID: record.TurnRunID,
 	}, run, waiting)
 	return nil
+}
+
+func (r *TurnRunner) llmClientLeaseTimeout() time.Duration {
+	if r != nil && r.settings.LLMClientLeaseTimeout > 0 {
+		return r.settings.LLMClientLeaseTimeout
+	}
+	if r != nil && r.settings.WorkerLeaseTimeout > 0 {
+		return r.settings.WorkerLeaseTimeout
+	}
+	return time.Minute
+}
+
+func (r *TurnRunner) executionLeaseTimeout() time.Duration {
+	if r != nil && r.settings.ExecutionLeaseTimeout > 0 {
+		return r.settings.ExecutionLeaseTimeout
+	}
+	if r != nil && r.settings.WorkerLeaseTimeout > 0 {
+		return r.settings.WorkerLeaseTimeout
+	}
+	return time.Minute
 }
 
 func (r *TurnRunner) HandleToolGroupCompleted(ctx context.Context, event WorkflowEvent) error {

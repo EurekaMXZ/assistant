@@ -23,7 +23,9 @@ const (
 	defaultDatabaseURL               = "postgres://assistant:assistant@127.0.0.1:5432/assistant?sslmode=disable"
 	defaultWorkerPollInterval        = 2 * time.Second
 	defaultWorkerLeaseTimeout        = 2 * time.Minute
-	defaultWorkerConcurrency         = 4
+	defaultWorkerActorBudget         = 4
+	defaultLLMClientActors           = 2
+	defaultExecutionActors           = 2
 	defaultKafkaTopic                = "assistant.workflow"
 	defaultKafkaStreamTopic          = "assistant.stream"
 	defaultKafkaGroup                = "assistant-workers"
@@ -71,14 +73,22 @@ const (
 )
 
 type Config struct {
-	Host                        string
-	Port                        int
-	ReadTimeout                 time.Duration
-	WriteTimeout                time.Duration
-	IdleTimeout                 time.Duration
-	ShutdownTimeout             time.Duration
-	WorkerPollInterval          time.Duration
-	WorkerLeaseTimeout          time.Duration
+	Host                  string
+	Port                  int
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	IdleTimeout           time.Duration
+	ShutdownTimeout       time.Duration
+	WorkerPollInterval    time.Duration
+	WorkerLeaseTimeout    time.Duration
+	LLMClientPollInterval time.Duration
+	ExecutionPollInterval time.Duration
+	LLMClientLeaseTimeout time.Duration
+	ExecutionLeaseTimeout time.Duration
+	WorkerActorBudget     int
+	LLMClientActors       int
+	ExecutionActors       int
+	// WorkerConcurrency is retained as the legacy actor-budget input.
 	WorkerConcurrency           int
 	OutboxBatchSize             int
 	WebOrigin                   string
@@ -160,6 +170,18 @@ type Config struct {
 func Load() Config {
 	_ = godotenv.Load()
 	s3Provider := getenv("S3_PROVIDER", defaultS3Provider)
+	legacyWorkerConcurrency := getenvInt("WORKER_CONCURRENCY", defaultWorkerActorBudget)
+	workerActorBudget := getenvInt("WORKER_ACTOR_BUDGET", legacyWorkerConcurrency)
+	llmClientActors := getenvInt("LLM_CLIENT_ACTORS", defaultLLMClientActors)
+	executionActors := getenvInt("EXECUTION_ACTORS", defaultExecutionActors)
+	if strings.TrimSpace(os.Getenv("WORKER_CONCURRENCY")) != "" &&
+		strings.TrimSpace(os.Getenv("WORKER_ACTOR_BUDGET")) == "" &&
+		strings.TrimSpace(os.Getenv("LLM_CLIENT_ACTORS")) == "" &&
+		strings.TrimSpace(os.Getenv("EXECUTION_ACTORS")) == "" {
+		llmClientActors, executionActors = splitWorkerActors(workerActorBudget)
+	}
+	workerPollInterval := getenvDuration("WORKER_POLL_INTERVAL", defaultWorkerPollInterval)
+	workerLeaseTimeout := getenvDuration("WORKER_LEASE_TIMEOUT", defaultWorkerLeaseTimeout)
 
 	return Config{
 		Host:                        getenv("APP_HOST", defaultHost),
@@ -168,9 +190,16 @@ func Load() Config {
 		WriteTimeout:                getenvDuration("WRITE_TIMEOUT", defaultWriteTimeout),
 		IdleTimeout:                 getenvDuration("IDLE_TIMEOUT", defaultIdleTimeout),
 		ShutdownTimeout:             getenvDuration("SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
-		WorkerPollInterval:          getenvDuration("WORKER_POLL_INTERVAL", defaultWorkerPollInterval),
-		WorkerLeaseTimeout:          getenvDuration("WORKER_LEASE_TIMEOUT", defaultWorkerLeaseTimeout),
-		WorkerConcurrency:           getenvInt("WORKER_CONCURRENCY", defaultWorkerConcurrency),
+		WorkerPollInterval:          workerPollInterval,
+		WorkerLeaseTimeout:          workerLeaseTimeout,
+		LLMClientPollInterval:       getenvDuration("LLM_CLIENT_POLL_INTERVAL", workerPollInterval),
+		ExecutionPollInterval:       getenvDuration("EXECUTION_POLL_INTERVAL", workerPollInterval),
+		LLMClientLeaseTimeout:       getenvDuration("LLM_CLIENT_LEASE_TIMEOUT", workerLeaseTimeout),
+		ExecutionLeaseTimeout:       getenvDuration("EXECUTION_LEASE_TIMEOUT", workerLeaseTimeout),
+		WorkerActorBudget:           workerActorBudget,
+		LLMClientActors:             llmClientActors,
+		ExecutionActors:             executionActors,
+		WorkerConcurrency:           legacyWorkerConcurrency,
 		OutboxBatchSize:             getenvInt("OUTBOX_BATCH_SIZE", defaultOutboxBatchSize),
 		WebOrigin:                   strings.TrimSpace(os.Getenv("WEB_ORIGIN")),
 		JWTSecret:                   os.Getenv("AUTH_JWT_SECRET"),
@@ -344,6 +373,9 @@ func (c Config) ValidateWorker() error {
 	if err := c.validateSandboxLifecycle(); err != nil {
 		return fmt.Errorf("invalid worker config: %w", err)
 	}
+	if err := c.validateWorkerActors(); err != nil {
+		return fmt.Errorf("invalid worker config: %w", err)
+	}
 	var missing []string
 
 	required := map[string]string{
@@ -389,6 +421,32 @@ func (c Config) ValidateWorker() error {
 		return errors.New("IMAGE_GENERATION_PREVIEW_TTL must be greater than S3_PRESIGN_TTL")
 	}
 
+	return nil
+}
+
+func (c Config) validateWorkerActors() error {
+	actorBudget := c.WorkerActorBudget
+	if actorBudget <= 0 {
+		actorBudget = c.WorkerConcurrency
+	}
+	if actorBudget <= 0 {
+		return errors.New("WORKER_ACTOR_BUDGET must be positive")
+	}
+	if c.LLMClientActors <= 0 {
+		return errors.New("LLM_CLIENT_ACTORS must be positive")
+	}
+	if c.ExecutionActors <= 0 {
+		return errors.New("EXECUTION_ACTORS must be positive")
+	}
+	if c.LLMClientActors+c.ExecutionActors > actorBudget {
+		return fmt.Errorf("LLM_CLIENT_ACTORS plus EXECUTION_ACTORS must not exceed WORKER_ACTOR_BUDGET (%d)", actorBudget)
+	}
+	if c.LLMClientPollInterval <= 0 || c.ExecutionPollInterval <= 0 {
+		return errors.New("LLM_CLIENT_POLL_INTERVAL and EXECUTION_POLL_INTERVAL must be positive")
+	}
+	if c.LLMClientLeaseTimeout <= 0 || c.ExecutionLeaseTimeout <= 0 {
+		return errors.New("LLM_CLIENT_LEASE_TIMEOUT and EXECUTION_LEASE_TIMEOUT must be positive")
+	}
 	return nil
 }
 
@@ -536,6 +594,21 @@ func getenvInt(key string, fallback int) int {
 	}
 
 	return parsed
+}
+
+func splitWorkerActors(total int) (int, int) {
+	if total < 2 {
+		return 1, 1
+	}
+	llmActors := total / 2
+	if llmActors < 1 {
+		llmActors = 1
+	}
+	executionActors := total - llmActors
+	if executionActors < 1 {
+		executionActors = 1
+	}
+	return llmActors, executionActors
 }
 
 func getenvTokenEstimateMultiplier(key string, fallback int) int {

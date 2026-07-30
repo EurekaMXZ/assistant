@@ -242,6 +242,15 @@ func TestPublishWorkflowEventWritesKafkaMessage(t *testing.T) {
 	}
 }
 
+func TestWorkflowTaskRoleRoutesToolRequestsToExecutionActors(t *testing.T) {
+	if got := workflowTaskRoleForEvent(workflow.EventToolCallRequested); got != workflowTaskRoleExecution {
+		t.Fatalf("tool call role = %d, want execution", got)
+	}
+	if got := workflowTaskRoleForEvent(workflow.EventTurnRunRequested); got != workflowTaskRoleLLM {
+		t.Fatalf("turn run role = %d, want LLM", got)
+	}
+}
+
 func TestCloseWriterHasBoundedWait(t *testing.T) {
 	writer := &blockingWorkflowWriter{
 		started: make(chan struct{}),
@@ -391,6 +400,93 @@ func TestConsumeHandlesEventAndCommitsMessage(t *testing.T) {
 	}
 	if len(committed) != 1 {
 		t.Fatalf("expected 1 committed message, got %d", len(committed))
+	}
+}
+
+func TestConsumeRunsToolCallsForOneConversationConcurrently(t *testing.T) {
+	makeMessage := func(id string, offset int64) kafka.Message {
+		payload, err := json.Marshal(workflow.WorkflowEvent{
+			ID:             id,
+			EventType:      workflow.EventToolCallRequested,
+			ConversationID: "conversation-tools",
+			TurnID:         "turn-1",
+			TurnRunID:      "run-1",
+			ToolCallID:     id,
+		})
+		if err != nil {
+			t.Fatalf("marshal tool event: %v", err)
+		}
+		return kafka.Message{Topic: "workflow", Partition: 0, Offset: offset, Key: []byte("conversation-tools"), Value: payload}
+	}
+	reader := &stubWorkflowReader{fetches: []fetchResult{
+		{message: makeMessage("call-1", 1)},
+		{message: makeMessage("call-2", 2)},
+	}}
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	var activeMu sync.Mutex
+	active, maxActive := 0, 0
+	engine := &stubWorkflowEngine{onHandle: func(event workflow.WorkflowEvent) {
+		activeMu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		activeMu.Unlock()
+		started <- event.ToolCallID
+		<-release
+		activeMu.Lock()
+		active--
+		activeMu.Unlock()
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	service := &Service{
+		logger:    testLogger(),
+		engine:    engine,
+		newReader: func() WorkflowReader { return reader },
+		sleep:     time.Sleep,
+	}
+	done := make(chan struct{})
+	go func() {
+		service.consume(ctx, 1, 2)
+		close(done)
+	}()
+
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case callID := <-started:
+			seen[callID] = true
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for concurrent tool calls: %#v", seen)
+		}
+	}
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		committed, _ := reader.snapshot()
+		if (len(committed) == 1 && committed[0].Offset == 2) ||
+			(len(committed) == 2 && committed[0].Offset == 1 && committed[1].Offset == 2) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for tool event commits: %#v", committed)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("consumer did not stop after concurrent tool calls")
+	}
+	activeMu.Lock()
+	gotMaxActive := maxActive
+	activeMu.Unlock()
+	if gotMaxActive != 2 {
+		t.Fatalf("maximum concurrent execution actors = %d, want 2", gotMaxActive)
 	}
 }
 
