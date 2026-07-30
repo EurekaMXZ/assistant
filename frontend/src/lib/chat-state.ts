@@ -25,6 +25,11 @@ function assistantErrorMessageId(turnId: string) {
 }
 
 const assistantOutputEventTypes = new Set(["output_text.completed", "output_text.interrupted"]);
+const turnFailureEventTypes = new Set(["run.failed", "turn.failed"]);
+
+export function isTurnFailureEvent(event: ConversationEvent) {
+  return turnFailureEventTypes.has(event.event_type);
+}
 
 function assistantOutputKey(turnId: string, itemId: string) {
   return `${turnId}\u0000${itemId}`;
@@ -107,6 +112,21 @@ export function upsertTurnFailureMessage(
     ),
   );
   return next;
+}
+
+function removeTurnFailureMessages(messages: Message[], turnId: string) {
+  return messages.filter(
+    (message) =>
+      !(message.turn_id === turnId && message.metadata?.display_kind === "assistant_error"),
+  );
+}
+
+function appendPersistedMessage(messages: Message[], message: Message) {
+  const next =
+    message.role === "assistant" && message.turn_id
+      ? removeTurnFailureMessages(messages, message.turn_id)
+      : messages;
+  return [...next, message];
 }
 
 export function ensurePendingHomeTurnMessages(messages: Message[], pending: PendingHomeTurn) {
@@ -262,7 +282,7 @@ export function messagesFromConversationEvents(source: ConversationEvent[]) {
       const key = assistantOutputKeyFromEvent(event);
       const message = key ? assistantMessagesByOutput.get(key) : undefined;
       if (message && !placedMessageIds.has(message.id)) {
-        messages.push(message);
+        messages = appendPersistedMessage(messages, message);
         placedMessageIds.add(message.id);
       }
       continue;
@@ -273,12 +293,12 @@ export function messagesFromConversationEvents(source: ConversationEvent[]) {
       if (!message || placedMessageIds.has(message.id)) continue;
       const outputKey = assistantOutputKeyFromMessage(message);
       if (outputKey && assistantMessagesByOutput.has(outputKey)) continue;
-      messages.push(message);
+      messages = appendPersistedMessage(messages, message);
       placedMessageIds.add(message.id);
       continue;
     }
 
-    if (event.event_type === "turn.failed" && event.turn_id) {
+    if (isTurnFailureEvent(event) && event.turn_id) {
       const errorCode =
         typeof event.payload.error_code === "string" ? event.payload.error_code : undefined;
       const error = typeof event.payload.error === "string" ? event.payload.error : undefined;

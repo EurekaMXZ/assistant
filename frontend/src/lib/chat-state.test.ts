@@ -113,8 +113,63 @@ describe("chat state transformations", () => {
     expect(projected[2]?.metadata.interaction).toMatchObject({ status: "completed" });
   });
 
-  it("projects a failed turn as an assistant error message", () => {
-    const failed = messagesFromConversationEvents([
+  it.each(["run.failed", "turn.failed"])(
+    "projects a %s event as an assistant error message",
+    (eventType) => {
+      const failed = messagesFromConversationEvents([
+        {
+          id: "user-event",
+          conversation_id: "conversation-1",
+          turn_id: "turn-1",
+          event_seq: "1",
+          event_key: "message:user-1",
+          schema_version: 1,
+          event_type: "message.completed",
+          payload: { message: userMessage },
+          context_included: false,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "failure-event",
+          conversation_id: "conversation-1",
+          turn_id: "turn-1",
+          event_seq: "2",
+          event_key: "turn:turn-1:failed",
+          schema_version: 1,
+          event_type: eventType,
+          payload: {
+            turn_id: "turn-1",
+            status: "failed",
+            error_code: "upstream_request_failed",
+            error: "Upstream OpenAI server request failed: 502 Bad Gateway.",
+          },
+          context_included: false,
+          created_at: "2026-01-01T00:00:02Z",
+        },
+      ]);
+
+      expect(failed).toHaveLength(2);
+      expect(failed[1]).toMatchObject({
+        turn_id: "turn-1",
+        content_text: "Upstream OpenAI server request failed: 502 Bad Gateway.",
+        metadata: {
+          display_kind: "assistant_error",
+          status: "failed",
+          error_code: "upstream_request_failed",
+        },
+      });
+    },
+  );
+
+  it("removes an intermediate run failure once the turn has persisted assistant output", () => {
+    const assistantMessage = {
+      ...userMessage,
+      id: "assistant-message",
+      role: "assistant" as const,
+      content_text: "Recovered.",
+      metadata: {},
+    };
+    const projected = messagesFromConversationEvents([
       {
         id: "user-event",
         conversation_id: "conversation-1",
@@ -132,30 +187,28 @@ describe("chat state transformations", () => {
         conversation_id: "conversation-1",
         turn_id: "turn-1",
         event_seq: "2",
-        event_key: "turn:turn-1:failed",
+        event_key: "run:run-1:failed",
         schema_version: 1,
-        event_type: "turn.failed",
-        payload: {
-          turn_id: "turn-1",
-          status: "failed",
-          error_code: "upstream_request_failed",
-          error: "Upstream OpenAI server request failed: 502 Bad Gateway.",
-        },
+        event_type: "run.failed",
+        payload: { error: "Temporary failure" },
         context_included: false,
         created_at: "2026-01-01T00:00:02Z",
       },
+      {
+        id: "assistant-event",
+        conversation_id: "conversation-1",
+        turn_id: "turn-1",
+        event_seq: "3",
+        event_key: "message:assistant-1",
+        schema_version: 1,
+        event_type: "message.completed",
+        payload: { message: assistantMessage },
+        context_included: true,
+        created_at: "2026-01-01T00:00:03Z",
+      },
     ]);
 
-    expect(failed).toHaveLength(2);
-    expect(failed[1]).toMatchObject({
-      turn_id: "turn-1",
-      content_text: "Upstream OpenAI server request failed: 502 Bad Gateway.",
-      metadata: {
-        display_kind: "assistant_error",
-        status: "failed",
-        error_code: "upstream_request_failed",
-      },
-    });
+    expect(projected.map((message) => message.id)).toEqual([userMessage.id, assistantMessage.id]);
   });
 
   it("inserts one thinking marker per turn", () => {

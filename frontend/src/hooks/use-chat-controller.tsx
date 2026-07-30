@@ -44,6 +44,7 @@ import {
   buildThinkingMessage,
   ensurePendingHomeTurnMessages,
   ensureStreamingThinkingMessage,
+  isTurnFailureEvent,
   messagesFromConversationEvents,
   upsertAssistantInteraction,
 } from "@/lib/chat-state";
@@ -143,7 +144,7 @@ function turnsFromConversationEvents(
     }
     if (!event.turn_id) continue;
     const existing = turns.get(event.turn_id);
-    if (event.event_type === "turn.failed") {
+    if (isTurnFailureEvent(event)) {
       const errorCode =
         typeof event.payload.error_code === "string" ? event.payload.error_code : undefined;
       const error = typeof event.payload.error === "string" ? event.payload.error : undefined;
@@ -165,8 +166,6 @@ function turnsFromConversationEvents(
       continue;
     }
     if (!existing) continue;
-    if (event.event_type === "turn.failed")
-      turns.set(existing.id, { ...existing, status: "failed" });
     if (event.event_type === "turn.cancelled")
       turns.set(existing.id, { ...existing, status: "cancelled" });
   }
