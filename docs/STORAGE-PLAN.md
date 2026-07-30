@@ -1,6 +1,6 @@
 # Storage and Context Refactoring Plan
 
-Status: Proposed
+Status: Implemented with deferred cleanup
 
 This document defines the target storage, event, context reconstruction, and cache architecture for conversations, Turns, provider requests, tool execution, and image inputs.
 
@@ -24,12 +24,14 @@ The following decisions are explicit:
 - Frontend conversation views query complete events directly from PostgreSQL.
 - S3 objects are grouped by provider request/run rather than by the whole Turn.
 - Workers never read and rewrite a whole-Turn stream object when a new request completes.
-- S3 objects are immutable. "Append" means creating the next request/run prefix, not appending bytes to an existing object.
+- Immutable run/archive objects are immutable. "Append" means creating the next request/run prefix, not appending bytes to an existing object. Transient execution state and the current per-Turn model-context artifact may be rewritten idempotently during workflow recovery; they are not archive objects.
 - Redis stores the entire serialized model context in one key for a context version. Redis big-key segmentation is explicitly deferred.
 - Images remain in S3. Redis and local context snapshots contain image references, not base64 data.
 - Before each provider request, the Worker downloads referenced images from S3, verifies them, converts them to base64 data URLs, and releases the bytes after the request.
 - Provider-generated image base64 is consumed at the OpenAI adapter boundary. It is never published to Kafka, Redis, PostgreSQL, or the frontend presentation stream.
 - Provider-managed state, provider Files APIs, external image URLs, and `previous_response_id` optimizations are outside this phase.
+
+The core refactor is implemented in the current codebase. The durable event model, run-scoped immutable artifacts, versioned Redis context snapshots, Kafka stream recovery, image-reference hydration, and generated-image asset lifecycle are active runtime paths. A small amount of execution-state compatibility remains intentionally documented below: workflow staging objects are still used for resumable runs, and assistant-turn model context is still stored in a supplementary per-Turn object while context reconstruction is being consolidated around run checkpoints and complete events.
 
 ## 2. Goals
 
@@ -718,7 +720,32 @@ The implementation must include:
 - Worker crash recovery tests using Kafka replay.
 - Load tests for long conversations, large complete events, context rebuild latency, Redis serialization, and repeated historical image downloads.
 
-## 20. Observability and acceptance criteria
+## 20. Implementation status and cleanup
+
+### 20.1 Implemented baseline
+
+The following parts of this plan are implemented and wired into the API/Worker bootstrap:
+
+- PostgreSQL complete semantic events and direct conversation-event pagination.
+- Conversation context heads with versioning, checkpoint pointers, and context-event boundaries.
+- Kafka stream transport, Redis active-turn replay, and retained-stream complete-event recovery.
+- Run-scoped immutable request, response, output-item, tool-result, presentation, checkpoint, and failure artifacts.
+- Redis whole-snapshot serialization with zstd, MessagePack, checksum validation, immutable versioned keys, and cache fallback to durable reconstruction.
+- Worker-local decoded context caching and image-reference hydration from S3 immediately before provider requests.
+- Generated-image partial/final assets, preview replay metadata, durable attachments, and cleanup reapers.
+- Fresh-start schema baseline with no legacy migration chain or legacy database projection family.
+
+### 20.2 Deferred cleanup
+
+The following implementation details remain active cleanup items rather than missing core storage capabilities:
+
+- `staging/step-*` request/state/result objects remain the resumable workflow execution state. They should eventually be separated more explicitly from the immutable run archive naming and metadata.
+- `model-context.json.zst` remains a supplementary per-Turn artifact used when reducing assistant turns with multi-step tool context. The reducer should eventually consume run-scoped normalized output/tool artifacts directly where possible.
+- `ContextSnapshot` and `context_heads` still carry anchor/tail metadata for compaction and validation alongside the complete model input. The anchor/tail fields can be removed after all reconstruction paths use versioned complete snapshots.
+- `presentation-events.json.zst` is written at the provider/run completion boundary. Final `message.completed` and `turn.completed` rows are committed by the subsequent Turn finalization transaction and are available from PostgreSQL, but are not retroactively added to that archive object.
+- Hard-crash recovery currently combines stale-run requeue, resumable staging outcomes, deterministic immutable artifacts, and Kafka complete-event recovery. A single artifact-driven recovery coordinator remains future cleanup.
+
+## 21. Observability and acceptance criteria
 
 Required metrics include:
 
@@ -744,7 +771,7 @@ Initial acceptance criteria:
 
 - No provider stream event performs a whole-Turn S3 read-modify-write.
 - A frontend old-conversation load does not require S3 or Redis.
-- A Worker cold start for a checkpointed conversation uses one checkpoint GET plus one bounded DB tail query.
+- A Worker cold start for a checkpointed conversation uses one checkpoint GET plus one bounded DB tail query; the current assistant-turn reconstruction path may additionally fetch exact per-Turn model-context artifacts for multi-step tool history.
 - A failed or cancelled latest run leaves the previous successful checkpoint usable.
 - Redis unavailability does not prevent context construction.
 - Images are absent from Redis snapshots and are hydrated from S3 before provider calls.
@@ -753,7 +780,7 @@ Initial acceptance criteria:
 - Complete DB events reproduce the same settled frontend content as the live stream.
 - Every committed S3 pointer passes checksum verification.
 
-## 21. Deferred decisions
+## 22. Deferred decisions
 
 The following decisions must be revisited after production measurements:
 

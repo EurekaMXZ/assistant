@@ -34,46 +34,48 @@ func (o *ToolOrchestrator) ensureStepCapabilities(functionCalls []llm.ModelItem)
 }
 
 func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domain.TurnRun, input []llm.ModelItem, scope tool.ToolScope, calls []tool.ToolCall) ([]llm.ModelItem, tool.ToolScope, error) {
+	plan, err := buildToolExecutionPlan(run, calls, ToolExecutionPlanOptions{})
+	if err != nil {
+		return cloneModelItems(input), cloneToolScope(scope), err
+	}
+	return o.executeLocalToolExecutionPlan(ctx, run, input, scope, plan)
+}
+
+func (o *ToolOrchestrator) executeLocalToolExecutionPlan(ctx context.Context, run *domain.TurnRun, input []llm.ModelItem, scope tool.ToolScope, plan *ToolExecutionPlan) ([]llm.ModelItem, tool.ToolScope, error) {
 	currentInput := cloneModelItems(input)
 	currentScope := cloneToolScope(scope)
+	if plan == nil {
+		return currentInput, currentScope, nil
+	}
 
-	for _, call := range calls {
-		record, acquired, err := o.recordToolCallStart(ctx, currentScope, run, call)
-		if err != nil {
-			return currentInput, currentScope, err
-		}
+	for groupIndex := range plan.Groups {
+		group := &plan.Groups[groupIndex]
+		for callIndex := range group.Calls {
+			planned := &group.Calls[callIndex]
+			call := planned.Call
+			record, acquired, err := o.recordToolCallStart(ctx, currentScope, run, call)
+			if err != nil {
+				return currentInput, currentScope, err
+			}
+			if record != nil {
+				planned.ToolCallRecordID = record.ID
+			}
 
-		call.RequestKey = run.ID + ":" + call.CallID
-		execution, err := o.executeRecordedLocalToolCall(ctx, currentScope, record, acquired, call)
-		if err != nil {
-			return currentInput, currentScope, err
-		}
-		if execution != nil {
-			currentInput = append(currentInput, cloneModelItems([]llm.ModelItem{execution.OutputItem})...)
-		}
-		if execution == nil || !execution.Failed {
-			currentScope = applyToolScopeDelta(currentScope, call)
+			call.RequestKey = planned.StableOperationID
+			execution, err := o.executeRecordedLocalToolCall(ctx, currentScope, record, acquired, call)
+			if err != nil {
+				return currentInput, currentScope, err
+			}
+			if execution != nil {
+				currentInput = append(currentInput, cloneModelItems([]llm.ModelItem{execution.OutputItem})...)
+			}
+			if execution == nil || !execution.Failed {
+				currentScope = applyToolScopeDelta(currentScope, call)
+			}
 		}
 	}
 
 	return currentInput, currentScope, nil
-}
-
-func localToolCallsAwaitingInputLast(items []llm.ModelItem) ([]tool.ToolCall, error) {
-	calls := modelItemsToToolCalls(items)
-	ordered := make([]tool.ToolCall, 0, len(calls))
-	var awaiting []tool.ToolCall
-	for _, call := range calls {
-		if normalizedToolName(call) == tool.AskUser {
-			awaiting = append(awaiting, call)
-			continue
-		}
-		ordered = append(ordered, call)
-	}
-	if len(awaiting) > 1 {
-		return nil, domain.NewValidationError("ask_user may only be called once per response")
-	}
-	return append(ordered, awaiting...), nil
 }
 
 func (o *ToolOrchestrator) executeRecordedLocalToolCall(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, acquired bool, call tool.ToolCall) (*tool.ToolExecutionResult, error) {

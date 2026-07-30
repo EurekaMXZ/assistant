@@ -33,6 +33,7 @@ type ScheduledRunOutcome struct {
 	Tools                []llm.ModelTool                `json:"tools,omitempty"`
 	ContextItems         []llm.ModelItem                `json:"context_items,omitempty"`
 	ToolResults          []llm.ModelItem                `json:"tool_results,omitempty"`
+	ExecutionPlan        *ToolExecutionPlan             `json:"execution_plan,omitempty"`
 	NextState            *ScheduledRunState             `json:"next_state,omitempty"`
 	NextRequest          json.RawMessage                `json:"next_request,omitempty"`
 	Postprocessed        bool                           `json:"postprocessed"`
@@ -190,10 +191,6 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 	approvalRequests := approvalRequests(result)
 	remoteCalls := remoteToolCalls(result)
 	remoteContinuations := remoteContinuationItems(result)
-	localCalls, err := localToolCallsAwaitingInputLast(functionCalls)
-	if err != nil {
-		return err
-	}
 	if err := o.recordObservedRemoteCalls(ctx, state.Scope, run, remoteCalls); err != nil {
 		return err
 	}
@@ -213,10 +210,22 @@ func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *dom
 		return err
 	}
 
+	plan := outcome.ExecutionPlan
+	if plan == nil {
+		var planErr error
+		plan, planErr = buildToolExecutionPlan(run, modelItemsToToolCalls(functionCalls), ToolExecutionPlanOptions{
+			ParallelToolCalls: state.Request.ParallelToolCalls,
+		})
+		if planErr != nil {
+			return planErr
+		}
+		outcome.ExecutionPlan = plan
+	}
+
 	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
 	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
 	toolOutputStart := len(nextInput)
-	nextInput, nextScope, err := o.executeLocalToolCalls(ctx, run, nextInput, state.Scope, localCalls)
+	nextInput, nextScope, err := o.executeLocalToolExecutionPlan(ctx, run, nextInput, state.Scope, plan)
 	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])
 	if err != nil {
 		return err
