@@ -92,6 +92,27 @@ type TurnRunLease struct {
 	Token  string
 }
 
+type ToolCallLease struct {
+	ToolCallID string
+	TurnRunID  string
+	Token      string
+}
+
+type ToolExecutionScheduleInput struct {
+	Run   *domain.TurnRun
+	Scope tool.ToolScope
+	Plan  *ToolExecutionPlan
+}
+
+type ToolCallSettlement struct {
+	Record        *domain.ToolCallRecord
+	GroupComplete bool
+}
+
+type ToolGroupAdvance struct {
+	LastGroup bool
+}
+
 type AwaitScheduledTurnRunInput struct {
 	Lease                TurnRunLease
 	ToolCallID           string
@@ -117,6 +138,19 @@ type TurnRunWorkflowStore interface {
 	AwaitScheduledTurnRunInput(ctx context.Context, input AwaitScheduledTurnRunInput) (*domain.TurnRun, error)
 	CompleteScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, usage llm.ModelUsage, imageGenerationCount int, compactTriggerTokens int) (*domain.TurnRun, error)
 	FailScheduledTurnRun(ctx context.Context, lease TurnRunLease, responseID string, responseBlobKey string, resultBlobKey string, runMessage string, requestBlobKey string, turnCode string, turnMessage string, compactTriggerTokens int) (*domain.TurnRun, error)
+}
+
+type WaitingToolsTurnRunStore interface {
+	ClaimWaitingToolsTurnRun(ctx context.Context, runID string) (*domain.TurnRun, TurnRunLease, error)
+}
+
+type ToolExecutionWorkflowStore interface {
+	ScheduleToolExecutionPlan(ctx context.Context, input ToolExecutionScheduleInput) ([]domain.ToolCallRecord, error)
+	ClaimQueuedToolCall(ctx context.Context, toolCallID string, leaseTimeout time.Duration) (*domain.ToolCallRecord, ToolCallLease, error)
+	CompleteQueuedToolCall(ctx context.Context, lease ToolCallLease, outputBlobKey string) (*ToolCallSettlement, error)
+	FailQueuedToolCall(ctx context.Context, lease ToolCallLease, outputBlobKey string, message string) (*ToolCallSettlement, error)
+	AdvanceToolExecutionGroup(ctx context.Context, turnRunID string, executionGroup int) (*ToolGroupAdvance, error)
+	ListToolCallsByRun(ctx context.Context, turnRunID string) ([]domain.ToolCallRecord, error)
 }
 
 type InitialTurnRunRequestStore interface {

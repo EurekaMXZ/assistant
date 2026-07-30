@@ -8,6 +8,7 @@ var (
 	_ workflow.WorkflowContextRepository = (*WorkflowContextRepository)(nil)
 	_ workflow.CompleteEventStore        = (*ConversationEventRepository)(nil)
 	_ workflow.TurnRunWorkflowStore      = (*TurnRunRepository)(nil)
+	_ workflow.WaitingToolsTurnRunStore  = (*TurnRunRepository)(nil)
 	_ workflow.TurnRunArtifactIndexer    = (*TurnRunRepository)(nil)
 	_ workflow.TurnCancellationStore     = (*TurnRunRepository)(nil)
 	_ workflow.ToolCallStore             = (*ToolCallRepository)(nil)

@@ -103,6 +103,8 @@ func New(deps Dependencies) *Engine {
 			runs:                 deps.TurnRuns,
 			completeEvents:       runEvents,
 			models:               deps.Models,
+			executionStore:       optionalToolExecutionStore(deps.ToolCalls),
+			waitingRuns:          optionalWaitingToolsStore(deps.TurnRuns),
 		},
 		outbox: &OutboxRelay{
 			settings: deps.Settings,
@@ -113,6 +115,20 @@ func New(deps Dependencies) *Engine {
 			store:    deps.StaleTurns,
 		},
 	}
+}
+
+func optionalToolExecutionStore(store ToolCallStore) ToolExecutionWorkflowStore {
+	if value, ok := store.(ToolExecutionWorkflowStore); ok {
+		return value
+	}
+	return nil
+}
+
+func optionalWaitingToolsStore(store TurnRunWorkflowStore) WaitingToolsTurnRunStore {
+	if value, ok := store.(WaitingToolsTurnRunStore); ok {
+		return value
+	}
+	return nil
 }
 
 func (e *Engine) HandleWorkflowEvent(ctx context.Context, event WorkflowEvent) error {
@@ -135,6 +151,10 @@ func (e *Engine) HandleWorkflowEvent(ctx context.Context, event WorkflowEvent) e
 		return e.ignoreDeletedConversation(ctx, event.ConversationID, err)
 	case EventTurnRunRequested:
 		return e.turns.HandleTurnRunRequested(ctx, event)
+	case EventToolCallRequested:
+		return e.turns.HandleToolCallRequested(ctx, event)
+	case EventToolGroupCompleted:
+		return e.turns.HandleToolGroupCompleted(ctx, event)
 	case EventTurnCancellationRequested:
 		return e.turns.HandleCancellationRequested(ctx, event)
 	case EventContextCompactionRequest:

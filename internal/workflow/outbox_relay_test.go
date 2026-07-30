@@ -90,6 +90,24 @@ func TestOutboxRelayPublishesExplicitTurnRunID(t *testing.T) {
 	}
 }
 
+func TestOutboxRelayPublishesToolExecutionReferences(t *testing.T) {
+	store := &stubOutboxStore{items: []OutboxEvent{{
+		ID: "evt-tool", EventType: EventToolCallRequested, ConversationID: "conv-1",
+		TurnID: "turn-1", TurnRunID: "run-1", ToolCallID: "call-1", ExecutionGroup: 2,
+	}}}
+	relay := &OutboxRelay{settings: WorkflowSettings{OutboxBatchSize: 1}, store: store}
+	var published WorkflowEvent
+	if err := relay.Flush(context.Background(), func(_ context.Context, event WorkflowEvent) error {
+		published = event
+		return nil
+	}); err != nil {
+		t.Fatalf("flush outbox: %v", err)
+	}
+	if published.ToolCallID != "call-1" || published.ExecutionGroup != 2 {
+		t.Fatalf("tool execution references = %#v", published)
+	}
+}
+
 func TestOutboxRelayMarksPublishErrorOnPublisherFailure(t *testing.T) {
 	store := &stubOutboxStore{
 		items: []OutboxEvent{

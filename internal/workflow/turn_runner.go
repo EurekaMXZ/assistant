@@ -32,6 +32,8 @@ type TurnRunner struct {
 	generatedImageAssets GeneratedImageAssetStore
 	sandboxes            tool.ConversationSandboxReader
 	runs                 TurnRunWorkflowStore
+	waitingRuns          WaitingToolsTurnRunStore
+	executionStore       ToolExecutionWorkflowStore
 	completeEvents       CompleteEventRunStore
 	models               ModelCatalogResolver
 	activeMu             sync.Mutex
@@ -403,7 +405,7 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 	switch run.Status {
 	case domain.TurnRunStatusCompleted:
 		return r.continueCompletedTurnRun(ctx, event, run)
-	case domain.TurnRunStatusFailed, domain.TurnRunStatusRunning, domain.TurnRunStatusAwaitingInput, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusCancelled:
+	case domain.TurnRunStatusFailed, domain.TurnRunStatusRunning, domain.TurnRunStatusWaitingTools, domain.TurnRunStatusAwaitingInput, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusCancelled:
 		return nil
 	case domain.TurnRunStatusQueued:
 	default:
@@ -515,8 +517,68 @@ func (r *TurnRunner) HandleTurnRunRequested(ctx context.Context, event WorkflowE
 			return err
 		}
 	}
+	if r.executionStore != nil && outcome.ExecutionPlan != nil && outcome.NextState == nil {
+		if state == nil {
+			state, err = r.tools.LoadScheduledRunState(runCtx, claimed.StateBlobKey)
+			if err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+			if err := r.hydrateScheduledRunState(runCtx, claimed.TurnID, state); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+		}
+		if err := r.tools.PersistToolExecutionPlanArtifacts(runCtx, state.Scope, outcome.ExecutionPlan); err != nil {
+			return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+		}
+		if _, err := r.executionStore.ScheduleToolExecutionPlan(ctx, ToolExecutionScheduleInput{
+			Run: claimed, Scope: state.Scope, Plan: outcome.ExecutionPlan,
+		}); err != nil {
+			if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		_ = stopLease()
+		return nil
+	}
 	if err := r.externalizeGeneratedImages(ctx, &domain.Turn{ID: claimed.TurnID, ConversationID: event.ConversationID}, claimed.ID, outcome); err != nil {
 		return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+	}
+	if !outcome.Postprocessed && r.executionStore != nil && len(functionCalls(outcome.Model)) > 0 {
+		if state == nil {
+			state, err = r.tools.LoadScheduledRunState(runCtx, claimed.StateBlobKey)
+			if err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+			if err := r.hydrateScheduledRunState(runCtx, claimed.TurnID, state); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+		}
+		if err := r.tools.PostprocessScheduledRunPlan(runCtx, claimed, state, outcome); err != nil {
+			return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+		}
+		if outcome.ExecutionPlan != nil {
+			if err := r.tools.PersistToolExecutionPlanArtifacts(runCtx, state.Scope, outcome.ExecutionPlan); err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+			responseKey, resultKey, err = r.tools.PersistScheduledRunOutcome(runCtx, state.Scope, claimed, outcome)
+			if err != nil {
+				return r.failScheduledTurnRun(ctx, event, claimed, lease, outcome, err)
+			}
+			if err := r.runs.CheckpointScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey); err != nil {
+				return err
+			}
+			if _, err := r.executionStore.ScheduleToolExecutionPlan(ctx, ToolExecutionScheduleInput{
+				Run: claimed, Scope: state.Scope, Plan: outcome.ExecutionPlan,
+			}); err != nil {
+				if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+					return nil
+				}
+				return err
+			}
+			_ = stopLease()
+			return nil
+		}
 	}
 	if !outcome.Postprocessed {
 		if state == nil {
@@ -634,6 +696,156 @@ func (r *TurnRunner) publishAwaitingInput(ctx context.Context, event WorkflowEve
 	}); err != nil && r.logger != nil {
 		r.logger.Printf("publish awaiting input for turn %s: %v", event.TurnID, err)
 	}
+}
+
+func (r *TurnRunner) HandleToolCallRequested(ctx context.Context, event WorkflowEvent) error {
+	if r == nil || r.executionStore == nil || strings.TrimSpace(event.ToolCallID) == "" {
+		return nil
+	}
+	record, lease, err := r.executionStore.ClaimQueuedToolCall(ctx, event.ToolCallID, r.settings.WorkerLeaseTimeout)
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	run, err := r.runs.GetTurnRun(ctx, record.TurnRunID)
+	if err != nil {
+		return err
+	}
+	scope, err := r.toolScope(ctx, event.ConversationID, record.TurnID)
+	if err != nil {
+		return err
+	}
+	settlement, waiting, err := r.tools.ExecuteQueuedToolCall(ctx, scope, record, lease)
+	if err != nil {
+		return err
+	}
+	if waiting == nil {
+		_ = settlement
+		return nil
+	}
+	if r.waitingRuns == nil {
+		return errors.New("waiting-tools run store is not configured")
+	}
+	outcome, err := r.tools.LoadScheduledRunOutcome(ctx, run.ResultBlobKey)
+	if err != nil {
+		return err
+	}
+	interactionPayload, err := json.Marshal(awaitingInputInteraction(waiting))
+	if err != nil {
+		return fmt.Errorf("marshal durable awaiting interaction: %w", err)
+	}
+	_, runLease, err := r.waitingRuns.ClaimWaitingToolsTurnRun(ctx, run.ID)
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	settled, err := r.runs.AwaitScheduledTurnRunInput(ctx, AwaitScheduledTurnRunInput{
+		Lease: runLease, ToolCallID: waiting.ToolCall.ID, Interaction: interactionPayload,
+		Usage: outcome.Model.Usage, ImageGenerationCount: billableImageGenerationCount(outcome.Model),
+		CompactTriggerTokens: r.compactTriggerTokens(ctx, record.TurnID, outcome.ContextWindowTokens),
+	})
+	if err != nil {
+		return err
+	}
+	if settled != nil && settled.Status == domain.TurnRunStatusFailed {
+		return r.publishTurnFailure(ctx, &domain.Turn{ID: record.TurnID, ConversationID: event.ConversationID},
+			domain.TurnErrorBillingSettlementFailed, domain.TurnPublicErrorBillingRequired, domain.ErrPaymentRequired)
+	}
+	r.publishAwaitingInput(ctx, WorkflowEvent{
+		ConversationID: event.ConversationID, TurnID: record.TurnID, TurnRunID: record.TurnRunID,
+	}, run, waiting)
+	return nil
+}
+
+func (r *TurnRunner) HandleToolGroupCompleted(ctx context.Context, event WorkflowEvent) error {
+	if r == nil || r.executionStore == nil || strings.TrimSpace(event.TurnRunID) == "" {
+		return nil
+	}
+	advance, err := r.executionStore.AdvanceToolExecutionGroup(ctx, event.TurnRunID, event.ExecutionGroup)
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if advance == nil || !advance.LastGroup {
+		return nil
+	}
+	run, err := r.runs.GetTurnRun(ctx, event.TurnRunID)
+	if err != nil {
+		return err
+	}
+	if run.Status != domain.TurnRunStatusWaitingTools {
+		return nil
+	}
+	outcome, err := r.tools.LoadScheduledRunOutcome(ctx, run.ResultBlobKey)
+	if err != nil {
+		return err
+	}
+	state, err := r.tools.LoadScheduledRunState(ctx, run.StateBlobKey)
+	if err != nil {
+		return err
+	}
+	if err := r.hydrateScheduledRunState(ctx, run.TurnID, state); err != nil {
+		return err
+	}
+	records, err := r.executionStore.ListToolCallsByRun(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if err := r.tools.PrepareNextScheduledRunFromToolCalls(ctx, state, outcome, records); err != nil {
+		return err
+	}
+	scope := state.Scope
+	responseKey, resultKey, err := r.tools.PersistScheduledRunOutcome(ctx, scope, run, outcome)
+	if err != nil {
+		return err
+	}
+	immutableResponseKey, checkpointKey, err := r.persistImmutableRunSuccess(ctx, event.ConversationID, run.TurnID, run, state, outcome)
+	if err != nil {
+		return err
+	}
+	if immutableResponseKey != "" {
+		responseKey = immutableResponseKey
+	}
+	if r.waitingRuns == nil {
+		return errors.New("waiting-tools run store is not configured")
+	}
+	claimed, lease, err := r.waitingRuns.ClaimWaitingToolsTurnRun(ctx, run.ID)
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if err := r.runs.CheckpointScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey); err != nil {
+		return err
+	}
+	claimed.CheckpointBlobKey = checkpointKey
+	settled, err := r.runs.CompleteScheduledTurnRun(ctx, lease, outcome.Model.ResponseID, responseKey, resultKey,
+		outcome.Model.Usage, billableImageGenerationCount(outcome.Model), r.compactTriggerTokens(ctx, run.TurnID, outcome.ContextWindowTokens))
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			return nil
+		}
+		return err
+	}
+	if settled != nil && settled.Status == domain.TurnRunStatusFailed {
+		return r.publishTurnFailure(ctx, &domain.Turn{ID: run.TurnID, ConversationID: event.ConversationID},
+			domain.TurnErrorBillingSettlementFailed, domain.TurnPublicErrorBillingRequired, domain.ErrPaymentRequired)
+	}
+	completedRun := claimed
+	if settled != nil {
+		completedRun = settled
+	}
+	completedRun.Status = domain.TurnRunStatusCompleted
+	completedRun.ResponseBlobKey = responseKey
+	completedRun.ResultBlobKey = resultKey
+	return r.finishScheduledTurnRun(ctx, event, completedRun, outcome)
 }
 
 func awaitingInputInteraction(waiting *AwaitingInputSignal) tool.AskUserInteraction {

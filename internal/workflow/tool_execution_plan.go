@@ -29,6 +29,7 @@ type ToolExecutionPlanCall struct {
 	Ordinal           int           `json:"ordinal"`
 	Call              tool.ToolCall `json:"call"`
 	ToolCallRecordID  string        `json:"tool_call_record_id,omitempty"`
+	ArgumentsBlobKey  string        `json:"arguments_blob_key,omitempty"`
 	ResourceKey       string        `json:"resource_key,omitempty"`
 	StableOperationID string        `json:"stable_operation_id"`
 }

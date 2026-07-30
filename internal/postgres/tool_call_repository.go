@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
@@ -23,6 +24,9 @@ const toolCallColumns = `
 	tc.tool_name,
 	tc.status,
 	tc.execution_attempt,
+	tc.execution_group,
+	tc.execution_ordinal,
+	tc.stable_operation_id,
 	tc.arguments_blob_key,
 	COALESCE(tc.output_blob_key, ''),
 	COALESCE(tc.error_message, ''),
@@ -30,6 +34,7 @@ const toolCallColumns = `
 	COALESCE(tc.answer_fingerprint, ''),
 	COALESCE(tc.answer_option_id, ''),
 	tc.answer_output_pending,
+	COALESCE(tc.lease_token::text, ''),
 	tc.started_at,
 	tc.completed_at,
 	tc.failed_at,
@@ -434,6 +439,31 @@ func (r *ToolCallRepository) FinalizeAwaitingInputAnswer(ctx context.Context, ow
 			return nil, false, domain.ErrConflict
 		}
 		return nil, false, fmt.Errorf("complete answered tool call: %w", err)
+	}
+	if strings.TrimSpace(locked.record.StableOperationID) != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE turn_runs
+			SET status = $2, lease_token = NULL, heartbeat_at = NULL, error_message = NULL
+			WHERE id = $1::uuid AND status = $3
+		`, locked.runID, domain.TurnRunStatusWaitingTools, domain.TurnRunStatusAwaitingInput); err != nil {
+			return nil, false, fmt.Errorf("resume durable tool run after answer: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE turns SET status = $2
+			WHERE id = $1::uuid AND status = $3
+		`, turnID, domain.TurnStatusProcessing, domain.TurnStatusAwaitingInput); err != nil {
+			return nil, false, fmt.Errorf("resume durable turn after answer: %w", err)
+		}
+		if err := insertOutboxEvent(ctx, tx, outboxInsert{
+			EventType: workflow.EventToolGroupCompleted, ConversationID: locked.conversationID,
+			TurnID: turnID, TurnRunID: locked.runID, ExecutionGroup: locked.record.ExecutionGroup,
+		}); err != nil {
+			return nil, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("commit durable tool answer: %w", err)
+		}
+		return record, false, nil
 	}
 	result, err := tx.Exec(ctx, `
 		UPDATE turn_runs

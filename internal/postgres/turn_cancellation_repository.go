@@ -178,7 +178,7 @@ func (r *TurnRepository) RequestTurnCancellation(ctx context.Context, turnID str
 	if durableCompletion {
 		return nil, domain.ErrConflict
 	}
-	if err := lockCancellationRuns(ctx, tx, turnID, domain.TurnRunStatusQueued, domain.TurnRunStatusRunning, domain.TurnRunStatusAwaitingInput); err != nil {
+	if err := lockCancellationRuns(ctx, tx, turnID, domain.TurnRunStatusQueued, domain.TurnRunStatusRunning, domain.TurnRunStatusWaitingTools, domain.TurnRunStatusAwaitingInput); err != nil {
 		return nil, err
 	}
 	calls, err := lockAwaitingToolCallsForCancellation(ctx, tx, turnID)
@@ -193,8 +193,8 @@ func (r *TurnRepository) RequestTurnCancellation(ctx context.Context, turnID str
 	if _, err := tx.Exec(ctx, `
 		UPDATE turn_runs
 		SET status = $2
-		WHERE turn_id = $1::uuid AND status IN ($3, $4, $5)
-	`, turnID, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusQueued, domain.TurnRunStatusRunning, domain.TurnRunStatusAwaitingInput); err != nil {
+		WHERE turn_id = $1::uuid AND status IN ($3, $4, $5, $6)
+	`, turnID, domain.TurnRunStatusCancelRequested, domain.TurnRunStatusQueued, domain.TurnRunStatusRunning, domain.TurnRunStatusWaitingTools, domain.TurnRunStatusAwaitingInput); err != nil {
 		return nil, fmt.Errorf("request active run cancellation: %w", err)
 	}
 	if err := cancelAwaitingToolCalls(ctx, tx, turn.ConversationID, turnID, calls); err != nil {
@@ -262,6 +262,14 @@ func (r *TurnRunRepository) FinalizeTurnCancellation(ctx context.Context, conver
 	}
 	if err := cancelAwaitingToolCalls(ctx, tx, conversationID, turnID, calls); err != nil {
 		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tool_calls
+		SET status = $2, error_message = NULL, completed_at = NULL, failed_at = NULL,
+			cancelled_at = now(), lease_token = NULL, leased_at = NULL
+		WHERE turn_id = $1::uuid AND status IN ($3, $4)
+	`, turnID, domain.ToolCallStatusCancelled, domain.ToolCallStatusQueued, domain.ToolCallStatusRunning); err != nil {
+		return fmt.Errorf("cancel queued tool calls: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE turns

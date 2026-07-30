@@ -8,6 +8,8 @@ const (
 	EventTurnAccepted              = "turn.accepted"
 	EventTurnContextReady          = "turn.context_ready"
 	EventTurnRunRequested          = "turn_run.requested"
+	EventToolCallRequested         = "tool_call.requested"
+	EventToolGroupCompleted        = "tool_group.completed"
 	EventTurnCancellationRequested = "turn.cancel_requested"
 	EventContextCompactionRequest  = "context.compaction.requested"
 )
@@ -18,5 +20,7 @@ type WorkflowEvent struct {
 	ConversationID string    `json:"conversation_id,omitempty"`
 	TurnID         string    `json:"turn_id,omitempty"`
 	TurnRunID      string    `json:"turn_run_id,omitempty"`
+	ToolCallID     string    `json:"tool_call_id,omitempty"`
+	ExecutionGroup int       `json:"execution_group,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }

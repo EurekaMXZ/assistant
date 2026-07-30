@@ -10,6 +10,7 @@ import (
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
+	"github.com/EurekaMXZ/assistant/internal/stream"
 	"github.com/EurekaMXZ/assistant/internal/tool"
 )
 
@@ -39,6 +40,101 @@ func (o *ToolOrchestrator) executeLocalToolCalls(ctx context.Context, run *domai
 		return cloneModelItems(input), cloneToolScope(scope), err
 	}
 	return o.executeLocalToolExecutionPlan(ctx, run, input, scope, plan)
+}
+
+func (o *ToolOrchestrator) ExecuteQueuedToolCall(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, lease ToolCallLease) (*ToolCallSettlement, *AwaitingInputSignal, error) {
+	if o == nil || o.executor == nil || o.artifacts == nil || o.executionStore() == nil || record == nil {
+		return nil, nil, errors.New("durable tool execution is not configured")
+	}
+	arguments, err := o.artifacts.GetBytes(ctx, record.ArgumentsBlobKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load queued tool arguments: %w", err)
+	}
+	call := tool.ToolCall{
+		Type: record.ToolType, CallID: record.CallID, Namespace: record.Namespace,
+		Name: record.ToolName, Arguments: append(json.RawMessage(nil), arguments...),
+		RequestKey: record.StableOperationID,
+	}
+	if normalizedToolName(call) != tool.AskUser {
+		o.publishToolStarted(ctx, scope, record, call)
+	}
+	execution, err := o.executor.Execute(ctx, scope, call)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		visibleOutput := modelVisibleToolFailure(call, err)
+		outputKey, persistErr := o.persistQueuedToolOutput(ctx, scope, call, visibleOutput)
+		if persistErr != nil {
+			return nil, nil, persistErr
+		}
+		settled, settleErr := o.executionStore().FailQueuedToolCall(ctx, lease, outputKey, err.Error())
+		if settleErr != nil {
+			return nil, nil, settleErr
+		}
+		o.publishToolFailed(ctx, scope, record, call, err.Error(), []byte(visibleOutput))
+		return settled, nil, nil
+	}
+	if execution != nil && execution.AwaitingInput != nil {
+		if normalizedToolName(call) != tool.AskUser {
+			return nil, nil, fmt.Errorf("tool %s cannot await user input", describeToolCall(call))
+		}
+		prompt := execution.AwaitingInput
+		prompt.CallID = call.CallID
+		prompt.ToolCallID = record.ID
+		return nil, &AwaitingInputSignal{ToolCall: record, Prompt: prompt}, nil
+	}
+	output := ""
+	var streamEvents []stream.Event
+	if execution != nil {
+		output = execution.OutputItem.Output
+		streamEvents = execution.StreamEvents
+	}
+	if execution != nil && execution.Failed {
+		message := "tool execution failed"
+		outputKey, persistErr := o.persistQueuedToolOutput(ctx, scope, call, output)
+		if persistErr != nil {
+			return nil, nil, persistErr
+		}
+		settled, settleErr := o.executionStore().FailQueuedToolCall(ctx, lease, outputKey, message)
+		if settleErr != nil {
+			return nil, nil, settleErr
+		}
+		o.publishToolFailed(ctx, scope, record, call, message, []byte(output))
+		return settled, nil, nil
+	}
+	outputKey, err := o.persistQueuedToolOutput(ctx, scope, call, output)
+	if err != nil {
+		return nil, nil, err
+	}
+	settled, err := o.executionStore().CompleteQueuedToolCall(ctx, lease, outputKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	o.publishToolCompleted(ctx, scope, record, call, []byte(output))
+	for _, event := range streamEvents {
+		o.publish(ctx, event)
+	}
+	return settled, nil, nil
+}
+
+func (o *ToolOrchestrator) executionStore() ToolExecutionWorkflowStore {
+	if o == nil || o.calls == nil {
+		return nil
+	}
+	store, _ := o.calls.(ToolExecutionWorkflowStore)
+	return store
+}
+
+func (o *ToolOrchestrator) persistQueuedToolOutput(ctx context.Context, scope tool.ToolScope, call tool.ToolCall, output string) (string, error) {
+	if strings.TrimSpace(output) == "" || o == nil || o.artifacts == nil {
+		return "", nil
+	}
+	key := o.artifacts.ToolCallOutputKey(scope.ConversationID, scope.TurnID, call.CallID)
+	if err := o.artifacts.PutBytes(ctx, key, []byte(output), "application/json"); err != nil {
+		return "", fmt.Errorf("persist queued tool output: %w", err)
+	}
+	return key, nil
 }
 
 func (o *ToolOrchestrator) executeLocalToolExecutionPlan(ctx context.Context, run *domain.TurnRun, input []llm.ModelItem, scope tool.ToolScope, plan *ToolExecutionPlan) ([]llm.ModelItem, tool.ToolScope, error) {

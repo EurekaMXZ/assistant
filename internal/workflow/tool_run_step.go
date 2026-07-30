@@ -45,6 +45,126 @@ type AwaitingInputSignal struct {
 	Prompt   *tool.AskUserPrompt
 }
 
+func (o *ToolOrchestrator) PostprocessScheduledRunPlan(ctx context.Context, run *domain.TurnRun, state *ScheduledRunState, outcome *ScheduledRunOutcome) error {
+	if o == nil || o.model == nil || run == nil || state == nil || outcome == nil || outcome.Model == nil {
+		return fmt.Errorf("scheduled run plan requires orchestrator, run, state, and outcome")
+	}
+	result := outcome.Model
+	o.publishReasoningSummary(ctx, state.Scope, run, state.StepIndex, result)
+	functionCalls := normalizeFunctionCallItems(functionCalls(result), state.Request.Tools)
+	approvalRequests := approvalRequests(result)
+	remoteCalls := remoteToolCalls(result)
+	remoteContinuations := remoteContinuationItems(result)
+	if err := o.recordObservedRemoteCalls(ctx, state.Scope, run, remoteCalls); err != nil {
+		return err
+	}
+	if len(approvalRequests) > 0 {
+		return unsupportedApprovalRequestError(approvalRequests[0])
+	}
+	if len(functionCalls) == 0 && len(remoteContinuations) == 0 {
+		if action := firstUnsupportedAction(result); action != nil {
+			return fmt.Errorf("tool action %s is not implemented yet", describeModelItem(*action))
+		}
+		initialInput := state.Request.Input[:state.InitialInputCount]
+		outcome.ContextItems = buildModelContextItems(initialInput, state.Request.Input, result)
+		outcome.Postprocessed = true
+		return nil
+	}
+	if len(functionCalls) == 0 {
+		return fmt.Errorf("model response contains remote tool continuation without local tool calls")
+	}
+	plan, err := buildToolExecutionPlan(run, modelItemsToToolCalls(functionCalls), ToolExecutionPlanOptions{
+		ParallelToolCalls: state.Request.ParallelToolCalls,
+	})
+	if err != nil {
+		return err
+	}
+	outcome.ExecutionPlan = plan
+	outcome.Postprocessed = true
+	return nil
+}
+
+func (o *ToolOrchestrator) PersistToolExecutionPlanArtifacts(ctx context.Context, scope tool.ToolScope, plan *ToolExecutionPlan) error {
+	if o == nil || o.artifacts == nil || plan == nil {
+		return fmt.Errorf("persist tool execution plan requires artifact storage")
+	}
+	for groupIndex := range plan.Groups {
+		for callIndex := range plan.Groups[groupIndex].Calls {
+			planned := &plan.Groups[groupIndex].Calls[callIndex]
+			if planned.ArgumentsBlobKey == "" {
+				planned.ArgumentsBlobKey = o.artifacts.ToolCallArgumentsKey(scope.ConversationID, scope.TurnID, planned.Call.CallID)
+			}
+			if err := o.artifacts.PutBytes(ctx, planned.ArgumentsBlobKey, toolCallRequestPayload(planned.Call), "application/json"); err != nil {
+				return fmt.Errorf("persist queued tool arguments: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (o *ToolOrchestrator) PrepareNextScheduledRunFromToolCalls(ctx context.Context, state *ScheduledRunState, outcome *ScheduledRunOutcome, records []domain.ToolCallRecord) error {
+	if o == nil || state == nil || outcome == nil || outcome.Model == nil || outcome.ExecutionPlan == nil {
+		return fmt.Errorf("prepare next scheduled run requires durable tool plan")
+	}
+	byOperation := make(map[string]domain.ToolCallRecord, len(records))
+	byCallID := make(map[string]domain.ToolCallRecord, len(records))
+	for _, record := range records {
+		byOperation[record.StableOperationID] = record
+		byCallID[record.CallID] = record
+	}
+	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
+	nextInput = append(nextInput, o.replayOutputItems(outcome.Model.OutputItems)...)
+	nextScope := cloneToolScope(state.Scope)
+	toolResults := make([]llm.ModelItem, 0, len(records))
+	for _, group := range outcome.ExecutionPlan.Groups {
+		for _, planned := range group.Calls {
+			record, ok := byOperation[planned.StableOperationID]
+			if !ok {
+				record, ok = byCallID[planned.Call.CallID]
+			}
+			if !ok {
+				return fmt.Errorf("durable tool call %q is missing", planned.Call.CallID)
+			}
+			output := ""
+			if record.OutputBlobKey != "" && o.artifacts != nil {
+				payload, err := o.artifacts.GetBytes(ctx, record.OutputBlobKey)
+				if err != nil {
+					return fmt.Errorf("load durable tool output: %w", err)
+				}
+				output = string(payload)
+			}
+			if record.Status == domain.ToolCallStatusFailed && strings.TrimSpace(output) == "" {
+				output = modelVisibleToolFailure(planned.Call, errors.New(record.ErrorMessage))
+			}
+			item := llm.ModelItem{Type: llm.ModelItemFunctionCallOutput, CallID: planned.Call.CallID, Output: output}
+			nextInput = append(nextInput, item)
+			toolResults = append(toolResults, item)
+			if record.Status != domain.ToolCallStatusFailed && record.Status != domain.ToolCallStatusCancelled {
+				nextScope = applyToolScopeDelta(nextScope, planned.Call)
+			}
+		}
+	}
+	nextState, nextRequest, err := o.PrepareScheduledRun(ctx, ToolRunInput{
+		Scope: nextScope, Model: state.Request.Model, ContextWindowTokens: state.Request.ContextWindowTokens,
+		Instructions: state.Request.Instructions, CatalogModelID: state.Request.CatalogModelID,
+		ModelRevision: state.Request.ModelRevision, ModelPriceID: state.Request.ModelPriceID,
+		PricingSnapshot: state.Request.PricingSnapshot, CredentialID: state.Request.CredentialID,
+		ProviderBaseURL: state.Request.ProviderBaseURL, ReasoningEffort: state.Request.ReasoningEffort,
+		ReasoningSummary: state.Request.ReasoningSummary, TextVerbosity: state.Request.TextVerbosity,
+		DisableTools: len(state.Request.Tools) == 0, PromptCacheKey: state.Request.PromptCacheKey,
+		Input: nextInput, MaxOutputTokens: state.Request.MaxOutputTokens, Metadata: state.Request.Metadata,
+		ParallelToolCalls: state.Request.ParallelToolCalls,
+	}, state.StepIndex+1, state.InitialInputCount)
+	if err != nil {
+		return err
+	}
+	outcome.ToolResults = toolResults
+	outcome.NextState = nextState
+	outcome.NextRequest = nextRequest
+	outcome.Postprocessed = true
+	return nil
+}
+
 func (s *AwaitingInputSignal) Error() string {
 	return "turn run is awaiting user input"
 }

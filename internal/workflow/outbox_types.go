@@ -8,6 +8,8 @@ type OutboxEvent struct {
 	ConversationID string     `json:"conversation_id,omitempty"`
 	TurnID         string     `json:"turn_id,omitempty"`
 	TurnRunID      string     `json:"turn_run_id,omitempty"`
+	ToolCallID     string     `json:"tool_call_id,omitempty"`
+	ExecutionGroup int        `json:"execution_group,omitempty"`
 	ClaimToken     string     `json:"-"`
 	ClaimedAt      *time.Time `json:"-"`
 	PublishedAt    *time.Time `json:"published_at,omitempty"`

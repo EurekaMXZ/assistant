@@ -26,6 +26,8 @@ func (r *OutboxRelay) Flush(ctx context.Context, publish WorkflowEventPublisher)
 			ConversationID: item.ConversationID,
 			TurnID:         item.TurnID,
 			TurnRunID:      item.TurnRunID,
+			ToolCallID:     item.ToolCallID,
+			ExecutionGroup: item.ExecutionGroup,
 			CreatedAt:      item.CreatedAt,
 		}
 

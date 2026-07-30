@@ -8,12 +8,14 @@ import (
 const (
 	TurnRunStatusQueued          = "queued"
 	TurnRunStatusRunning         = "running"
+	TurnRunStatusWaitingTools    = "waiting_tools"
 	TurnRunStatusAwaitingInput   = "awaiting_input"
 	TurnRunStatusCancelRequested = "cancel_requested"
 	TurnRunStatusCompleted       = "completed"
 	TurnRunStatusFailed          = "failed"
 	TurnRunStatusCancelled       = "cancelled"
 
+	ToolCallStatusQueued        = "queued"
 	ToolCallStatusRunning       = "running"
 	ToolCallStatusAwaitingInput = "awaiting_input"
 	ToolCallStatusCompleted     = "completed"
@@ -66,6 +68,9 @@ type ToolCallRecord struct {
 	ToolName            string     `json:"tool_name"`
 	Status              string     `json:"status"`
 	ExecutionAttempt    int        `json:"execution_attempt"`
+	ExecutionGroup      int        `json:"execution_group"`
+	ExecutionOrdinal    int        `json:"execution_ordinal"`
+	StableOperationID   string     `json:"stable_operation_id,omitempty"`
 	ArgumentsBlobKey    string     `json:"arguments_blob_key"`
 	OutputBlobKey       string     `json:"output_blob_key,omitempty"`
 	ErrorMessage        string     `json:"error_message,omitempty"`
@@ -73,6 +78,7 @@ type ToolCallRecord struct {
 	AnswerFingerprint   string     `json:"-"`
 	AnswerOptionID      string     `json:"-"`
 	AnswerOutputPending bool       `json:"-"`
+	LeaseToken          string     `json:"-"`
 	StartedAt           time.Time  `json:"started_at"`
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 	FailedAt            *time.Time `json:"failed_at,omitempty"`

@@ -56,6 +56,78 @@ func TestScheduledRunExecutesExactlyOneModelRequest(t *testing.T) {
 	}
 }
 
+func TestScheduledRunPlanPostprocessingDoesNotExecuteTools(t *testing.T) {
+	parallel := true
+	artifacts := &stubToolArtifactStore{}
+	executor := &stubToolExecutor{err: errors.New("must not execute during model postprocessing")}
+	orchestrator := NewToolOrchestrator(&stubModelClient{}, &stubToolCatalog{}, executor, nil, artifacts, &stubToolCallStore{})
+	state := &ScheduledRunState{
+		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
+		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{
+			Input:             []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "find"}},
+			Tools:             []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}},
+			ParallelToolCalls: &parallel,
+		},
+	}
+	outcome := &ScheduledRunOutcome{Model: &llm.ModelResult{OutputItems: []llm.ModelItem{
+		{Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{"q":"one"}`)},
+		{Type: llm.ModelItemFunctionCall, CallID: "call-2", Name: "lookup", Arguments: json.RawMessage(`{"q":"two"}`)},
+	}}}
+	if err := orchestrator.PostprocessScheduledRunPlan(t.Context(), &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}, state, outcome); err != nil {
+		t.Fatalf("plan postprocessing: %v", err)
+	}
+	if outcome.ExecutionPlan == nil || len(outcome.ExecutionPlan.Groups) != 1 || len(outcome.ExecutionPlan.Groups[0].Calls) != 2 {
+		t.Fatalf("execution plan = %#v", outcome.ExecutionPlan)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("tools executed during plan postprocessing: %#v", executor.calls)
+	}
+	if err := orchestrator.PersistToolExecutionPlanArtifacts(t.Context(), state.Scope, outcome.ExecutionPlan); err != nil {
+		t.Fatalf("persist plan arguments: %v", err)
+	}
+	for _, planned := range outcome.ExecutionPlan.Groups[0].Calls {
+		if planned.ArgumentsBlobKey == "" || string(artifacts.data[planned.ArgumentsBlobKey]) == "" {
+			t.Fatalf("planned arguments were not persisted: %#v", planned)
+		}
+	}
+}
+
+func TestPrepareNextScheduledRunFromDurableToolCalls(t *testing.T) {
+	artifacts := &stubToolArtifactStore{}
+	if err := artifacts.PutBytes(t.Context(), "output-1", []byte(`{"value":1}`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	orchestrator := NewToolOrchestrator(&stubModelClient{}, nil, nil, nil, artifacts, nil)
+	state := &ScheduledRunState{
+		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
+		Scope:   tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{Model: "gpt-test", Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "find"}}},
+	}
+	plan, err := buildToolExecutionPlan(&domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}, []tool.ToolCall{{
+		Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup",
+	}}, ToolExecutionPlanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := &ScheduledRunOutcome{
+		Model:         &llm.ModelResult{OutputItems: []llm.ModelItem{{Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup"}}},
+		ExecutionPlan: plan,
+	}
+	if err := orchestrator.PrepareNextScheduledRunFromToolCalls(t.Context(), state, outcome, []domain.ToolCallRecord{{
+		TurnID: "turn-1", TurnRunID: "run-1", CallID: "call-1", ToolName: "lookup",
+		Status: domain.ToolCallStatusCompleted, OutputBlobKey: "output-1", StableOperationID: plan.Groups[0].Calls[0].StableOperationID,
+	}}); err != nil {
+		t.Fatalf("prepare next run: %v", err)
+	}
+	if outcome.NextState == nil || outcome.NextState.StepIndex != 2 {
+		t.Fatalf("next state = %#v", outcome.NextState)
+	}
+	if len(outcome.NextState.Request.Input) != 3 || outcome.NextState.Request.Input[2].Output != `{"value":1}` {
+		t.Fatalf("next request input = %#v", outcome.NextState.Request.Input)
+	}
+}
+
 func TestScheduledRunRejectsAggregateInputAboveContextLimit(t *testing.T) {
 	model := &stubModelClient{}
 	orchestrator := NewToolOrchestrator(model, nil, nil, nil, nil, nil)

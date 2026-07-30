@@ -335,6 +335,34 @@ func (r *TurnRunRepository) ClaimTurnRun(ctx context.Context, runID string) (*do
 	return run, workflow.TurnRunLease{TurnID: run.TurnID, RunID: run.ID, Token: token}, nil
 }
 
+func (r *TurnRunRepository) ClaimWaitingToolsTurnRun(ctx context.Context, runID string) (*domain.TurnRun, workflow.TurnRunLease, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, workflow.TurnRunLease{}, fmt.Errorf("begin waiting-tools run claim: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	token := uuid.NewString()
+	run, err := scanTurnRun(tx.QueryRow(ctx, `
+		UPDATE turn_runs tr
+		SET status = $2, lease_token = $3::uuid, heartbeat_at = now(),
+			started_at = COALESCE(tr.started_at, now()), error_message = NULL
+		FROM turns t
+		WHERE tr.id = $1::uuid AND tr.turn_id = t.id
+			AND tr.status = $4 AND t.status = $5
+		RETURNING `+turnRunColumns,
+		runID, domain.TurnRunStatusRunning, token, domain.TurnRunStatusWaitingTools, domain.TurnStatusProcessing))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, workflow.TurnRunLease{}, domain.ErrConflict
+		}
+		return nil, workflow.TurnRunLease{}, fmt.Errorf("claim waiting-tools run: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, workflow.TurnRunLease{}, fmt.Errorf("commit waiting-tools run claim: %w", err)
+	}
+	return run, workflow.TurnRunLease{TurnID: run.TurnID, RunID: run.ID, Token: token}, nil
+}
+
 func (r *TurnRunRepository) RenewTurnRunLease(ctx context.Context, lease workflow.TurnRunLease) error {
 	result, err := r.pool.Exec(ctx, `
 		UPDATE turn_runs tr
