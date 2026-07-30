@@ -12,9 +12,9 @@ import (
 const turnModelContextContentType = "application/json"
 
 const (
-	modelContextSafetyMultiplierNumerator   = 140
-	modelContextSafetyMultiplierDenominator = 100
-	modelContextSafetyOverheadTokens        = 256
+	tokenEstimateMultiplierDenominator = 100
+	defaultTokenEstimateMultiplier     = 140
+	modelContextSafetyOverheadTokens   = 256
 )
 
 func buildModelContextItems(initialInput []llm.ModelItem, currentInput []llm.ModelItem, final *llm.ModelResult) []llm.ModelItem {
@@ -66,12 +66,20 @@ func estimateModelContextTokens(instructions string, items []llm.ModelItem, tool
 	return tokens
 }
 
-func estimateSafeModelContextTokens(instructions string, items []llm.ModelItem, tools []llm.ModelTool) int {
+func estimateSafeModelContextTokens(instructions string, items []llm.ModelItem, tools []llm.ModelTool, multiplier int) int {
 	base := estimateModelContextTokens(instructions, items, tools)
 	if base <= 0 {
 		return 0
 	}
-	return (base*modelContextSafetyMultiplierNumerator+modelContextSafetyMultiplierDenominator-1)/modelContextSafetyMultiplierDenominator + modelContextSafetyOverheadTokens
+	multiplier = tokenEstimateMultiplier(multiplier)
+	return (base*multiplier+tokenEstimateMultiplierDenominator-1)/tokenEstimateMultiplierDenominator + modelContextSafetyOverheadTokens
+}
+
+func tokenEstimateMultiplier(value int) int {
+	if value < tokenEstimateMultiplierDenominator {
+		return defaultTokenEstimateMultiplier
+	}
+	return value
 }
 
 func estimateStructuredMessageTokens(raw json.RawMessage) (int, bool) {

@@ -31,6 +31,17 @@ func TestEstimateModelContextTokensIncludesInstructionsItemsAndTools(t *testing.
 	}
 }
 
+func TestEstimateSafeModelContextTokensAppliesTokenEstimateMultiplier(t *testing.T) {
+	items := []llm.ModelItem{{Type: llm.ModelItemMessage, Content: strings.Repeat("x", 400)}}
+	base := estimateModelContextTokens("", items, nil)
+	if got := estimateSafeModelContextTokens("", items, nil, 100); got != base+modelContextSafetyOverheadTokens {
+		t.Fatalf("estimate at 1.00 = %d, want %d", got, base+modelContextSafetyOverheadTokens)
+	}
+	if got := estimateSafeModelContextTokens("", items, nil, 125); got != (base*125+99)/100+modelContextSafetyOverheadTokens {
+		t.Fatalf("estimate at 1.25 = %d", got)
+	}
+}
+
 func TestEstimateModelContextTokensUsesFixedImageEstimate(t *testing.T) {
 	raw := []byte(`{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,` + strings.Repeat("a", 100_000) + `"}]}`)
 	tokens := estimateModelContextTokens("", []llm.ModelItem{{Type: llm.ModelItemMessage, Raw: raw}}, nil)

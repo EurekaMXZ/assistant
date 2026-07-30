@@ -67,6 +67,7 @@ func New(deps Dependencies) *Engine {
 		attachmentBlobs: deps.AttachmentBlobs,
 	}
 	orchestrator := NewToolOrchestrator(deps.Model, deps.ToolCatalog, deps.ToolExecutor, deps.Streams, deps.ToolArtifacts, deps.ToolCalls)
+	orchestrator.tokenEstimateMultiplier = deps.Settings.TokenEstimateMultiplier
 	compactor := &ContextCompactor{
 		settings:    deps.Settings,
 		store:       deps.Contexts,

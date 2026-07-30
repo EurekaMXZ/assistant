@@ -44,13 +44,14 @@ type ToolRunResult struct {
 }
 
 type ToolOrchestrator struct {
-	model     llm.ModelClient
-	catalog   tool.ToolCatalog
-	executor  tool.ToolExecutor
-	publisher stream.Publisher
-	artifacts ToolArtifactStore
-	calls     ToolCallStore
-	preflight ScheduledRunPreflight
+	model                   llm.ModelClient
+	catalog                 tool.ToolCatalog
+	executor                tool.ToolExecutor
+	publisher               stream.Publisher
+	artifacts               ToolArtifactStore
+	calls                   ToolCallStore
+	preflight               ScheduledRunPreflight
+	tokenEstimateMultiplier int
 }
 
 func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, executor tool.ToolExecutor, publisher stream.Publisher, artifacts ToolArtifactStore, calls ToolCallStore) *ToolOrchestrator {

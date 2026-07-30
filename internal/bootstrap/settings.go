@@ -125,6 +125,7 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			AgentCompactPrompt:      cfg.AgentCompactPrompt,
 			CompactMaxOutputTokens:  cfg.CompactMaxOutputTokens,
 			CompactTriggerTokens:    cfg.CompactTriggerTokens,
+			TokenEstimateMultiplier: cfg.TokenEstimateMultiplier,
 			WorkerLeaseTimeout:      cfg.WorkerLeaseTimeout,
 			OutboxBatchSize:         cfg.OutboxBatchSize,
 			ImageGenerationPartials: cfg.ImageGenerationPartials,

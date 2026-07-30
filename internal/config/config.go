@@ -45,6 +45,7 @@ const (
 	defaultOpenAIUserAgent           = "assistant"
 	defaultCompactOutputTokens       = 1536
 	defaultCompactTriggerTokens      = 0
+	defaultTokenEstimateMultiplier   = 140
 	defaultCacheMaxConversations     = 1024
 	defaultCacheTailCapacity         = 256
 	defaultOutboxBatchSize           = 100
@@ -148,6 +149,7 @@ type Config struct {
 	AgentCompactPrompt          string
 	CompactMaxOutputTokens      int
 	CompactTriggerTokens        int
+	TokenEstimateMultiplier     int
 	CacheMaxConversations       int
 	CacheTailCapacity           int
 	HTTPClientTimeout           time.Duration
@@ -236,6 +238,7 @@ func Load() Config {
 		AgentCompactPromptFile:      getenv("AGENT_COMPACT_PROMPT_FILE", defaultAgentCompactPromptFile),
 		CompactMaxOutputTokens:      getenvInt("AGENT_COMPACT_MAX_OUTPUT_TOKENS", defaultCompactOutputTokens),
 		CompactTriggerTokens:        getenvInt("AGENT_COMPACT_TRIGGER_TOKENS", defaultCompactTriggerTokens),
+		TokenEstimateMultiplier:     getenvTokenEstimateMultiplier("AGENT_TOKEN_ESTIMATE_MULTIPLIER", defaultTokenEstimateMultiplier),
 		CacheMaxConversations:       getenvInt("CACHE_MAX_CONVERSATIONS", defaultCacheMaxConversations),
 		CacheTailCapacity:           getenvInt("CACHE_TAIL_CAPACITY", defaultCacheTailCapacity),
 		HTTPClientTimeout:           getenvDuration("HTTP_CLIENT_TIMEOUT", defaultHTTPClientTimeout),
@@ -533,6 +536,34 @@ func getenvInt(key string, fallback int) int {
 	}
 
 	return parsed
+}
+
+func getenvTokenEstimateMultiplier(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return fallback
+	}
+	whole, err := strconv.Atoi(parts[0])
+	if err != nil || whole < 1 || whole > 10 {
+		return fallback
+	}
+	if len(parts) == 1 {
+		return whole * 100
+	}
+	if len(parts[1]) > 2 {
+		return fallback
+	}
+	frac := parts[1] + strings.Repeat("0", 2-len(parts[1]))
+	decimal, err := strconv.Atoi(frac)
+	if err != nil {
+		return fallback
+	}
+	return whole*100 + decimal
 }
 
 func getenvBool(key string, fallback bool) bool {

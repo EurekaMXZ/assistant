@@ -84,6 +84,18 @@ func TestLoadReadsOpenAIUserAgent(t *testing.T) {
 	}
 }
 
+func TestLoadReadsTokenEstimateMultiplier(t *testing.T) {
+	t.Setenv("AGENT_TOKEN_ESTIMATE_MULTIPLIER", "1.25")
+	if got := Load().TokenEstimateMultiplier; got != 125 {
+		t.Fatalf("TokenEstimateMultiplier = %d, want 125", got)
+	}
+
+	t.Setenv("AGENT_TOKEN_ESTIMATE_MULTIPLIER", "0.95")
+	if got := Load().TokenEstimateMultiplier; got != defaultTokenEstimateMultiplier {
+		t.Fatalf("invalid TokenEstimateMultiplier = %d, want default %d", got, defaultTokenEstimateMultiplier)
+	}
+}
+
 func TestLoadReadsStreamReplayTTL(t *testing.T) {
 	t.Setenv("STREAM_REPLAY_TTL", "45m")
 

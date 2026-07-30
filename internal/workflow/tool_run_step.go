@@ -164,7 +164,7 @@ func (o *ToolOrchestrator) RequestScheduledRun(ctx context.Context, state *Sched
 		ContextWindowTokens: state.Request.ContextWindowTokens,
 		Tools:               cloneModelTools(state.Request.Tools),
 	}
-	inputTokens := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	inputTokens := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools, o.tokenEstimateMultiplier)
 	if inputLimit := modelRequestInputLimit(state.Request.ContextWindowTokens, state.Request.MaxOutputTokens); inputLimit > 0 && inputTokens > inputLimit {
 		return outcome, fmt.Errorf("scheduled model input estimate %d exceeds context limit", inputTokens)
 	}

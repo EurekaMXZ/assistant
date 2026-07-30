@@ -7,6 +7,7 @@ type WorkflowSettings struct {
 	AgentCompactPrompt      string
 	CompactMaxOutputTokens  int
 	CompactTriggerTokens    int
+	TokenEstimateMultiplier int
 	WorkerLeaseTimeout      time.Duration
 	OutboxBatchSize         int
 	ImageGenerationPartials int

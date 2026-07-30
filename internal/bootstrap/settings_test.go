@@ -123,6 +123,7 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 		AgentCompactPrompt:        "compact",
 		CompactMaxOutputTokens:    800,
 		CompactTriggerTokens:      12000,
+		TokenEstimateMultiplier:   125,
 		OutboxBatchSize:           88,
 	}
 
@@ -155,7 +156,7 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 	if settings.KafkaReader.ConsumerGroup != "assistant-workers" {
 		t.Fatalf("unexpected kafka reader settings: %+v", settings.KafkaReader)
 	}
-	if settings.Workflow.OutboxBatchSize != 88 {
+	if settings.Workflow.OutboxBatchSize != 88 || settings.Workflow.TokenEstimateMultiplier != 125 {
 		t.Fatalf("unexpected workflow settings: %+v", settings.Workflow)
 	}
 	if settings.Process.WorkerLeaseTimeout != 3*time.Minute || settings.Process.WorkerConcurrency != 4 {

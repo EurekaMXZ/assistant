@@ -208,7 +208,7 @@ func (r *TurnRunner) HandleContextReady(ctx context.Context, event WorkflowEvent
 	if err != nil {
 		return r.failTurn(ctx, &domain.Turn{ID: event.TurnID, ConversationID: event.ConversationID}, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing, err)
 	}
-	requestTokens := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	requestTokens := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools, r.settings.TokenEstimateMultiplier)
 	if requestTokens > modelRequestInputLimit(execution.ContextWindowTokens, state.Request.MaxOutputTokens) {
 		return r.failTurn(ctx, turn, "", domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing,
 			fmt.Errorf("model request input estimate %d exceeds context limit", requestTokens))

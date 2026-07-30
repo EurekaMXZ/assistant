@@ -36,7 +36,7 @@ func (p *ContextPreflight) Prepare(ctx context.Context, state *ScheduledRunState
 		if err != nil {
 			return err
 		}
-		used := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+		used := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools, p.settings.TokenEstimateMultiplier)
 		if target <= 0 || used < target {
 			prepared = state
 			return p.validateAdmission(state)
@@ -97,7 +97,7 @@ func (p *ContextPreflight) validateAdmission(state *ScheduledRunState) error {
 		return fmt.Errorf("scheduled run state is required")
 	}
 	limit := modelRequestInputLimit(state.Request.ContextWindowTokens, state.Request.MaxOutputTokens)
-	used := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools)
+	used := estimateSafeModelContextTokens(state.Request.Instructions, state.Request.Input, state.Request.Tools, p.settings.TokenEstimateMultiplier)
 	if limit > 0 && used > limit {
 		return fmt.Errorf("model request safe input estimate %d exceeds context limit %d", used, limit)
 	}

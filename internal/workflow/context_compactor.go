@@ -42,7 +42,7 @@ func (c *ContextCompactor) Compact(ctx context.Context, state *ScheduledRunState
 		}
 	}
 	input := append(cloneModelItems(providerState.Request.Input), prompt)
-	if estimateSafeModelContextTokens(c.settings.AgentSystemPrompt, input, state.Request.Tools) > inputLimit {
+	if estimateSafeModelContextTokens(c.settings.AgentSystemPrompt, input, state.Request.Tools, c.settings.TokenEstimateMultiplier) > inputLimit {
 		return nil, false, errors.New("canonical context exceeds compaction model context window")
 	}
 
@@ -109,9 +109,10 @@ func (c *ContextCompactor) CanonicalInputLimit(ctx context.Context, state *Sched
 	if err != nil {
 		return 0, err
 	}
+	multiplier := tokenEstimateMultiplier(c.settings.TokenEstimateMultiplier)
 	promptAndToolsBase := estimateModelContextTokens(c.settings.AgentSystemPrompt, []llm.ModelItem{prompt}, state.Request.Tools)
-	availableBase := max(0, (inputLimit-modelContextSafetyOverheadTokens)*modelContextSafetyMultiplierDenominator/modelContextSafetyMultiplierNumerator-promptAndToolsBase)
-	return availableBase*modelContextSafetyMultiplierNumerator/modelContextSafetyMultiplierDenominator + modelContextSafetyOverheadTokens, nil
+	availableBase := max(0, (inputLimit-modelContextSafetyOverheadTokens)*tokenEstimateMultiplierDenominator/multiplier-promptAndToolsBase)
+	return availableBase*multiplier/tokenEstimateMultiplierDenominator + modelContextSafetyOverheadTokens, nil
 }
 
 func (c *ContextCompactor) executionForCanonicalContext(ctx context.Context, turnID string) (*domain.ModelExecutionSnapshot, int, int, llm.ModelItem, error) {
@@ -167,7 +168,7 @@ func (c *ContextCompactor) persistReplacementAnchor(ctx context.Context, state *
 	if err := c.blobs.PutJSON(ctx, anchor.ObjectKey, anchor); err != nil {
 		return err
 	}
-	activeContextTokens := estimateSafeModelContextTokens(state.Request.Instructions, []llm.ModelItem{checkpoint}, state.Request.Tools)
+	activeContextTokens := estimateSafeModelContextTokens(state.Request.Instructions, []llm.ModelItem{checkpoint}, state.Request.Tools, c.settings.TokenEstimateMultiplier)
 	if c.checkpoints != nil {
 		payload, err := json.Marshal(immutableContextCheckpoint{
 			SchemaVersion:  immutableRunArtifactSchemaVersion,
