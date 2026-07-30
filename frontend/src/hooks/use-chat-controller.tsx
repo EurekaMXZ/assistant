@@ -143,6 +143,27 @@ function turnsFromConversationEvents(
     }
     if (!event.turn_id) continue;
     const existing = turns.get(event.turn_id);
+    if (event.event_type === "turn.failed") {
+      const errorCode =
+        typeof event.payload.error_code === "string" ? event.payload.error_code : undefined;
+      const error = typeof event.payload.error === "string" ? event.payload.error : undefined;
+      turns.set(event.turn_id, {
+        ...(existing || {
+          id: event.turn_id,
+          conversation_id: event.conversation_id,
+          seq: 0,
+          metadata: {},
+          created_at: event.created_at,
+          updated_at: event.created_at,
+        }),
+        status: "failed",
+        ...(errorCode ? { error_code: errorCode } : {}),
+        ...(error ? { error_message: error } : {}),
+        failed_at: event.created_at,
+        updated_at: event.created_at,
+      });
+      continue;
+    }
     if (!existing) continue;
     if (event.event_type === "turn.failed")
       turns.set(existing.id, { ...existing, status: "failed" });

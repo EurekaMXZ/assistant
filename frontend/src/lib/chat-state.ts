@@ -278,6 +278,20 @@ export function messagesFromConversationEvents(source: ConversationEvent[]) {
       continue;
     }
 
+    if (event.event_type === "turn.failed" && event.turn_id) {
+      const errorCode =
+        typeof event.payload.error_code === "string" ? event.payload.error_code : undefined;
+      const error = typeof event.payload.error === "string" ? event.payload.error : undefined;
+      messages = upsertTurnFailureMessage(
+        messages,
+        event.turn_id,
+        event.conversation_id,
+        error,
+        errorCode,
+      );
+      continue;
+    }
+
     if (
       !event.turn_id ||
       !["interaction.awaiting_input", "interaction.completed", "interaction.cancelled"].includes(

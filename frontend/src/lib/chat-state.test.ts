@@ -113,6 +113,51 @@ describe("chat state transformations", () => {
     expect(projected[2]?.metadata.interaction).toMatchObject({ status: "completed" });
   });
 
+  it("projects a failed turn as an assistant error message", () => {
+    const failed = messagesFromConversationEvents([
+      {
+        id: "user-event",
+        conversation_id: "conversation-1",
+        turn_id: "turn-1",
+        event_seq: "1",
+        event_key: "message:user-1",
+        schema_version: 1,
+        event_type: "message.completed",
+        payload: { message: userMessage },
+        context_included: false,
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "failure-event",
+        conversation_id: "conversation-1",
+        turn_id: "turn-1",
+        event_seq: "2",
+        event_key: "turn:turn-1:failed",
+        schema_version: 1,
+        event_type: "turn.failed",
+        payload: {
+          turn_id: "turn-1",
+          status: "failed",
+          error_code: "upstream_request_failed",
+          error: "Upstream OpenAI server request failed: 502 Bad Gateway.",
+        },
+        context_included: false,
+        created_at: "2026-01-01T00:00:02Z",
+      },
+    ]);
+
+    expect(failed).toHaveLength(2);
+    expect(failed[1]).toMatchObject({
+      turn_id: "turn-1",
+      content_text: "Upstream OpenAI server request failed: 502 Bad Gateway.",
+      metadata: {
+        display_kind: "assistant_error",
+        status: "failed",
+        error_code: "upstream_request_failed",
+      },
+    });
+  });
+
   it("inserts one thinking marker per turn", () => {
     const once = ensureStreamingThinkingMessage([userMessage], "turn-1", "conversation-1");
     const twice = ensureStreamingThinkingMessage(once, "turn-1", "conversation-1");
