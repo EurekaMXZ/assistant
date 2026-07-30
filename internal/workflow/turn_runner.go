@@ -942,7 +942,10 @@ func (r *TurnRunner) modelEventHandler(ctx context.Context, turn *domain.Turn, r
 		}
 		if evt.Type == "response.failed" || evt.Type == "error" {
 			streamEvent.ErrorCode = domain.TurnErrorUpstreamRequestFailed
-			streamEvent.Error = domain.TurnPublicErrorUpstreamRequestFailed
+			streamEvent.Error = strings.TrimSpace(evt.Error)
+			if streamEvent.Error == "" {
+				streamEvent.Error = domain.TurnPublicErrorUpstreamRequestFailed
+			}
 			payload, _ := json.Marshal(map[string]string{
 				"type":       evt.Type,
 				"error_code": streamEvent.ErrorCode,
@@ -994,7 +997,11 @@ func assistantMessageDraftsFromRun(run *ToolRunResult, result *llm.ModelResult) 
 func classifyInitialToolRunFailure(err error, result *llm.ModelResult) (string, string) {
 	switch {
 	case errors.Is(err, llm.ErrUpstreamRequestFailed):
-		return domain.TurnErrorUpstreamRequestFailed, domain.TurnPublicErrorUpstreamRequestFailed
+		message := llm.PublicUpstreamRequestMessage(err)
+		if message == "" {
+			message = domain.TurnPublicErrorUpstreamRequestFailed
+		}
+		return domain.TurnErrorUpstreamRequestFailed, message
 	case result == nil:
 		return domain.TurnErrorRequestPrepareFailed, domain.TurnPublicErrorRequestProcessing
 	default:

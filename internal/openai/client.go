@@ -15,14 +15,13 @@ import (
 	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/credential"
-	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
 )
 
 const (
 	defaultReasoningEffort  = "xhigh"
 	defaultReasoningSummary = "detailed"
-	maxModelHTTPRetries     = 8
+	maxModelHTTPRetries     = 5
 )
 
 type Client struct {
@@ -194,21 +193,21 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 	}
 
 	if strings.TrimSpace(request.CredentialID) == "" {
-		return nil, upstreamRequestError("resolve provider credential", errors.New("model request has no catalog credential"))
+		return nil, upstreamRequestError("resolve provider credential", "Upstream OpenAI request failed: credential unavailable.", errors.New("model request has no catalog credential"))
 	}
 	if c.credentials == nil {
-		return nil, upstreamRequestError("resolve provider credential", errors.New("provider credential resolver is not configured"))
+		return nil, upstreamRequestError("resolve provider credential", "Upstream OpenAI request failed: credential unavailable.", errors.New("provider credential resolver is not configured"))
 	}
 	resolved, resolveErr := c.credentials.ResolveCredential(ctx, request.CredentialID)
 	if resolveErr != nil {
-		return nil, upstreamRequestError("resolve provider credential", resolveErr)
+		return nil, upstreamRequestError("resolve provider credential", "Upstream OpenAI request failed: credential unavailable.", resolveErr)
 	}
 	baseURL := resolved.BaseURL
 	apiKey := resolved.APIKey
 	if value := strings.TrimSpace(request.ProviderBaseURL); value != "" {
 		baseURL = value
 	}
-	response, err := c.sendResponseRequest(ctx, normalizeBaseURL(baseURL)+"/responses", apiKey, rawRequest)
+	response, err := c.sendResponseRequest(ctx, normalizeBaseURL(baseURL)+"/responses", apiKey, rawRequest, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +285,7 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 		}
 
 		if err := json.Unmarshal(raw, &envelope); err != nil {
-			return upstreamRequestError("decode stream event", err)
+			return upstreamRequestError("decode stream event", "Upstream OpenAI response failed: invalid event.", err)
 		}
 
 		if envelope.Type == "" {
@@ -366,7 +365,7 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 			if envelope.Response != nil {
 				usage, err := parseModelUsage(envelope.Response.Usage)
 				if err != nil {
-					return upstreamRequestError("decode usage", err)
+					return upstreamRequestError("decode usage", "Upstream OpenAI response failed: invalid usage.", err)
 				}
 				result.Usage = usage
 				result.OutputItems = parseOutputItems(envelope.Response.Output)
@@ -390,10 +389,11 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 			} else if envelope.Response != nil && envelope.Response.Error != nil && strings.TrimSpace(envelope.Response.Error.Message) != "" {
 				message = envelope.Response.Error.Message
 			}
-			if err := emit(llm.ModelEvent{Type: envelope.Type, Error: domain.TurnPublicErrorUpstreamRequestFailed}); err != nil {
+			publicMessage := "Upstream OpenAI response failed."
+			if err := emit(llm.ModelEvent{Type: envelope.Type, Error: publicMessage}); err != nil {
 				return err
 			}
-			return upstreamRequestError("openai streaming failed", errors.New(message))
+			return upstreamRequestError("openai streaming failed", publicMessage, errors.New(message))
 		default:
 			if err := emit(llm.ModelEvent{Type: envelope.Type}); err != nil {
 				return err
@@ -428,7 +428,7 @@ func (c *Client) StreamResponse(ctx context.Context, request llm.ModelRequest, h
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return result, upstreamRequestError("read openai stream", err)
+			return result, upstreamRequestError("read openai stream", "Upstream OpenAI response stream failed.", err)
 		}
 	}
 
@@ -490,7 +490,7 @@ func sanitizeImageOutputItem(raw json.RawMessage) json.RawMessage {
 	return sanitized
 }
 
-func (c *Client) sendResponseRequest(ctx context.Context, endpoint string, apiKey string, rawRequest []byte) (*http.Response, error) {
+func (c *Client) sendResponseRequest(ctx context.Context, endpoint string, apiKey string, rawRequest []byte, handler llm.ModelEventHandler) (*http.Response, error) {
 	for retry := 0; ; retry++ {
 		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(rawRequest))
 		if err != nil {
@@ -505,7 +505,7 @@ func (c *Client) sendResponseRequest(ctx context.Context, endpoint string, apiKe
 
 		response, err := c.httpClient.Do(httpRequest)
 		if err != nil {
-			return nil, upstreamRequestError("send openai request", err)
+			return nil, upstreamRequestError("send openai request", "Upstream OpenAI request failed: connection error.", err)
 		}
 		if response.StatusCode < http.StatusBadRequest {
 			return response, nil
@@ -513,22 +513,44 @@ func (c *Client) sendResponseRequest(ctx context.Context, endpoint string, apiKe
 
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		_ = response.Body.Close()
-		requestErr := upstreamRequestError(
-			"openai request failed",
-			fmt.Errorf("status=%d body=%s", response.StatusCode, strings.TrimSpace(string(body))),
-		)
+		requestErr := upstreamHTTPStatusError(response.StatusCode, response.Status, body)
 		if response.StatusCode < http.StatusInternalServerError || response.StatusCode > 599 || retry >= maxModelHTTPRetries {
 			return nil, requestErr
 		}
 
+		delay := time.Second << retry
+		if err := emitRetryEvent(handler, retry+2, maxModelHTTPRetries+1, delay, response.Status); err != nil {
+			return nil, err
+		}
 		wait := c.retryWait
 		if wait == nil {
 			wait = waitForModelRetry
 		}
-		if err := wait(ctx, time.Second<<retry); err != nil {
-			return nil, upstreamRequestError("wait to retry openai request", err)
+		if err := wait(ctx, delay); err != nil {
+			return nil, upstreamRequestError("wait to retry openai request", "Upstream OpenAI request retry failed.", err)
 		}
 	}
+}
+
+func emitRetryEvent(handler llm.ModelEventHandler, attempt int, maxAttempts int, delay time.Duration, status string) error {
+	if handler == nil {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Attempt     int    `json:"attempt"`
+		MaxAttempts int    `json:"max_attempts"`
+		RetryInMS   int64  `json:"retry_in_ms"`
+		Status      string `json:"status"`
+	}{
+		Attempt: attempt, MaxAttempts: maxAttempts, RetryInMS: delay.Milliseconds(), Status: strings.TrimSpace(status),
+	})
+	if err != nil {
+		return upstreamRequestError("marshal retry status", "Upstream OpenAI request retry failed.", err)
+	}
+	if err := handler(llm.ModelEvent{Type: llm.ModelEventResponseRetrying, Raw: payload}); err != nil {
+		return upstreamRequestError("publish retry status", "Upstream OpenAI request retry failed.", err)
+	}
+	return nil
 }
 
 func waitForModelRetry(ctx context.Context, delay time.Duration) error {
@@ -542,8 +564,24 @@ func waitForModelRetry(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func upstreamRequestError(operation string, err error) error {
-	return fmt.Errorf("%w: %s: %v", llm.ErrUpstreamRequestFailed, operation, err)
+func upstreamHTTPStatusError(statusCode int, status string, body []byte) error {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode))
+	}
+	kind := "request"
+	if statusCode >= http.StatusInternalServerError {
+		kind = "server request"
+	}
+	return upstreamRequestError(
+		"openai request failed",
+		fmt.Sprintf("Upstream OpenAI %s failed: %s.", kind, status),
+		fmt.Errorf("status=%d body=%s", statusCode, strings.TrimSpace(string(body))),
+	)
+}
+
+func upstreamRequestError(operation string, publicMessage string, err error) error {
+	return llm.NewUpstreamRequestError(publicMessage, fmt.Errorf("%s: %w", operation, err))
 }
 
 func marshalInputItems(items []llm.ModelItem) ([]any, error) {

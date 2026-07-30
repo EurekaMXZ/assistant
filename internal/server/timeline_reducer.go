@@ -615,10 +615,10 @@ func (r *timelineReducer) reduceGeneratedImage(event stream.Event, createdAt tim
 func (r *timelineReducer) reduceResponseFailed(event stream.Event, createdAt time.Time) []timelineMutation {
 	responseID := r.responseID(event.ResponseID)
 	providerEvent := strings.TrimSpace(event.Payload) != ""
-	errorCode, publicError := presentationFailure(event.ErrorCode)
+	errorCode, publicError := presentationFailure(event.ErrorCode, event.Error)
 	if providerEvent {
 		errorCode = domain.TurnErrorUpstreamRequestFailed
-		publicError = domain.TurnPublicErrorUpstreamRequestFailed
+		publicError = "Upstream OpenAI response failed."
 	}
 	item := TurnTimelineItem{
 		ID: stableTimelineStatusID("response-failed", responseID, 0), Type: turnTimelineItemStatus,
@@ -631,6 +631,42 @@ func (r *timelineReducer) reduceResponseFailed(event stream.Event, createdAt tim
 		mutations = append(mutations, timelineMutation{Kind: timelineMutationTerminal, Terminal: r.turnDone(domain.TurnStatusFailed, errorCode, publicError)})
 	}
 	return mutations
+}
+
+func (r *timelineReducer) reduceResponseRetrying(event stream.Event, createdAt time.Time) []timelineMutation {
+	var payload struct {
+		Attempt     int    `json:"attempt"`
+		MaxAttempts int    `json:"max_attempts"`
+		RetryInMS   int64  `json:"retry_in_ms"`
+		Status      string `json:"status"`
+	}
+	if json.Unmarshal([]byte(event.Payload), &payload) != nil || payload.Attempt < 2 || payload.MaxAttempts < payload.Attempt || payload.RetryInMS <= 0 {
+		return nil
+	}
+
+	statusID := stableTimelineStatusID("response-retrying", event.RunID, r.eventIndex)
+	item := TurnTimelineItem{
+		ID:          statusID,
+		Type:        turnTimelineItemStatus,
+		Title:       "Status",
+		Status:      "retrying",
+		ContentText: retryingResponseContentText(payload.Attempt, payload.MaxAttempts, payload.RetryInMS, payload.Status),
+		CreatedAt:   createdAt,
+	}
+	r.store(item)
+	return []timelineMutation{{Kind: timelineMutationUpsert, Item: item}}
+}
+
+func retryingResponseContentText(attempt int, maxAttempts int, retryInMS int64, status string) string {
+	delay := fmt.Sprintf("%d 毫秒", retryInMS)
+	if retryInMS%1000 == 0 {
+		delay = fmt.Sprintf("%d 秒", retryInMS/1000)
+	}
+	content := fmt.Sprintf("第 %d/%d 次尝试，%s后重试", attempt, maxAttempts, delay)
+	if status = strings.TrimSpace(status); status != "" {
+		content += "（" + status + "）"
+	}
+	return content
 }
 
 func (r *timelineReducer) turnDone(status string, errorCode string, publicError string) TurnStreamDone {

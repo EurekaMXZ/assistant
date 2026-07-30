@@ -510,7 +510,7 @@ func TestHandleStreamTurnSanitizesProviderFailure(t *testing.T) {
 		TurnID:         "turn-1",
 		ResponseID:     "resp-1",
 		ErrorCode:      domain.TurnErrorUpstreamRequestFailed,
-		Error:          domain.TurnPublicErrorUpstreamRequestFailed,
+		Error:          "Upstream OpenAI server request failed: 502 Bad Gateway.",
 	}
 	close(channel)
 
@@ -528,7 +528,7 @@ func TestHandleStreamTurnSanitizesProviderFailure(t *testing.T) {
 			}
 			return &domain.Turn{
 				ID: "turn-1", ConversationID: "conv-1", Status: domain.TurnStatusFailed,
-				ErrorCode: domain.TurnErrorUpstreamRequestFailed, StartedAt: &startedAt, FailedAt: &failedAt,
+				ErrorCode: domain.TurnErrorUpstreamRequestFailed, ErrorMessage: "Upstream OpenAI server request failed: 502 Bad Gateway.", StartedAt: &startedAt, FailedAt: &failedAt,
 			}, nil
 		},
 			GetTurnTimeline: func(context.Context, string, string) (*TurnTimeline, error) {
@@ -551,7 +551,7 @@ func TestHandleStreamTurnSanitizesProviderFailure(t *testing.T) {
 	if strings.Contains(body, "sensitive provider detail") {
 		t.Fatalf("provider detail leaked in SSE response: %q", body)
 	}
-	if !strings.Contains(body, domain.TurnPublicErrorUpstreamRequestFailed) {
+	if !strings.Contains(body, "Upstream OpenAI server request failed: 502 Bad Gateway.") {
 		t.Fatalf("expected public upstream error, got %q", body)
 	}
 	if !strings.Contains(body, `"error_code":"`+domain.TurnErrorUpstreamRequestFailed+`"`) {

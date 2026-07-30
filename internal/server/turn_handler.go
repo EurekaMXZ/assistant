@@ -219,7 +219,7 @@ func (a *API) handleStreamTurn(c *gin.Context) {
 		errorCode := ""
 		publicError := ""
 		if turn.Status == domain.TurnStatusFailed {
-			errorCode, publicError = presentationFailure(turn.ErrorCode)
+			errorCode, publicError = presentationFailure(turn.ErrorCode, turn.ErrorMessage)
 		}
 		_ = writeSSE(c.Writer, streamUIEventTurnDone, TurnStreamDone{
 			TurnID:         turn.ID,
@@ -338,7 +338,7 @@ func (a *API) writeFinalTurnStreamState(ctx context.Context, w http.ResponseWrit
 	errorCode := ""
 	publicError := ""
 	if turn.Status == domain.TurnStatusFailed {
-		errorCode, publicError = presentationFailure(turn.ErrorCode)
+		errorCode, publicError = presentationFailure(turn.ErrorCode, turn.ErrorMessage)
 	}
 	return writeSSE(w, streamUIEventTurnDone, TurnStreamDone{
 		TurnID:         turn.ID,

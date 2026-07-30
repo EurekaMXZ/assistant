@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -956,16 +955,16 @@ func TestClassifyInitialToolRunFailureTreatsMissingModelResultAsPrepareFailure(t
 	}
 }
 
-func TestClassifyInitialToolRunFailureSanitizesUpstreamErrors(t *testing.T) {
+func TestClassifyInitialToolRunFailurePreservesSafeUpstreamErrors(t *testing.T) {
 	code, message := classifyInitialToolRunFailure(
-		fmt.Errorf("%w: provider secret", llm.ErrUpstreamRequestFailed),
+		llm.NewUpstreamRequestError("Upstream OpenAI server request failed: 502 Bad Gateway.", errors.New("provider secret")),
 		&llm.ModelResult{},
 	)
 	if code != domain.TurnErrorUpstreamRequestFailed {
 		t.Fatalf("code = %q, want %q", code, domain.TurnErrorUpstreamRequestFailed)
 	}
-	if message != domain.TurnPublicErrorUpstreamRequestFailed {
-		t.Fatalf("message = %q, want %q", message, domain.TurnPublicErrorUpstreamRequestFailed)
+	if message != "Upstream OpenAI server request failed: 502 Bad Gateway." {
+		t.Fatalf("message = %q", message)
 	}
 }
 

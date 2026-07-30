@@ -78,7 +78,7 @@ func TestStreamResponseClassifiesAndSanitizesProviderFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "sensitive provider detail") {
 		t.Fatalf("internal error should retain provider detail, got %v", err)
 	}
-	if len(events) != 1 || events[0].Error != domain.TurnPublicErrorUpstreamRequestFailed {
+	if len(events) != 1 || events[0].Error != "Upstream OpenAI response failed." {
 		t.Fatalf("unexpected public events: %#v", events)
 	}
 	if requests.Load() != 1 {
@@ -105,7 +105,11 @@ func TestStreamResponseRetriesServerErrorsWithBoundedExponentialBackoff(t *testi
 		return nil
 	}
 
-	result, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, nil)
+	var events []llm.ModelEvent
+	result, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, func(event llm.ModelEvent) error {
+		events = append(events, event)
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("stream response after retries: %v", err)
 	}
@@ -121,6 +125,28 @@ func TestStreamResponseRetriesServerErrorsWithBoundedExponentialBackoff(t *testi
 	for index, delay := range delays {
 		if want := time.Second << index; delay != want {
 			t.Fatalf("retry delay %d = %v, want %v", index, delay, want)
+		}
+	}
+	retryEvents := make([]llm.ModelEvent, 0, maxModelHTTPRetries)
+	for _, event := range events {
+		if event.Type == llm.ModelEventResponseRetrying {
+			retryEvents = append(retryEvents, event)
+		}
+	}
+	if len(retryEvents) != maxModelHTTPRetries {
+		t.Fatalf("retry events = %d, want %d", len(retryEvents), maxModelHTTPRetries)
+	}
+	for index, event := range retryEvents {
+		var payload struct {
+			Attempt     int   `json:"attempt"`
+			MaxAttempts int   `json:"max_attempts"`
+			RetryInMS   int64 `json:"retry_in_ms"`
+		}
+		if err := json.Unmarshal(event.Raw, &payload); err != nil {
+			t.Fatalf("decode retry event %d: %v", index, err)
+		}
+		if payload.Attempt != index+2 || payload.MaxAttempts != maxModelHTTPRetries+1 || payload.RetryInMS != (time.Second<<index).Milliseconds() {
+			t.Fatalf("retry event %d payload = %#v", index, payload)
 		}
 	}
 }
@@ -144,8 +170,11 @@ func TestStreamResponseStopsAfterMaximumServerErrorRetries(t *testing.T) {
 	if !errors.Is(err, llm.ErrUpstreamRequestFailed) || !strings.Contains(err.Error(), "status=502") {
 		t.Fatalf("error = %v, want final 502 failure", err)
 	}
-	if requests.Load() != maxModelHTTPRetries+1 || len(delays) != maxModelHTTPRetries || delays[len(delays)-1] != 128*time.Second {
+	if requests.Load() != maxModelHTTPRetries+1 || len(delays) != maxModelHTTPRetries || delays[len(delays)-1] != 16*time.Second {
 		t.Fatalf("requests = %d delays = %#v", requests.Load(), delays)
+	}
+	if got := llm.PublicUpstreamRequestMessage(err); got != "Upstream OpenAI server request failed: 502 Bad Gateway." {
+		t.Fatalf("public upstream error = %q", got)
 	}
 }
 
@@ -167,6 +196,9 @@ func TestStreamResponseDoesNotRetryClientErrors(t *testing.T) {
 			_, err := client.StreamResponse(t.Context(), llm.ModelRequest{Model: "gpt-test", CredentialID: "credential-1"}, nil)
 			if !errors.Is(err, llm.ErrUpstreamRequestFailed) || !strings.Contains(err.Error(), fmt.Sprintf("status=%d", status)) {
 				t.Fatalf("error = %v, want status %d failure", err, status)
+			}
+			if got := llm.PublicUpstreamRequestMessage(err); got != fmt.Sprintf("Upstream OpenAI request failed: %d %s.", status, http.StatusText(status)) {
+				t.Fatalf("public upstream error = %q", got)
 			}
 			if requests.Load() != 1 {
 				t.Fatalf("requests = %d, want 1", requests.Load())

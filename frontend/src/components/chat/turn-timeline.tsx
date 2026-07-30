@@ -128,7 +128,9 @@ export function getTimelineTitle(item: TimelineItem, isFinalAssistant = false) {
       return isFinalAssistant ? "最终回答" : "进度更新";
     case "status":
     case "commentary":
-      return item.status === "failed" ? "响应失败" : "状态更新";
+      if (item.status === "failed") return "响应失败";
+      if (item.status === "retrying") return "正在重试上游请求";
+      return "状态更新";
     default:
       return "步骤";
   }

@@ -578,7 +578,7 @@ func fallbackStatusItem(turn *domain.Turn) *TurnTimelineItem {
 
 	switch turn.Status {
 	case domain.TurnStatusFailed:
-		_, publicError := presentationFailure(turn.ErrorCode)
+		_, publicError := presentationFailure(turn.ErrorCode, turn.ErrorMessage)
 		createdAt := turn.CreatedAt
 		if turn.FailedAt != nil {
 			createdAt = *turn.FailedAt

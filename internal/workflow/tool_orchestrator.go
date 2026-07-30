@@ -67,6 +67,9 @@ func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, execut
 
 func publicToolRunError(err error) string {
 	if errors.Is(err, llm.ErrUpstreamRequestFailed) {
+		if message := llm.PublicUpstreamRequestMessage(err); message != "" {
+			return message
+		}
 		return domain.TurnPublicErrorUpstreamRequestFailed
 	}
 	return domain.TurnPublicErrorRequestProcessing

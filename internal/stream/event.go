@@ -10,6 +10,7 @@ const (
 	EventResponseCreated      = "response.created"
 	EventResponseCompleted    = "response.completed"
 	EventResponseFailed       = "response.failed"
+	EventResponseRetrying     = "response.retrying"
 	EventReasoningSummary     = "reasoning.summary"
 	EventToolStarted          = "tool.started"
 	EventToolCompleted        = "tool.completed"

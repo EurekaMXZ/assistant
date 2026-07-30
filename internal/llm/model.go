@@ -9,6 +9,37 @@ import (
 
 var ErrUpstreamRequestFailed = errors.New("upstream request failed")
 
+type UpstreamRequestError struct {
+	PublicMessage string
+	Cause         error
+}
+
+func NewUpstreamRequestError(publicMessage string, cause error) error {
+	return &UpstreamRequestError{PublicMessage: strings.TrimSpace(publicMessage), Cause: cause}
+}
+
+func (e *UpstreamRequestError) Error() string {
+	if e == nil || e.Cause == nil {
+		return ErrUpstreamRequestFailed.Error()
+	}
+	return ErrUpstreamRequestFailed.Error() + ": " + e.Cause.Error()
+}
+
+func (e *UpstreamRequestError) Unwrap() []error {
+	if e == nil || e.Cause == nil {
+		return []error{ErrUpstreamRequestFailed}
+	}
+	return []error{ErrUpstreamRequestFailed, e.Cause}
+}
+
+func PublicUpstreamRequestMessage(err error) string {
+	var upstream *UpstreamRequestError
+	if !errors.As(err, &upstream) {
+		return ""
+	}
+	return strings.TrimSpace(upstream.PublicMessage)
+}
+
 const (
 	ModelItemMessage             = "message"
 	ModelItemReasoning           = "reasoning"
@@ -31,6 +62,7 @@ const (
 
 const (
 	ModelIncludeReasoningEncryptedContent = "reasoning.encrypted_content"
+	ModelEventResponseRetrying            = "response.retrying"
 )
 
 type ModelItem struct {

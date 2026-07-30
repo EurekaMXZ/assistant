@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { TurnTimeline } from "./turn-timeline";
+import { TurnTimeline, TurnTimelinePanel } from "./turn-timeline";
 import { TimelineToolPayload } from "./turn-timeline-payloads";
 
 describe("sandbox command output", () => {
@@ -66,5 +66,32 @@ describe("turn timing", () => {
     expect(markup).toContain("whitespace-normal");
     expect(markup).toContain("min-w-0");
     expect(markup).toContain("break-words");
+  });
+});
+
+describe("upstream retry state", () => {
+  it("labels upstream retries in the timeline", () => {
+    const markup = renderToStaticMarkup(
+      <TurnTimelinePanel
+        timeline={{
+          turn_id: "turn-1",
+          conversation_id: "conversation-1",
+          status: "processing",
+          items: [
+            {
+              id: "status:response-retrying:run-1",
+              type: "status",
+              status: "retrying",
+              content_text: "第 2/6 次尝试，1 秒后重试（502 Bad Gateway）",
+              created_at: "2026-07-14T10:00:00Z",
+            },
+          ],
+        }}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("正在重试上游请求");
+    expect(markup).toContain("第 2/6 次尝试，1 秒后重试（502 Bad Gateway）");
   });
 });

@@ -1011,6 +1011,8 @@ Only registered presentation events are returned:
 
 Unknown internal events and unregistered fields are dropped by default.
 
+Retrying a pre-stream upstream request is represented as an `item.upsert` with `type: "status"` and `status: "retrying"`. The same item ID is updated for each retry and remains in the terminal timeline as retry history. Its content includes the attempt, maximum attempts, delay, and a safe HTTP status line; raw upstream response bodies are never returned.
+
 ### Presentation item fields
 
 Presentation items can contain only these fields:
@@ -1096,6 +1098,19 @@ Example:
   "conversation_id": "conv_123",
   "turn_id": "turn_123",
   "response_id": "resp_123"
+}
+```
+
+#### `response.retrying`
+
+Sent before waiting to retry an upstream server error. It is projected into the frontend-facing status item described above, not returned as a raw SSE event.
+
+```json
+{
+  "type": "response.retrying",
+  "conversation_id": "conv_123",
+  "turn_id": "turn_123",
+  "payload": "{\"attempt\":2,\"max_attempts\":6,\"retry_in_ms\":1000,\"status\":\"502 Bad Gateway\"}"
 }
 ```
 
@@ -1302,19 +1317,21 @@ Payload:
 The exact sequence depends on whether tools are used, but a common order is:
 
 1. `response.started`
-2. `response.created`
-3. optional `reasoning.summary`
-4. zero or more `tool.started`
-5. matching `tool.completed` or `tool.failed`
-6. optional side-effect events such as `conversation.updated` or `sandbox.updated`
-7. zero or more `response.output_text.delta`
-8. one terminal event: `response.completed` or `response.failed`
+2. zero or more `response.retrying`
+3. `response.created`
+4. optional `reasoning.summary`
+5. zero or more `tool.started`
+6. matching `tool.completed` or `tool.failed`
+7. optional side-effect events such as `conversation.updated` or `sandbox.updated`
+8. zero or more `response.output_text.delta`
+9. one terminal event: `response.completed` or `response.failed`
 
 Important notes:
 
 - local tool side-effect events usually occur after `tool.completed`
 - remote tool calls may emit only `tool.completed` or `tool.failed`
 - `response.output_text.delta` can appear before or after tool events depending on the model's turn structure
+- a pre-stream HTTP 5xx response is retried at most five times with exponential waits of `1s`, `2s`, `4s`, `8s`, and `16s`
 - frontend code should not hard-code a strict event count
 
 ## Recommended frontend conversation flow

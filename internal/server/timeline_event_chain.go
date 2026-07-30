@@ -38,6 +38,7 @@ func newDefaultTimelineEventChain() *timelineEventChain {
 	return newTimelineEventChain(
 		responseStartedTimelineHandler{},
 		responseCreatedTimelineHandler{},
+		responseRetryingTimelineHandler{},
 		responseOutputItemTimelineHandler{},
 		outputTextDeltaTimelineHandler{},
 		outputTextDoneTimelineHandler{},
@@ -114,6 +115,16 @@ func (responseCreatedTimelineHandler) Handle(reducer *timelineReducer, input nor
 	}
 	responseID = reducer.responseID(responseID)
 	return reducer.appendReasoningForResponse(responseID, true), nil
+}
+
+type responseRetryingTimelineHandler struct{}
+
+func (responseRetryingTimelineHandler) EventTypes() []string {
+	return []string{stream.EventResponseRetrying}
+}
+
+func (responseRetryingTimelineHandler) Handle(reducer *timelineReducer, input normalizedTimelineEvent) ([]timelineMutation, error) {
+	return reducer.reduceResponseRetrying(input.Event, input.CreatedAt), nil
 }
 
 type responseOutputItemTimelineHandler struct{}

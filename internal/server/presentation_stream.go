@@ -326,10 +326,17 @@ func (s *presentationStreamState) frames(mutations []timelineMutation) []present
 	return frames
 }
 
-func presentationFailure(errorCode string) (string, string) {
+func presentationFailure(errorCode string, storedMessage ...string) (string, string) {
 	errorCode = strings.TrimSpace(errorCode)
+	message := ""
+	if len(storedMessage) > 0 {
+		message = strings.TrimSpace(storedMessage[0])
+	}
 	switch errorCode {
 	case domain.TurnErrorUpstreamRequestFailed:
+		if message != "" {
+			return errorCode, message
+		}
 		return errorCode, domain.TurnPublicErrorUpstreamRequestFailed
 	case domain.TurnErrorToolStepLimitExceeded:
 		return errorCode, domain.TurnPublicErrorToolStepLimitExceeded

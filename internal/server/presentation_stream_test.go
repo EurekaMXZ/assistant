@@ -328,6 +328,42 @@ func TestPresentationProviderFailureWaitsForDurableFailure(t *testing.T) {
 	}
 }
 
+func TestPresentationRetryingResponseUpdatesOneStatusItem(t *testing.T) {
+	state := newPresentationStreamState(
+		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
+		newPresentationItemRegistry(),
+		nil,
+	)
+	chain := newPresentationEventChain()
+
+	frames, err := chain.Dispatch(state, stream.Event{
+		Type: stream.EventResponseRetrying, RunID: "run-1",
+		Payload: `{"attempt":2,"max_attempts":6,"retry_in_ms":1000,"status":"502 Bad Gateway"}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("project retry state: %v", err)
+	}
+	if len(frames) != 1 || frames[0].Event != streamUIEventItemUpsert {
+		t.Fatalf("retry frames = %#v", frames)
+	}
+	first, ok := frames[0].Payload.(TurnTimelineItem)
+	if !ok || first.Status != "retrying" || first.ContentText != "第 2/6 次尝试，1 秒后重试（502 Bad Gateway）" {
+		t.Fatalf("retry item = %#v", frames[0].Payload)
+	}
+
+	frames, err = chain.Dispatch(state, stream.Event{
+		Type: stream.EventResponseRetrying, RunID: "run-1",
+		Payload: `{"attempt":3,"max_attempts":6,"retry_in_ms":2000,"status":"502 Bad Gateway"}`,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("update retry state: %v", err)
+	}
+	second, ok := frames[0].Payload.(TurnTimelineItem)
+	if !ok || second.ID != first.ID || second.ContentText != "第 3/6 次尝试，2 秒后重试（502 Bad Gateway）" {
+		t.Fatalf("updated retry item = %#v", frames[0].Payload)
+	}
+}
+
 func TestPresentationStreamMatchesCompressedCompletedOutputToStreamedItem(t *testing.T) {
 	state := newPresentationStreamState(
 		&domain.Turn{ID: "turn-1", ConversationID: "conv-1"},
