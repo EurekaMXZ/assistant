@@ -73,23 +73,21 @@ const (
 )
 
 type Config struct {
-	Host                  string
-	Port                  int
-	ReadTimeout           time.Duration
-	WriteTimeout          time.Duration
-	IdleTimeout           time.Duration
-	ShutdownTimeout       time.Duration
-	WorkerPollInterval    time.Duration
-	WorkerLeaseTimeout    time.Duration
-	LLMClientPollInterval time.Duration
-	ExecutionPollInterval time.Duration
-	LLMClientLeaseTimeout time.Duration
-	ExecutionLeaseTimeout time.Duration
-	WorkerActorBudget     int
-	LLMClientActors       int
-	ExecutionActors       int
-	// WorkerConcurrency is retained as the legacy actor-budget input.
-	WorkerConcurrency           int
+	Host                        string
+	Port                        int
+	ReadTimeout                 time.Duration
+	WriteTimeout                time.Duration
+	IdleTimeout                 time.Duration
+	ShutdownTimeout             time.Duration
+	WorkerPollInterval          time.Duration
+	WorkerLeaseTimeout          time.Duration
+	LLMClientPollInterval       time.Duration
+	ExecutionPollInterval       time.Duration
+	LLMClientLeaseTimeout       time.Duration
+	ExecutionLeaseTimeout       time.Duration
+	WorkerActorBudget           int
+	LLMClientActors             int
+	ExecutionActors             int
 	OutboxBatchSize             int
 	WebOrigin                   string
 	JWTSecret                   string
@@ -170,16 +168,9 @@ type Config struct {
 func Load() Config {
 	_ = godotenv.Load()
 	s3Provider := getenv("S3_PROVIDER", defaultS3Provider)
-	legacyWorkerConcurrency := getenvInt("WORKER_CONCURRENCY", defaultWorkerActorBudget)
-	workerActorBudget := getenvInt("WORKER_ACTOR_BUDGET", legacyWorkerConcurrency)
+	workerActorBudget := getenvInt("WORKER_ACTOR_BUDGET", defaultWorkerActorBudget)
 	llmClientActors := getenvInt("LLM_CLIENT_ACTORS", defaultLLMClientActors)
 	executionActors := getenvInt("EXECUTION_ACTORS", defaultExecutionActors)
-	if strings.TrimSpace(os.Getenv("WORKER_CONCURRENCY")) != "" &&
-		strings.TrimSpace(os.Getenv("WORKER_ACTOR_BUDGET")) == "" &&
-		strings.TrimSpace(os.Getenv("LLM_CLIENT_ACTORS")) == "" &&
-		strings.TrimSpace(os.Getenv("EXECUTION_ACTORS")) == "" {
-		llmClientActors, executionActors = splitWorkerActors(workerActorBudget)
-	}
 	workerPollInterval := getenvDuration("WORKER_POLL_INTERVAL", defaultWorkerPollInterval)
 	workerLeaseTimeout := getenvDuration("WORKER_LEASE_TIMEOUT", defaultWorkerLeaseTimeout)
 
@@ -199,7 +190,6 @@ func Load() Config {
 		WorkerActorBudget:           workerActorBudget,
 		LLMClientActors:             llmClientActors,
 		ExecutionActors:             executionActors,
-		WorkerConcurrency:           legacyWorkerConcurrency,
 		OutboxBatchSize:             getenvInt("OUTBOX_BATCH_SIZE", defaultOutboxBatchSize),
 		WebOrigin:                   strings.TrimSpace(os.Getenv("WEB_ORIGIN")),
 		JWTSecret:                   os.Getenv("AUTH_JWT_SECRET"),
@@ -425,11 +415,7 @@ func (c Config) ValidateWorker() error {
 }
 
 func (c Config) validateWorkerActors() error {
-	actorBudget := c.WorkerActorBudget
-	if actorBudget <= 0 {
-		actorBudget = c.WorkerConcurrency
-	}
-	if actorBudget <= 0 {
+	if c.WorkerActorBudget <= 0 {
 		return errors.New("WORKER_ACTOR_BUDGET must be positive")
 	}
 	if c.LLMClientActors <= 0 {
@@ -438,8 +424,8 @@ func (c Config) validateWorkerActors() error {
 	if c.ExecutionActors <= 0 {
 		return errors.New("EXECUTION_ACTORS must be positive")
 	}
-	if c.LLMClientActors+c.ExecutionActors > actorBudget {
-		return fmt.Errorf("LLM_CLIENT_ACTORS plus EXECUTION_ACTORS must not exceed WORKER_ACTOR_BUDGET (%d)", actorBudget)
+	if c.LLMClientActors+c.ExecutionActors > c.WorkerActorBudget {
+		return fmt.Errorf("LLM_CLIENT_ACTORS plus EXECUTION_ACTORS must not exceed WORKER_ACTOR_BUDGET (%d)", c.WorkerActorBudget)
 	}
 	if c.LLMClientPollInterval <= 0 || c.ExecutionPollInterval <= 0 {
 		return errors.New("LLM_CLIENT_POLL_INTERVAL and EXECUTION_POLL_INTERVAL must be positive")
@@ -594,21 +580,6 @@ func getenvInt(key string, fallback int) int {
 	}
 
 	return parsed
-}
-
-func splitWorkerActors(total int) (int, int) {
-	if total < 2 {
-		return 1, 1
-	}
-	llmActors := total / 2
-	if llmActors < 1 {
-		llmActors = 1
-	}
-	executionActors := total - llmActors
-	if executionActors < 1 {
-		executionActors = 1
-	}
-	return llmActors, executionActors
 }
 
 func getenvTokenEstimateMultiplier(key string, fallback int) int {

@@ -66,8 +66,10 @@ func New(deps Dependencies) *Engine {
 		attachments:     deps.Attachments,
 		attachmentBlobs: deps.AttachmentBlobs,
 	}
-	orchestrator := NewToolOrchestrator(deps.Model, deps.ToolCatalog, deps.ToolExecutor, deps.Streams, deps.ToolArtifacts, deps.ToolCalls)
+	orchestrator := NewToolOrchestrator(deps.Model, deps.ToolCatalog, deps.Streams, deps.ToolArtifacts, deps.ToolCalls)
 	orchestrator.tokenEstimateMultiplier = deps.Settings.TokenEstimateMultiplier
+	executionStore := optionalToolExecutionStore(deps.ToolCalls)
+	executions := NewToolExecutionRunner(deps.ToolExecutor, deps.ToolArtifacts, executionStore, deps.Streams)
 	compactor := &ContextCompactor{
 		settings:    deps.Settings,
 		store:       deps.Contexts,
@@ -103,7 +105,8 @@ func New(deps Dependencies) *Engine {
 			runs:                 deps.TurnRuns,
 			completeEvents:       runEvents,
 			models:               deps.Models,
-			executionStore:       optionalToolExecutionStore(deps.ToolCalls),
+			executionStore:       executionStore,
+			executions:           executions,
 			waitingRuns:          optionalWaitingToolsStore(deps.TurnRuns),
 		},
 		outbox: &OutboxRelay{

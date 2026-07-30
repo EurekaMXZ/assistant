@@ -154,6 +154,23 @@ func (r *ToolCallRepository) ClaimQueuedToolCall(ctx context.Context, toolCallID
 	return record, workflow.ToolCallLease{ToolCallID: record.ID, TurnRunID: record.TurnRunID, Token: token}, nil
 }
 
+func (r *ToolCallRepository) RenewQueuedToolCallLease(ctx context.Context, lease workflow.ToolCallLease) error {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE tool_calls tc
+		SET leased_at = now()
+		WHERE tc.id = $1::uuid AND tc.turn_run_id = $2::uuid
+		  AND tc.status = $3 AND tc.lease_token = $4::uuid
+		  AND EXISTS (SELECT 1 FROM turn_runs tr WHERE tr.id = tc.turn_run_id AND tr.status = $5)
+	`, lease.ToolCallID, lease.TurnRunID, domain.ToolCallStatusRunning, lease.Token, domain.TurnRunStatusWaitingTools)
+	if err != nil {
+		return fmt.Errorf("renew tool call lease: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return domain.ErrConflict
+	}
+	return nil
+}
+
 func (r *ToolCallRepository) CompleteQueuedToolCall(ctx context.Context, lease workflow.ToolCallLease, outputBlobKey string) (*workflow.ToolCallSettlement, error) {
 	return r.settleQueuedToolCall(ctx, lease, domain.ToolCallStatusCompleted, outputBlobKey, "")
 }
@@ -162,25 +179,40 @@ func (r *ToolCallRepository) FailQueuedToolCall(ctx context.Context, lease workf
 	return r.settleQueuedToolCall(ctx, lease, domain.ToolCallStatusFailed, outputBlobKey, message)
 }
 
+func (r *ToolCallRepository) MarkQueuedToolCallUncertain(ctx context.Context, lease workflow.ToolCallLease, outputBlobKey string, message string) (*workflow.ToolCallSettlement, error) {
+	return r.settleQueuedToolCall(ctx, lease, domain.ToolCallStatusUncertain, outputBlobKey, message)
+}
+
 func (r *ToolCallRepository) settleQueuedToolCall(ctx context.Context, lease workflow.ToolCallLease, status string, outputBlobKey string, message string) (*workflow.ToolCallSettlement, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin tool call settlement: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	var runStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT status FROM turn_runs WHERE id = $1::uuid FOR UPDATE
+	`, lease.TurnRunID).Scan(&runStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrConflict
+		}
+		return nil, fmt.Errorf("lock tool call run: %w", err)
+	}
+	if runStatus != domain.TurnRunStatusWaitingTools {
+		return nil, domain.ErrConflict
+	}
 	query := `
 		UPDATE tool_calls tc
 		SET status = $2, output_blob_key = NULLIF($3, ''), error_message = NULLIF($4, ''),
 			completed_at = CASE WHEN $2 = $5 THEN now() ELSE NULL END,
-			failed_at = CASE WHEN $2 = $6 THEN now() ELSE NULL END,
+			failed_at = CASE WHEN $2 = $6 OR $2 = $7 THEN now() ELSE NULL END,
 			cancelled_at = NULL, lease_token = NULL, leased_at = NULL
-		WHERE tc.id = $1::uuid AND tc.turn_run_id = $7::uuid
-		  AND tc.status = $8 AND tc.lease_token = $9::uuid
-		  AND EXISTS (SELECT 1 FROM turn_runs tr WHERE tr.id = tc.turn_run_id AND tr.status = $10)
+		WHERE tc.id = $1::uuid AND tc.turn_run_id = $8::uuid
+		  AND tc.status = $9 AND tc.lease_token = $10::uuid
 		RETURNING ` + toolCallColumns
 	record, err := scanToolCall(tx.QueryRow(ctx, query, lease.ToolCallID, status, outputBlobKey, message,
-		domain.ToolCallStatusCompleted, domain.ToolCallStatusFailed, lease.TurnRunID,
-		domain.ToolCallStatusRunning, lease.Token, domain.TurnRunStatusWaitingTools))
+		domain.ToolCallStatusCompleted, domain.ToolCallStatusFailed, domain.ToolCallStatusUncertain,
+		lease.TurnRunID, domain.ToolCallStatusRunning, lease.Token))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrConflict

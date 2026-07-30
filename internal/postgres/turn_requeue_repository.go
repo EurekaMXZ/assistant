@@ -185,6 +185,90 @@ func (r *StaleTurnRepository) RequeueStaleTurnRuns(ctx context.Context, leaseTim
 	return len(stale), nil
 }
 
+func (r *StaleTurnRepository) RequeueStaleToolCalls(ctx context.Context, leaseTimeout time.Duration) (int, error) {
+	if leaseTimeout <= 0 {
+		leaseTimeout = time.Minute
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("begin stale tool call requeue: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	type staleCall struct {
+		ID             string
+		ConversationID string
+		TurnID         string
+		TurnRunID      string
+		ExecutionGroup int
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT tc.id::text, t.conversation_id::text, tc.turn_id::text, tc.turn_run_id::text, tc.execution_group
+		FROM tool_calls tc
+		JOIN turn_runs tr ON tr.id = tc.turn_run_id
+		JOIN turns t ON t.id = tc.turn_id
+		WHERE tc.status = $1
+		  AND tc.lease_token IS NOT NULL
+		  AND tc.leased_at < now() - $2::interval
+		  AND tr.status = $3
+		  AND t.status = $4
+		ORDER BY tc.leased_at ASC
+		FOR UPDATE OF tc SKIP LOCKED
+		LIMIT 100
+	`, domain.ToolCallStatusRunning, leaseTimeout.String(), domain.TurnRunStatusWaitingTools, domain.TurnStatusProcessing)
+	if err != nil {
+		return 0, fmt.Errorf("select stale tool calls: %w", err)
+	}
+	defer rows.Close()
+
+	var calls []staleCall
+	for rows.Next() {
+		var call staleCall
+		if err := rows.Scan(&call.ID, &call.ConversationID, &call.TurnID, &call.TurnRunID, &call.ExecutionGroup); err != nil {
+			return 0, fmt.Errorf("scan stale tool call: %w", err)
+		}
+		calls = append(calls, call)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate stale tool calls: %w", err)
+	}
+	rows.Close()
+
+	for _, call := range calls {
+		result, err := tx.Exec(ctx, `
+			UPDATE tool_calls
+			SET status = $2, execution_attempt = execution_attempt + 1, lease_token = NULL, leased_at = NULL
+			WHERE id = $1::uuid AND status = $3
+		`, call.ID, domain.ToolCallStatusQueued, domain.ToolCallStatusRunning)
+		if err != nil {
+			return 0, fmt.Errorf("requeue stale tool call: %w", err)
+		}
+		if result.RowsAffected() != 1 {
+			continue
+		}
+		result, err = tx.Exec(ctx, `
+			UPDATE outbox_events
+			SET published_at = NULL, claim_token = NULL, claimed_at = NULL, error_message = NULL
+			WHERE event_type = $1 AND tool_call_id = $2::uuid
+		`, workflow.EventToolCallRequested, call.ID)
+		if err != nil {
+			return 0, fmt.Errorf("requeue tool call event: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			if err := insertOutboxEvent(ctx, tx, outboxInsert{
+				EventType: workflow.EventToolCallRequested, ConversationID: call.ConversationID,
+				TurnID: call.TurnID, TurnRunID: call.TurnRunID, ToolCallID: call.ID, ExecutionGroup: call.ExecutionGroup,
+			}); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit stale tool call requeue: %w", err)
+	}
+	return len(calls), nil
+}
+
 func planStaleTurnTransition(turn staleTurnSnapshot) (staleTurnTransition, error) {
 	if turn.Status != domain.TurnStatusContextReady {
 		return staleTurnTransition{}, domain.ErrConflict

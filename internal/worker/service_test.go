@@ -251,6 +251,17 @@ func TestWorkflowTaskRoleRoutesToolRequestsToExecutionActors(t *testing.T) {
 	}
 }
 
+func TestRequeueLeaseTimeoutUsesEarliestActorLease(t *testing.T) {
+	service := &Service{settings: Settings{
+		WorkerLeaseTimeout:    3 * time.Minute,
+		LLMClientLeaseTimeout: 2 * time.Minute,
+		ExecutionLeaseTimeout: 30 * time.Second,
+	}}
+	if got := service.requeueLeaseTimeout(); got != 30*time.Second {
+		t.Fatalf("requeue lease timeout = %s, want 30s", got)
+	}
+}
+
 func TestCloseWriterHasBoundedWait(t *testing.T) {
 	writer := &blockingWorkflowWriter{
 		started: make(chan struct{}),
@@ -721,7 +732,6 @@ func TestRunDefaultsToOneConsumerAndClosesWriter(t *testing.T) {
 	service := &Service{
 		logger: testLogger(),
 		settings: Settings{
-			WorkerConcurrency:  0,
 			WorkerPollInterval: time.Hour,
 			WorkerLeaseTimeout: 2 * time.Hour,
 		},

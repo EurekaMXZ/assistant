@@ -133,13 +133,17 @@ func (o *ToolOrchestrator) PrepareNextScheduledRunFromToolCalls(ctx context.Cont
 				}
 				output = string(payload)
 			}
-			if record.Status == domain.ToolCallStatusFailed && strings.TrimSpace(output) == "" {
-				output = modelVisibleToolFailure(planned.Call, errors.New(record.ErrorMessage))
+			if (record.Status == domain.ToolCallStatusFailed || record.Status == domain.ToolCallStatusUncertain) && strings.TrimSpace(output) == "" {
+				if record.Status == domain.ToolCallStatusUncertain {
+					output = modelVisibleToolUncertainOutcome(planned.Call, errors.New(record.ErrorMessage))
+				} else {
+					output = modelVisibleToolFailure(planned.Call, errors.New(record.ErrorMessage))
+				}
 			}
 			item := llm.ModelItem{Type: llm.ModelItemFunctionCallOutput, CallID: planned.Call.CallID, Output: output}
 			nextInput = append(nextInput, item)
 			toolResults = append(toolResults, item)
-			if record.Status != domain.ToolCallStatusFailed && record.Status != domain.ToolCallStatusCancelled {
+			if record.Status != domain.ToolCallStatusFailed && record.Status != domain.ToolCallStatusUncertain && record.Status != domain.ToolCallStatusCancelled {
 				nextScope = applyToolScopeDelta(nextScope, planned.Call)
 			}
 		}
@@ -292,84 +296,6 @@ func (o *ToolOrchestrator) RequestScheduledRun(ctx context.Context, state *Sched
 	result, err := o.model.StreamResponse(ctx, state.Request, handler)
 	outcome.Model = result
 	return outcome, err
-}
-
-func (o *ToolOrchestrator) PostprocessScheduledRun(ctx context.Context, run *domain.TurnRun, state *ScheduledRunState, outcome *ScheduledRunOutcome) error {
-	if o == nil || o.model == nil || run == nil || state == nil {
-		return fmt.Errorf("scheduled run postprocessing requires orchestrator, run, and state")
-	}
-	if outcome == nil {
-		return fmt.Errorf("scheduled run postprocessing requires outcome")
-	}
-	result := outcome.Model
-	if result == nil {
-		return fmt.Errorf("scheduled model request returned no result")
-	}
-
-	o.publishReasoningSummary(ctx, state.Scope, run, state.StepIndex, result)
-	functionCalls := normalizeFunctionCallItems(functionCalls(result), state.Request.Tools)
-	approvalRequests := approvalRequests(result)
-	remoteCalls := remoteToolCalls(result)
-	remoteContinuations := remoteContinuationItems(result)
-	if err := o.recordObservedRemoteCalls(ctx, state.Scope, run, remoteCalls); err != nil {
-		return err
-	}
-	if len(approvalRequests) > 0 {
-		return unsupportedApprovalRequestError(approvalRequests[0])
-	}
-	if len(functionCalls) == 0 && len(remoteContinuations) == 0 {
-		if action := firstUnsupportedAction(result); action != nil {
-			return fmt.Errorf("tool action %s is not implemented yet", describeModelItem(*action))
-		}
-		initialInput := state.Request.Input[:state.InitialInputCount]
-		outcome.ContextItems = buildModelContextItems(initialInput, state.Request.Input, result)
-		outcome.Postprocessed = true
-		return nil
-	}
-	if err := o.ensureStepCapabilities(functionCalls); err != nil {
-		return err
-	}
-
-	plan := outcome.ExecutionPlan
-	if plan == nil {
-		var planErr error
-		plan, planErr = buildToolExecutionPlan(run, modelItemsToToolCalls(functionCalls), ToolExecutionPlanOptions{
-			ParallelToolCalls: state.Request.ParallelToolCalls,
-		})
-		if planErr != nil {
-			return planErr
-		}
-		outcome.ExecutionPlan = plan
-	}
-
-	nextInput := append([]llm.ModelItem(nil), state.Request.Input...)
-	nextInput = append(nextInput, o.replayOutputItems(result.OutputItems)...)
-	toolOutputStart := len(nextInput)
-	nextInput, nextScope, err := o.executeLocalToolExecutionPlan(ctx, run, nextInput, state.Scope, plan)
-	outcome.ToolResults = cloneModelItems(nextInput[toolOutputStart:])
-	if err != nil {
-		return err
-	}
-	nextState, nextRequest, err := o.PrepareScheduledRun(ctx, ToolRunInput{
-		Scope: nextScope, Model: state.Request.Model, ContextWindowTokens: state.Request.ContextWindowTokens,
-		Instructions:   state.Request.Instructions,
-		CatalogModelID: state.Request.CatalogModelID, ModelRevision: state.Request.ModelRevision,
-		ModelPriceID: state.Request.ModelPriceID, PricingSnapshot: state.Request.PricingSnapshot,
-		CredentialID: state.Request.CredentialID, ProviderBaseURL: state.Request.ProviderBaseURL,
-		ReasoningEffort: state.Request.ReasoningEffort, ReasoningSummary: state.Request.ReasoningSummary,
-		TextVerbosity:  state.Request.TextVerbosity,
-		DisableTools:   len(state.Request.Tools) == 0,
-		PromptCacheKey: state.Request.PromptCacheKey,
-		Input:          nextInput, MaxOutputTokens: state.Request.MaxOutputTokens,
-		Metadata: state.Request.Metadata, ParallelToolCalls: state.Request.ParallelToolCalls,
-	}, state.StepIndex+1, state.InitialInputCount)
-	if err != nil {
-		return err
-	}
-	outcome.NextState = nextState
-	outcome.NextRequest = nextRequest
-	outcome.Postprocessed = true
-	return nil
 }
 
 func (o *ToolOrchestrator) PersistScheduledRunState(ctx context.Context, scope tool.ToolScope, state *ScheduledRunState, rawRequest json.RawMessage) (string, string, error) {

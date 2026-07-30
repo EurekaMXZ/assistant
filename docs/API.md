@@ -964,6 +964,7 @@ Notes:
 - tool calls are exposed as `summary` and `details`, not raw arguments/output
 - each run represents exactly one upstream model request; `queued`, `running`, `cancel_requested`, `completed`, `failed`, and `cancelled` are valid run states
 - a turn can contain any number of runs, and a stale worker retries only the current run attempt
+- tool-call traces may report `uncertain` when an external side effect was accepted or interrupted without a runtime idempotency or reconciliation guarantee; clients must not treat it as a successful exactly-once operation
 
 ## Stream API
 

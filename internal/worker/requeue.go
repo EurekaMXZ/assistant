@@ -6,13 +6,7 @@ import (
 )
 
 func (s *Service) requeueLoop(ctx context.Context) {
-	leaseTimeout := s.settings.LLMClientLeaseTimeout
-	if leaseTimeout <= 0 {
-		leaseTimeout = s.settings.WorkerLeaseTimeout
-	}
-	if leaseTimeout <= 0 {
-		leaseTimeout = time.Minute
-	}
+	leaseTimeout := s.requeueLeaseTimeout()
 	ticker := time.NewTicker(leaseTimeout / 2)
 	defer ticker.Stop()
 
@@ -35,4 +29,23 @@ func (s *Service) requeueLoop(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Service) requeueLeaseTimeout() time.Duration {
+	timeouts := []time.Duration{
+		s.settings.LLMClientLeaseTimeout,
+		s.settings.ExecutionLeaseTimeout,
+		s.settings.WorkerLeaseTimeout,
+	}
+	minimum := time.Duration(0)
+	for _, timeout := range timeouts {
+		if timeout <= 0 || (minimum > 0 && timeout >= minimum) {
+			continue
+		}
+		minimum = timeout
+	}
+	if minimum <= 0 {
+		return time.Minute
+	}
+	return minimum
 }

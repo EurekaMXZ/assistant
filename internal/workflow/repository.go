@@ -84,6 +84,7 @@ type AttachmentBlobStore interface {
 type StaleTurnRepository interface {
 	RequeueStaleTurns(ctx context.Context, leaseTimeout time.Duration) (int, error)
 	RequeueStaleTurnRuns(ctx context.Context, leaseTimeout time.Duration) (int, error)
+	RequeueStaleToolCalls(ctx context.Context, leaseTimeout time.Duration) (int, error)
 }
 
 type TurnRunLease struct {
@@ -147,8 +148,10 @@ type WaitingToolsTurnRunStore interface {
 type ToolExecutionWorkflowStore interface {
 	ScheduleToolExecutionPlan(ctx context.Context, input ToolExecutionScheduleInput) ([]domain.ToolCallRecord, error)
 	ClaimQueuedToolCall(ctx context.Context, toolCallID string, leaseTimeout time.Duration) (*domain.ToolCallRecord, ToolCallLease, error)
+	RenewQueuedToolCallLease(ctx context.Context, lease ToolCallLease) error
 	CompleteQueuedToolCall(ctx context.Context, lease ToolCallLease, outputBlobKey string) (*ToolCallSettlement, error)
 	FailQueuedToolCall(ctx context.Context, lease ToolCallLease, outputBlobKey string, message string) (*ToolCallSettlement, error)
+	MarkQueuedToolCallUncertain(ctx context.Context, lease ToolCallLease, outputBlobKey string, message string) (*ToolCallSettlement, error)
 	AdvanceToolExecutionGroup(ctx context.Context, turnRunID string, executionGroup int) (*ToolGroupAdvance, error)
 	ListToolCallsByRun(ctx context.Context, turnRunID string) ([]domain.ToolCallRecord, error)
 }

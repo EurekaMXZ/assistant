@@ -20,6 +20,7 @@ const (
 	ToolCallStatusAwaitingInput = "awaiting_input"
 	ToolCallStatusCompleted     = "completed"
 	ToolCallStatusFailed        = "failed"
+	ToolCallStatusUncertain     = "uncertain"
 	ToolCallStatusCancelled     = "cancelled"
 )
 

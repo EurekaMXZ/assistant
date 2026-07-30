@@ -110,9 +110,6 @@ func (s *Service) actorCounts() (int, int) {
 	}
 	legacyBudget := s.settings.WorkerActorBudget
 	if legacyBudget <= 0 {
-		legacyBudget = s.settings.WorkerConcurrency
-	}
-	if legacyBudget <= 0 {
 		legacyBudget = 2
 	}
 	legacyLLM, legacyExecution := splitActorCounts(legacyBudget)

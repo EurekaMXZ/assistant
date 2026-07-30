@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"time"
 )
 
 type StaleTurnRequeuer struct {
@@ -10,13 +11,34 @@ type StaleTurnRequeuer struct {
 }
 
 func (r *StaleTurnRequeuer) Requeue(ctx context.Context) (int, error) {
-	turns, err := r.store.RequeueStaleTurns(ctx, r.settings.WorkerLeaseTimeout)
+	turns, err := r.store.RequeueStaleTurns(ctx, r.llmLeaseTimeout())
 	if err != nil {
 		return 0, err
 	}
-	runs, err := r.store.RequeueStaleTurnRuns(ctx, r.settings.WorkerLeaseTimeout)
+	runs, err := r.store.RequeueStaleTurnRuns(ctx, r.llmLeaseTimeout())
 	if err != nil {
 		return turns, err
 	}
-	return turns + runs, nil
+	calls, err := r.store.RequeueStaleToolCalls(ctx, r.executionLeaseTimeout())
+	if err != nil {
+		return turns + runs, err
+	}
+	return turns + runs + calls, nil
+}
+
+func (r *StaleTurnRequeuer) llmLeaseTimeout() time.Duration {
+	if r != nil && r.settings.LLMClientLeaseTimeout > 0 {
+		return r.settings.LLMClientLeaseTimeout
+	}
+	if r != nil && r.settings.WorkerLeaseTimeout > 0 {
+		return r.settings.WorkerLeaseTimeout
+	}
+	return time.Minute
+}
+
+func (r *StaleTurnRequeuer) executionLeaseTimeout() time.Duration {
+	if r != nil && r.settings.ExecutionLeaseTimeout > 0 {
+		return r.settings.ExecutionLeaseTimeout
+	}
+	return r.llmLeaseTimeout()
 }

@@ -3,10 +3,13 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/EurekaMXZ/assistant/internal/llm"
 	"github.com/EurekaMXZ/assistant/internal/stream"
 )
+
+var ErrOutcomeUncertain = errors.New("tool outcome is uncertain")
 
 type ToolScope struct {
 	ConversationID string `json:"conversation_id"`

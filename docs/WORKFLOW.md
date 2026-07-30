@@ -1,6 +1,6 @@
 # Workflow and Execution Architecture
 
-Status: Proposed
+Status: Implemented
 
 This document describes the target workflow architecture for model requests and tool execution. It complements [STORAGE-PLAN.md](./STORAGE-PLAN.md), which defines the durable storage, artifact, context, and Kafka replay model.
 
@@ -19,33 +19,32 @@ The design does not change the frontend presentation contract. The existing pres
 
 ## 2. Current Implementation
 
-The current system already separates the OpenAI adapter from the tool handlers at the code level:
+The implementation separates the OpenAI adapter from tool planning and execution:
 
 - `internal/openai` sends the model request, parses provider SSE, and returns `llm.ModelResult`/`llm.ModelEvent` values.
 - `internal/tool` contains local tool handlers and the `ToolExecutor` interface.
 - `internal/mcpconfig.CompositeRuntime` dispatches local and user-configured MCP tools.
-- `internal/workflow.ToolOrchestrator` builds model requests, interprets model output, persists tool calls, invokes `ToolExecutor`, and schedules the next model step.
+- `internal/workflow.ToolOrchestrator` builds model requests, interprets model output, and persists durable execution plans.
+- `internal/workflow.ToolExecutionRunner` is the only workflow component that invokes `ToolExecutor` for a claimed queued call.
 
-The main coupling is in `workflow.ToolOrchestrator`. `PostprocessScheduledRun` currently performs all of these responsibilities in one Worker call:
+The model client worker performs one upstream request per `turn_run`. Its postprocessing then performs only durable planning:
 
 1. Interpret the completed model response.
 2. Normalize function tool names.
 3. Select and order local tool calls.
-4. Acquire and persist tool-call records.
-5. Invoke the tool executor directly.
-6. Append tool outputs to the next model request.
-7. Prepare the next `turn_run` state.
+4. Persist queued tool-call records and `tool_call.requested` Outbox events.
+5. Mark the model run `waiting_tools`.
 
-`executeLocalToolCalls` currently executes calls in a synchronous `for` loop. The existing `ask_user` handling moves `ask_user` to the end of the list, but all other calls are still serialized.
+Execution actors claim queued calls independently. When the final group settles, the durable `tool_group.completed` Outbox event schedules the next model request from stored tool outputs. `ask_user` remains its own final execution group.
 
-The existing `WORKER_CONCURRENCY` setting controls in-memory workflow slots. A slot is a long-lived Go goroutine that processes one Kafka workflow event at a time. It is not a durable `turn_run`, and it is not an execution actor.
+`WORKER_ACTOR_BUDGET`, `LLM_CLIENT_ACTORS`, and `EXECUTION_ACTORS` control durable workflow processing capacity. The legacy generic workflow-slot setting has been removed.
 
 Relevant current implementation:
 
 - Workflow consumer slots: `internal/worker/consumer.go`
 - Workflow service configuration: `internal/worker/settings.go`
-- Model request and tool postprocessing: `internal/workflow/tool_run_step.go`
-- Direct local tool execution: `internal/workflow/tool_orchestrator_steps.go`
+- Model request and tool-plan postprocessing: `internal/workflow/tool_run_step.go`
+- Durable tool execution: `internal/workflow/tool_execution_runner.go`
 - Tool dispatch: `internal/tool/executor.go` and `internal/mcpconfig/runtime.go`
 
 ## 3. Target Responsibilities
@@ -344,7 +343,7 @@ Calls with the same exclusive resource key must be placed in ordered groups even
 
 ## 9. Actors and Concurrency
 
-The current `WORKER_CONCURRENCY` is a generic workflow goroutine count. The target design gives the two worker roles separate actor pools.
+The process uses separate actor pools for LLM client and execution roles. No generic workflow goroutine setting controls execution capacity.
 
 In this document, one actor is one long-lived execution slot backed by one Go goroutine. There is no separate coroutine-count setting in the initial design:
 
@@ -434,13 +433,15 @@ The provider request should use a stable idempotency identity when the provider 
 
 ### 12.2 Execution worker crash before tool completion
 
-The execution lease expires. A new execution actor may claim the queued/running tool operation. The stable operation identity must be passed to the tool runtime where the external system supports idempotency.
+Execution actors renew their tool-call lease while a handler runs. If the lease expires, recovery returns the call to `queued`, increments its execution attempt, and resets the durable `tool_call.requested` Outbox event for delivery. A stale actor cannot settle after replacement because every renewal and settlement validates the current lease token.
 
-For an uncertain external side effect, the system must not claim exactly-once execution without a provider/runtime idempotency or reconciliation API. It should mark the operation as uncertain or use a tool-specific reconciliation policy.
+The stable operation identity is passed as `ToolCall.RequestKey` to local runtimes and as `_meta.assistant.operation_id` to MCP `tools/call` requests. MCP servers must explicitly implement deduplication or reconciliation for that metadata; it is not a protocol-level exactly-once guarantee.
+
+For an uncertain external side effect, the system records the terminal `uncertain` status and supplies a model-visible reconciliation warning. It never reports that outcome as exactly-once. A later retry is at-least-once unless the runtime supports the stable operation identity.
 
 ### 12.3 Execution worker crash after tool completion
 
-If the output artifact and durable tool status exist, the next actor must reuse the stored output and not invoke the handler again. Completion event publication must be recoverable from the durable Outbox or complete-event store.
+If the output artifact and durable tool status exist, the next actor reuses the stored output and does not invoke the handler again. Tool settlement locks the parent run, then persists the terminal status and a deduplicated `tool_group.completed` Outbox event in the same transaction. Completion delivery remains recoverable after a worker crash.
 
 ### 12.4 Lease fencing
 
@@ -466,34 +467,34 @@ The LLM client worker continues publishing provider output deltas and response l
 
 ## 14. Migration Plan
 
-### Phase 1: Make the plan explicit
+### Phase 1: Make the plan explicit (implemented)
 
 - Extract model-output interpretation from direct execution.
 - Introduce a durable plan representation and execution groups.
 - Preserve current synchronous behavior behind the new plan interface.
 - Add tests for ordinary parallel groups, serial mode, and `ask_user` as the final group.
 
-### Phase 2: Add execution workflow events
+### Phase 2: Add execution workflow events (implemented)
 
 - Add `tool_call.requested` and group completion workflow events.
 - Add queued/waiting states and Outbox writes.
 - Ensure a model run is not held open while tools execute.
 
-### Phase 3: Split Worker pools
+### Phase 3: Split Worker pools (implemented)
 
 - Route `turn_run.requested` to the LLM client worker pool.
 - Route `tool_call.requested` to the execution worker pool.
 - Add independent actor and lease configuration.
 - Keep per-conversation ordering in the coordinator rather than relying on process affinity.
 
-### Phase 4: Harden recovery
+### Phase 4: Harden recovery (implemented)
 
 - Add tool execution fencing.
 - Add stable operation identities to tool runtimes.
 - Make tool completion events recoverable through Outbox/complete-event transactions.
 - Add crash and uncertain-outcome tests.
 
-### Phase 5: Remove the old path
+### Phase 5: Remove the old path (implemented)
 
 - Remove direct `ToolExecutor` calls from `ToolOrchestrator`.
 - Remove the old synchronous tool loop.

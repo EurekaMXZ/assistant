@@ -46,7 +46,6 @@ type ToolRunResult struct {
 type ToolOrchestrator struct {
 	model                   llm.ModelClient
 	catalog                 tool.ToolCatalog
-	executor                tool.ToolExecutor
 	publisher               stream.Publisher
 	artifacts               ToolArtifactStore
 	calls                   ToolCallStore
@@ -54,11 +53,10 @@ type ToolOrchestrator struct {
 	tokenEstimateMultiplier int
 }
 
-func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, executor tool.ToolExecutor, publisher stream.Publisher, artifacts ToolArtifactStore, calls ToolCallStore) *ToolOrchestrator {
+func NewToolOrchestrator(model llm.ModelClient, catalog tool.ToolCatalog, publisher stream.Publisher, artifacts ToolArtifactStore, calls ToolCallStore) *ToolOrchestrator {
 	return &ToolOrchestrator{
 		model:     model,
 		catalog:   catalog,
-		executor:  executor,
 		publisher: publisher,
 		artifacts: artifacts,
 		calls:     calls,
@@ -452,32 +450,51 @@ func normalizedToolName(call tool.ToolCall) string {
 }
 
 func (o *ToolOrchestrator) publishToolCompleted(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, payload []byte) {
-	if o == nil {
-		return
+	if o != nil {
+		publishToolCompleted(ctx, o.publisher, scope, record, call, payload)
 	}
-	o.publish(ctx, stream.Event{
-		Type:           stream.EventToolCompleted,
-		ConversationID: scope.ConversationID,
-		TurnID:         scope.TurnID,
-		RunID:          recordTurnRunID(record),
-		ToolName:       describeToolCall(call),
-		Payload:        toolEventPayload(record, call, stream.ToolEventStatusCompleted, payload, ""),
-	})
+}
+
+func publishToolCompleted(ctx context.Context, publisher stream.Publisher, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, payload []byte) {
+	publishToolEvent(ctx, publisher, stream.EventToolCompleted, scope, record, call, stream.ToolEventStatusCompleted, "", payload)
 }
 
 func (o *ToolOrchestrator) publishToolFailed(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, message string, payload []byte) {
-	if o == nil {
+	if o != nil {
+		publishToolFailed(ctx, o.publisher, scope, record, call, message, payload)
+	}
+}
+
+func publishToolFailed(ctx context.Context, publisher stream.Publisher, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, message string, payload []byte) {
+	publishToolEvent(ctx, publisher, stream.EventToolFailed, scope, record, call, stream.ToolEventStatusFailed, message, payload)
+}
+
+func (o *ToolOrchestrator) publishToolStarted(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall) {
+	if o != nil {
+		publishToolStarted(ctx, o.publisher, scope, record, call)
+	}
+}
+
+func publishToolStarted(ctx context.Context, publisher stream.Publisher, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall) {
+	publishToolEvent(ctx, publisher, stream.EventToolStarted, scope, record, call, stream.ToolEventStatusStarted, "", nil)
+}
+
+func publishToolEvent(ctx context.Context, publisher stream.Publisher, eventType string, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall, status string, message string, payload []byte) {
+	if publisher == nil {
 		return
 	}
-	o.publish(ctx, stream.Event{
-		Type:           stream.EventToolFailed,
+	event := stream.Event{
+		Type:           eventType,
 		ConversationID: scope.ConversationID,
 		TurnID:         scope.TurnID,
 		RunID:          recordTurnRunID(record),
 		ToolName:       describeToolCall(call),
-		Payload:        toolEventPayload(record, call, stream.ToolEventStatusFailed, payload, message),
-		Error:          strings.TrimSpace(message),
-	})
+		Payload:        toolEventPayload(record, call, status, payload, message),
+	}
+	if eventType == stream.EventToolFailed {
+		event.Error = strings.TrimSpace(message)
+	}
+	_ = publisher.Publish(ctx, event)
 }
 
 func (o *ToolOrchestrator) publishRemoteToolCallEvent(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, item llm.ModelItem) {
@@ -492,11 +509,6 @@ func (o *ToolOrchestrator) publishRemoteToolCallEvent(ctx context.Context, scope
 	} else {
 		o.publishToolCompleted(ctx, scope, record, call, payload)
 	}
-}
-
-func toolEventPayload(record *domain.ToolCallRecord, call tool.ToolCall, status string, payload []byte, message string) string {
-	body := buildToolStreamPayload(record, call, status, payload, strings.TrimSpace(message))
-	return marshalToolStreamPayload(body)
 }
 
 func (o *ToolOrchestrator) publishReasoningSummary(ctx context.Context, scope tool.ToolScope, run *domain.TurnRun, stepIndex int, result *llm.ModelResult) {
@@ -530,18 +542,9 @@ func (o *ToolOrchestrator) publishReasoningSummary(ctx context.Context, scope to
 	})
 }
 
-func (o *ToolOrchestrator) publishToolStarted(ctx context.Context, scope tool.ToolScope, record *domain.ToolCallRecord, call tool.ToolCall) {
-	if o == nil {
-		return
-	}
-	o.publish(ctx, stream.Event{
-		Type:           stream.EventToolStarted,
-		ConversationID: scope.ConversationID,
-		TurnID:         scope.TurnID,
-		RunID:          recordTurnRunID(record),
-		ToolName:       describeToolCall(call),
-		Payload:        toolEventPayload(record, call, stream.ToolEventStatusStarted, nil, ""),
-	})
+func toolEventPayload(record *domain.ToolCallRecord, call tool.ToolCall, status string, payload []byte, message string) string {
+	body := buildToolStreamPayload(record, call, status, payload, strings.TrimSpace(message))
+	return marshalToolStreamPayload(body)
 }
 
 func buildToolStreamPayload(record *domain.ToolCallRecord, call tool.ToolCall, status string, payload []byte, message string) stream.ToolStreamPayload {

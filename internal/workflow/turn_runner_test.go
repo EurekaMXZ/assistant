@@ -173,7 +173,7 @@ func TestTurnRunnerCancellationPublishesTerminalStreamEvent(t *testing.T) {
 func TestTurnRunnerCancellationCancelsProviderContext(t *testing.T) {
 	model := &blockingCancellationModel{started: make(chan struct{})}
 	artifacts := &stubToolArtifactStore{}
-	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, artifacts, nil)
+	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{}, nil, artifacts, nil)
 	state := &ScheduledRunState{
 		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
 		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
@@ -220,86 +220,6 @@ func TestTurnRunnerCancellationCancelsProviderContext(t *testing.T) {
 	}
 }
 
-func TestTurnRunnerPersistsCheckpointAndPausesForAskUser(t *testing.T) {
-	arguments := json.RawMessage(`{"prompt":"Continue?","kind":"single_choice","options":[{"id":"yes","label":"Yes","tone":"primary"},{"id":"cancel","label":"Cancel","tone":"neutral"}]}`)
-	model := &stubModelClient{results: []*llm.ModelResult{{
-		ResponseID: "resp-ask",
-		Usage:      llm.ModelUsage{InputTokens: 7, OutputTokens: 3, TotalTokens: 10},
-		OutputItems: []llm.ModelItem{
-			{Type: llm.ModelItemFunctionCall, CallID: "call-rename", Name: "conversation_rename_title", Arguments: json.RawMessage(`{"title":"Updated"}`)},
-			{Type: llm.ModelItemFunctionCall, CallID: "call-ask", Name: tool.AskUser, Arguments: arguments},
-		},
-	}}}
-	artifacts := &stubToolArtifactStore{}
-	executor := &stubToolExecutor{results: []*tool.ToolExecutionResult{
-		{OutputItem: llm.ModelItem{Type: llm.ModelItemFunctionCallOutput, CallID: "call-rename", Output: `{"renamed":true}`}},
-		{AwaitingInput: &tool.AskUserPrompt{
-			Prompt: "Continue?", Kind: tool.AskUserKindSingleChoice,
-			Options: []tool.AskUserOption{{ID: "yes", Label: "Yes", Tone: tool.AskUserTonePrimary}, {ID: "cancel", Label: "Cancel", Tone: tool.AskUserToneNeutral}},
-		}},
-	}}
-	orchestrator := NewToolOrchestrator(
-		model, &stubToolCatalog{tools: []llm.ModelTool{
-			{Type: llm.ModelToolTypeFunction, Name: "conversation_rename_title"},
-			{Type: llm.ModelToolTypeFunction, Name: tool.AskUser},
-		}}, executor, nil, artifacts, &stubToolCallStore{},
-	)
-	state := &ScheduledRunState{
-		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
-		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
-		Request: llm.ModelRequest{
-			Model: "gpt-test", ContextWindowTokens: 1_000,
-			Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "start"}},
-			Tools: []llm.ModelTool{
-				{Type: llm.ModelToolTypeFunction, Name: "conversation_rename_title"},
-				{Type: llm.ModelToolTypeFunction, Name: tool.AskUser},
-			},
-		},
-	}
-	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{"step":1}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runs := &stubScheduledRunStore{run: &domain.TurnRun{
-		ID: "run-1", TurnID: "turn-1", StepIndex: 1, Attempt: 1,
-		Status: domain.TurnRunStatusQueued, StateBlobKey: stateKey,
-	}}
-	publisher := &recordingPublisher{}
-	runner := &TurnRunner{
-		settings: WorkflowSettings{WorkerLeaseTimeout: time.Hour}, tools: orchestrator,
-		runs: runs, streamHub: publisher, blobs: &stubTurnArtifactStore{},
-	}
-	if err := runner.HandleTurnRunRequested(t.Context(), WorkflowEvent{
-		EventType: EventTurnRunRequested, ConversationID: "conv-1", TurnID: "turn-1", TurnRunID: "run-1",
-	}); err != nil {
-		t.Fatalf("handle ask_user run: %v", err)
-	}
-	if runs.run.Status != domain.TurnRunStatusAwaitingInput || runs.completed != 0 || runs.scheduled != 0 || runs.checkpoints < 2 {
-		t.Fatalf("run state=%#v completed=%d scheduled=%d checkpoints=%d", runs.run, runs.completed, runs.scheduled, runs.checkpoints)
-	}
-	if runs.awaited != 1 || runs.awaitInput.ToolCallID != "record-call-ask" || runs.awaitInput.Usage.TotalTokens != 10 {
-		t.Fatalf("await input settlement = %#v count=%d", runs.awaitInput, runs.awaited)
-	}
-	resultKey := artifacts.TurnRunResultKey("conv-1", "turn-1", 1)
-	outcome, err := orchestrator.LoadScheduledRunOutcome(t.Context(), resultKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if outcome.Postprocessed || outcome.NextState != nil {
-		t.Fatalf("persisted awaiting outcome = %#v", outcome)
-	}
-	if len(outcome.ToolResults) != 1 || outcome.ToolResults[0].CallID != "call-rename" || outcome.ToolResults[0].Output != `{"renamed":true}` {
-		t.Fatalf("persisted ordinary tool results = %#v", outcome.ToolResults)
-	}
-	if len(executor.calls) != 2 || executor.calls[0].CallID != "call-rename" || executor.calls[1].CallID != "call-ask" {
-		t.Fatalf("mixed tool executions = %#v", executor.calls)
-	}
-	lastEvent := publisher.events[len(publisher.events)-1]
-	if lastEvent.Type != stream.EventInteractionAwaiting || lastEvent.ItemID != "ask-user:record-call-ask" {
-		t.Fatalf("awaiting presentation events = %#v", publisher.events)
-	}
-}
-
 func TestTurnRunnerIgnoresAwaitingInputRunUntilAnswered(t *testing.T) {
 	runs := &stubScheduledRunStore{run: &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Status: domain.TurnRunStatusAwaitingInput}}
 	runner := &TurnRunner{runs: runs}
@@ -308,6 +228,41 @@ func TestTurnRunnerIgnoresAwaitingInputRunUntilAnswered(t *testing.T) {
 	}
 	if runs.run.Status != domain.TurnRunStatusAwaitingInput || runs.completed != 0 || runs.checkpoints != 0 {
 		t.Fatalf("awaiting run was processed: %#v", runs)
+	}
+}
+
+func TestTurnRunnerSchedulesDurableToolPlanWithoutExecutingTools(t *testing.T) {
+	model := &stubModelClient{results: []*llm.ModelResult{{
+		ResponseID: "resp-1",
+		OutputItems: []llm.ModelItem{{
+			Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{}`),
+		}},
+	}}}
+	artifacts := &stubToolArtifactStore{}
+	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}}}, nil, artifacts, nil)
+	state := &ScheduledRunState{
+		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
+		Scope:   tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
+		Request: llm.ModelRequest{Model: "gpt-test", ContextWindowTokens: 1_000, Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}}, Tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}}},
+	}
+	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{"step":1}`))
+	if err != nil {
+		t.Fatalf("persist scheduled state: %v", err)
+	}
+	runs := &stubScheduledRunStore{run: &domain.TurnRun{ID: "run-1", TurnID: "turn-1", StepIndex: 1, Attempt: 1, Status: domain.TurnRunStatusQueued, StateBlobKey: stateKey}}
+	executionStore := &stubToolExecutionStore{}
+	runner := &TurnRunner{
+		settings: WorkflowSettings{WorkerLeaseTimeout: time.Hour}, tools: orchestrator,
+		runs: runs, executionStore: executionStore, blobs: &stubTurnArtifactStore{},
+	}
+	if err := runner.HandleTurnRunRequested(t.Context(), WorkflowEvent{EventType: EventTurnRunRequested, ConversationID: "conv-1", TurnID: "turn-1", TurnRunID: "run-1"}); err != nil {
+		t.Fatalf("handle requested run: %v", err)
+	}
+	if len(model.streamRequests) != 1 || executionStore.scheduled == nil || executionStore.scheduled.Plan == nil {
+		t.Fatalf("durable tool plan was not scheduled: model=%d plan=%#v", len(model.streamRequests), executionStore.scheduled)
+	}
+	if runs.completed != 0 || runs.scheduled != 0 {
+		t.Fatalf("LLM run advanced before tools completed: completed=%d scheduled=%d", runs.completed, runs.scheduled)
 	}
 }
 
@@ -523,7 +478,7 @@ func TestTurnRunnerContextReadySchedulesWithoutCallingModel(t *testing.T) {
 		conversations: ownedConversationReader(),
 		profiles:      profiles,
 		models:        &stubTurnExecutionReader{execution: testExecutionSnapshot()},
-		tools:         NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, toolArtifacts, nil),
+		tools:         NewToolOrchestrator(model, &stubToolCatalog{}, nil, toolArtifacts, nil),
 		blobs:         turnArtifacts,
 		runs:          runs,
 	}
@@ -756,7 +711,7 @@ func TestTurnRunnerContextReadyUsesSnapshottedReasoningEffort(t *testing.T) {
 		loader:        &ContextLoader{store: contextStore, cache: cacheStore},
 		conversations: ownedConversationReader(),
 		models:        &stubTurnExecutionReader{execution: execution},
-		tools:         NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, artifacts, nil),
+		tools:         NewToolOrchestrator(model, &stubToolCatalog{}, nil, artifacts, nil),
 		blobs:         &stubTurnArtifactStore{},
 		runs:          &stubScheduledRunStore{},
 	}
@@ -846,63 +801,10 @@ func TestFailTurnCleansGeneratedImageAttachmentsAndObjects(t *testing.T) {
 	}
 }
 
-func TestTurnRunnerRequestedEventExecutesOneRequestThenReschedules(t *testing.T) {
-	model := &stubModelClient{
-		rawRequests: []json.RawMessage{json.RawMessage(`{"step":2}`)},
-		results: []*llm.ModelResult{{
-			ResponseID:  "resp-1",
-			OutputItems: []llm.ModelItem{{Type: llm.ModelItemFunctionCall, CallID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{}`)}},
-		}},
-	}
-	executor := &stubToolExecutor{result: &tool.ToolExecutionResult{OutputItem: llm.ModelItem{
-		Type: llm.ModelItemFunctionCallOutput, CallID: "call-1", Output: `{"ok":true}`,
-	}}}
-	artifacts := &stubToolArtifactStore{}
-	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}}}, executor, &recordingPublisher{}, artifacts, nil)
-	preflight := &recordingScheduledRunPreflight{}
-	orchestrator.preflight = preflight
-	state := &ScheduledRunState{
-		Version: scheduledRunStateVersion, StepIndex: 1, InitialInputCount: 1,
-		Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
-		Request: llm.ModelRequest{
-			Model: "gpt-test", ContextWindowTokens: 1_000,
-			Input: []llm.ModelItem{{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "research"}},
-			Tools: []llm.ModelTool{{Type: llm.ModelToolTypeFunction, Name: "lookup"}},
-		},
-	}
-	stateKey, _, err := orchestrator.PersistScheduledRunState(t.Context(), state.Scope, state, json.RawMessage(`{"step":1}`))
-	if err != nil {
-		t.Fatalf("persist initial state: %v", err)
-	}
-	runs := &stubScheduledRunStore{run: &domain.TurnRun{
-		ID: "run-1", TurnID: "turn-1", StepIndex: 1, Status: domain.TurnRunStatusQueued, StateBlobKey: stateKey,
-	}}
-	runner := &TurnRunner{
-		settings: WorkflowSettings{WorkerLeaseTimeout: time.Hour},
-		tools:    orchestrator, runs: runs, streamHub: &recordingPublisher{}, blobs: &stubTurnArtifactStore{},
-	}
-
-	err = runner.HandleTurnRunRequested(t.Context(), WorkflowEvent{
-		EventType: EventTurnRunRequested, ConversationID: "conv-1", TurnID: "turn-1", TurnRunID: "run-1",
-	})
-	if err != nil {
-		t.Fatalf("handle requested run: %v", err)
-	}
-	if len(model.streamRequests) != 1 {
-		t.Fatalf("model request count = %d, want 1", len(model.streamRequests))
-	}
-	if runs.completed != 1 || runs.scheduled != 1 || runs.checkpoints != 2 {
-		t.Fatalf("completed=%d scheduled=%d checkpoints=%d, want 1, 1, 2", runs.completed, runs.scheduled, runs.checkpoints)
-	}
-	if preflight.calls != 2 {
-		t.Fatalf("preflight calls = %d, want final dispatch and continuation", preflight.calls)
-	}
-}
-
 func TestTurnRunnerResumesCheckpointWithoutCallingModel(t *testing.T) {
 	model := &stubModelClient{}
 	artifacts := &stubToolArtifactStore{}
-	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{}, nil, nil, artifacts, nil)
+	orchestrator := NewToolOrchestrator(model, &stubToolCatalog{}, nil, artifacts, nil)
 	outcome := &ScheduledRunOutcome{
 		Model: &llm.ModelResult{ResponseID: "resp-1"}, Postprocessed: true,
 		NextState: &ScheduledRunState{

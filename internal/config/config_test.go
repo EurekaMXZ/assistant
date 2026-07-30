@@ -105,6 +105,7 @@ func TestLoadReadsStreamReplayTTL(t *testing.T) {
 }
 
 func TestLoadReadsIndependentWorkerActorSettings(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "99")
 	t.Setenv("WORKER_ACTOR_BUDGET", "6")
 	t.Setenv("LLM_CLIENT_ACTORS", "2")
 	t.Setenv("EXECUTION_ACTORS", "4")

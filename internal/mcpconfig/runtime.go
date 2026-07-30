@@ -139,9 +139,13 @@ func (r *CompositeRuntime) executeMCP(ctx context.Context, call tool.ToolCall, r
 		return nil, errors.New("MCP tool transport failed before tools/call completed")
 	}
 	defer closeClientSession(runtimeCtx, session)
-	result, err := session.CallTool(runtimeCtx, &mcpsdk.CallToolParams{Name: runtimeTool.ToolName, Arguments: arguments})
+	params := &mcpsdk.CallToolParams{Name: runtimeTool.ToolName, Arguments: arguments}
+	if operationID := strings.TrimSpace(call.RequestKey); operationID != "" {
+		params.Meta = mcpsdk.Meta{"assistant.operation_id": operationID}
+	}
+	result, err := session.CallTool(runtimeCtx, params)
 	if err != nil {
-		return nil, errors.New("MCP tools/call outcome is uncertain")
+		return nil, fmt.Errorf("%w: MCP tools/call transport failed", tool.ErrOutcomeUncertain)
 	}
 	return runtimeExecutionResult(call.CallID, result)
 }

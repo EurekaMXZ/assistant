@@ -136,10 +136,9 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			ImagePreviewTTL:         cfg.ImagePreviewTTL,
 		},
 		Process: worker.Settings{
-			WorkerActorBudget:     effectiveWorkerActorBudget(cfg),
-			LLMClientActors:       effectiveWorkerActors(cfg).llm,
-			ExecutionActors:       effectiveWorkerActors(cfg).execution,
-			WorkerConcurrency:     cfg.WorkerConcurrency,
+			WorkerActorBudget:     cfg.WorkerActorBudget,
+			LLMClientActors:       cfg.LLMClientActors,
+			ExecutionActors:       cfg.ExecutionActors,
 			WorkerPollInterval:    cfg.WorkerPollInterval,
 			WorkerLeaseTimeout:    cfg.WorkerLeaseTimeout,
 			LLMClientPollInterval: effectivePollInterval(cfg.LLMClientPollInterval, cfg.WorkerPollInterval),
@@ -148,47 +147,6 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			ExecutionLeaseTimeout: effectiveLeaseTimeout(cfg.ExecutionLeaseTimeout, cfg.WorkerLeaseTimeout),
 		},
 	}
-}
-
-func effectiveWorkerActorBudget(cfg config.Config) int {
-	if cfg.WorkerActorBudget > 0 {
-		return cfg.WorkerActorBudget
-	}
-	return cfg.WorkerConcurrency
-}
-
-type workerActorCounts struct {
-	llm       int
-	execution int
-}
-
-func effectiveWorkerActors(cfg config.Config) workerActorCounts {
-	if cfg.LLMClientActors > 0 && cfg.ExecutionActors > 0 {
-		return workerActorCounts{llm: cfg.LLMClientActors, execution: cfg.ExecutionActors}
-	}
-	llm, execution := splitWorkerActors(effectiveWorkerActorBudget(cfg))
-	if cfg.LLMClientActors > 0 {
-		llm = cfg.LLMClientActors
-	}
-	if cfg.ExecutionActors > 0 {
-		execution = cfg.ExecutionActors
-	}
-	return workerActorCounts{llm: llm, execution: execution}
-}
-
-func splitWorkerActors(budget int) (int, int) {
-	if budget < 2 {
-		return 1, 1
-	}
-	llm := budget / 2
-	if llm < 1 {
-		llm = 1
-	}
-	execution := budget - llm
-	if execution < 1 {
-		execution = 1
-	}
-	return llm, execution
 }
 
 func effectivePollInterval(value time.Duration, fallback time.Duration) time.Duration {

@@ -128,9 +128,11 @@ func TestCompositeRuntimeCallsSDKStreamableHTTPTool(t *testing.T) {
 	type toolInput struct {
 		Query string `json:"query"`
 	}
+	var operationID string
 	mcpServer := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "runtime-test", Version: "1.0.0"}, nil)
 	mcpsdk.AddTool(mcpServer, &mcpsdk.Tool{Name: "lookup", Description: "Lookup"},
-		func(_ context.Context, _ *mcpsdk.CallToolRequest, input toolInput) (*mcpsdk.CallToolResult, any, error) {
+		func(_ context.Context, request *mcpsdk.CallToolRequest, input toolInput) (*mcpsdk.CallToolResult, any, error) {
+			operationID, _ = request.Params.Meta["assistant.operation_id"].(string)
 			if input.Query == "fail" {
 				return &mcpsdk.CallToolResult{
 					Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "not found"}}, IsError: true,
@@ -174,13 +176,16 @@ func TestCompositeRuntimeCallsSDKStreamableHTTPTool(t *testing.T) {
 	runtime := &CompositeRuntime{Repository: repository, Cipher: cipher, Client: client}
 
 	result, err := runtime.Execute(t.Context(), tool.ToolScope{OwnerUserID: "owner-1"}, tool.ToolCall{
-		Name: RuntimeToolName(runtimeTool), CallID: "call-1", Arguments: json.RawMessage(`{"query":"hello"}`),
+		Name: RuntimeToolName(runtimeTool), CallID: "call-1", RequestKey: "run-1:call-1", Arguments: json.RawMessage(`{"query":"hello"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Failed || result.OutputItem.Type != llm.ModelItemFunctionCallOutput || !strings.Contains(result.OutputItem.Output, "result:hello") {
 		t.Fatalf("runtime result = %#v", result)
+	}
+	if operationID != "run-1:call-1" {
+		t.Fatalf("MCP operation ID = %q", operationID)
 	}
 
 	failed, err := runtime.Execute(t.Context(), tool.ToolScope{OwnerUserID: "owner-1"}, tool.ToolCall{

@@ -224,7 +224,7 @@ func traceToolErrorMessage(status string, errorMessage string, output []byte) st
 	if errorMessage != "" {
 		return errorMessage
 	}
-	if status != domain.ToolCallStatusFailed {
+	if status != domain.ToolCallStatusFailed && status != domain.ToolCallStatusUncertain {
 		return ""
 	}
 

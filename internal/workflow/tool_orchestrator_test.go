@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EurekaMXZ/assistant/internal/domain"
 	"github.com/EurekaMXZ/assistant/internal/llm"
@@ -254,82 +255,109 @@ func TestNormalizeFunctionCallItemsLeavesAmbiguousBareNameUnchanged(t *testing.T
 	}
 }
 
-func TestFailedToolCallWithoutOutputReturnsModelFailure(t *testing.T) {
-	executor := &stubToolExecutor{}
-	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, &stubToolArtifactStore{}, nil)
-	record := &domain.ToolCallRecord{Status: domain.ToolCallStatusFailed, ErrorMessage: "previous execution ended without a durable tool result"}
-
-	result, err := orchestrator.executeRecordedLocalToolCall(t.Context(), tool.ToolScope{}, record, false, tool.ToolCall{CallID: "call-1", Name: "side-effect"})
-	if err != nil {
-		t.Fatalf("replay failed tool call: %v", err)
-	}
-	if len(executor.calls) != 0 {
-		t.Fatalf("failed tool call executed %d times", len(executor.calls))
-	}
-	if result == nil || !result.Failed || !strings.Contains(result.OutputItem.Output, record.ErrorMessage) {
-		t.Fatalf("failed tool replay = %#v", result)
-	}
+type stubToolExecutionStore struct {
+	scheduled *ToolExecutionScheduleInput
+	completed *ToolCallSettlement
+	failed    *ToolCallSettlement
+	uncertain *ToolCallSettlement
+	renewErr  error
 }
 
-func TestToolExecutionReceivesStableRequestKey(t *testing.T) {
-	executor := &stubToolExecutor{result: &tool.ToolExecutionResult{}}
-	store := &stubToolCallStore{}
-	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, &stubToolArtifactStore{}, store)
-	run := &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 2}
-	call := tool.ToolCall{CallID: "call-1", Name: "side-effect"}
+type blockingToolExecutor struct {
+	started chan struct{}
+}
 
-	if _, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{TurnID: "turn-1"}, []tool.ToolCall{call}); err != nil {
-		t.Fatalf("execute tool call: %v", err)
+func (e *blockingToolExecutor) Execute(ctx context.Context, _ tool.ToolScope, _ tool.ToolCall) (*tool.ToolExecutionResult, error) {
+	close(e.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (s *stubToolExecutionStore) ScheduleToolExecutionPlan(_ context.Context, input ToolExecutionScheduleInput) ([]domain.ToolCallRecord, error) {
+	s.scheduled = &input
+	return nil, nil
+}
+
+func (s *stubToolExecutionStore) ClaimQueuedToolCall(context.Context, string, time.Duration) (*domain.ToolCallRecord, ToolCallLease, error) {
+	return nil, ToolCallLease{}, domain.ErrConflict
+}
+
+func (s *stubToolExecutionStore) RenewQueuedToolCallLease(context.Context, ToolCallLease) error {
+	return s.renewErr
+}
+
+func (s *stubToolExecutionStore) CompleteQueuedToolCall(_ context.Context, lease ToolCallLease, outputBlobKey string) (*ToolCallSettlement, error) {
+	s.completed = &ToolCallSettlement{Record: &domain.ToolCallRecord{ID: lease.ToolCallID, Status: domain.ToolCallStatusCompleted, OutputBlobKey: outputBlobKey}}
+	return s.completed, nil
+}
+
+func (s *stubToolExecutionStore) FailQueuedToolCall(_ context.Context, lease ToolCallLease, outputBlobKey string, message string) (*ToolCallSettlement, error) {
+	s.failed = &ToolCallSettlement{Record: &domain.ToolCallRecord{ID: lease.ToolCallID, Status: domain.ToolCallStatusFailed, OutputBlobKey: outputBlobKey, ErrorMessage: message}}
+	return s.failed, nil
+}
+
+func (s *stubToolExecutionStore) MarkQueuedToolCallUncertain(_ context.Context, lease ToolCallLease, outputBlobKey string, message string) (*ToolCallSettlement, error) {
+	s.uncertain = &ToolCallSettlement{Record: &domain.ToolCallRecord{ID: lease.ToolCallID, Status: domain.ToolCallStatusUncertain, OutputBlobKey: outputBlobKey, ErrorMessage: message}}
+	return s.uncertain, nil
+}
+
+func (s *stubToolExecutionStore) AdvanceToolExecutionGroup(context.Context, string, int) (*ToolGroupAdvance, error) {
+	return nil, nil
+}
+
+func (s *stubToolExecutionStore) ListToolCallsByRun(context.Context, string) ([]domain.ToolCallRecord, error) {
+	return nil, nil
+}
+
+func TestQueuedToolExecutionReceivesStableRequestKey(t *testing.T) {
+	executor := &stubToolExecutor{result: &tool.ToolExecutionResult{}}
+	artifacts := &stubToolArtifactStore{data: map[string][]byte{"arguments": []byte(`{}`)}}
+	store := &stubToolExecutionStore{}
+	runner := NewToolExecutionRunner(executor, artifacts, store, nil)
+	record := &domain.ToolCallRecord{
+		ID: "tool-call-1", TurnRunID: "run-1", CallID: "call-1", ToolName: "side-effect",
+		ArgumentsBlobKey: "arguments", StableOperationID: "run-1:call-1",
 	}
-	if len(executor.calls) != 1 || executor.calls[0].RequestKey != "run-1:call-1" {
+	if _, _, err := runner.ExecuteQueuedToolCall(t.Context(), tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, record, ToolCallLease{ToolCallID: record.ID, TurnRunID: record.TurnRunID, Token: "lease-1"}, time.Minute); err != nil {
+		t.Fatalf("execute queued tool call: %v", err)
+	}
+	if len(executor.calls) != 1 || executor.calls[0].RequestKey != record.StableOperationID {
 		t.Fatalf("request key not propagated: %#v", executor.calls)
 	}
-}
-
-func TestToolFailureReturnsModelOutputAndReplaysIt(t *testing.T) {
-	executor := &stubToolExecutor{err: fmt.Errorf("temporary lookup failure")}
-	artifacts := &stubToolArtifactStore{}
-	store := &stubToolCallStore{}
-	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, artifacts, store)
-	run := &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}
-	call := tool.ToolCall{CallID: "call-1", Namespace: "sandbox", Name: "create"}
-
-	input, scope, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call})
-	if err != nil {
-		t.Fatalf("execute failed tool call: %v", err)
-	}
-	if len(input) != 1 || input[0].Type != llm.ModelItemFunctionCallOutput || !strings.Contains(input[0].Output, `"type":"tool_execution_failed"`) || strings.Contains(input[0].Output, "recoverable") {
-		t.Fatalf("model-visible failure output = %#v", input)
-	}
-	if scope.HasSandbox {
-		t.Fatal("failed sandbox.create changed sandbox scope")
-	}
-	if len(store.failed) != 1 || store.recordsByID["record-call-1"].Status != domain.ToolCallStatusFailed {
-		t.Fatalf("failed tool call was not persisted: store=%#v", store)
-	}
-
-	executor.calls = nil
-	replayed, _, err := orchestrator.executeLocalToolCalls(t.Context(), run, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{call})
-	if err != nil {
-		t.Fatalf("replay failed tool call: %v", err)
-	}
-	if len(executor.calls) != 0 || len(replayed) != 1 || replayed[0].Output != input[0].Output {
-		t.Fatalf("failed tool replay = %#v, executor calls = %#v", replayed, executor.calls)
+	if store.completed == nil {
+		t.Fatal("completed settlement was not recorded")
 	}
 }
 
-func TestToolFailureWithUncertainOutcomeReturnsModelOutput(t *testing.T) {
-	executor := &stubToolExecutor{err: errors.New("connection dropped after request")}
-	store := &stubToolCallStore{}
-	orchestrator := NewToolOrchestrator(nil, nil, executor, nil, &stubToolArtifactStore{}, store)
-	input, _, err := orchestrator.executeLocalToolCalls(t.Context(), &domain.TurnRun{ID: "run-1", TurnID: "turn-1", Attempt: 1}, nil, tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, []tool.ToolCall{{CallID: "call-1", Namespace: "sandbox", Name: "create"}})
-	if err != nil {
-		t.Fatalf("execute uncertain tool outcome: %v", err)
+func TestQueuedToolExecutionMarksUncertainOutcome(t *testing.T) {
+	executor := &stubToolExecutor{err: fmt.Errorf("%w: connection dropped after request", tool.ErrOutcomeUncertain)}
+	artifacts := &stubToolArtifactStore{data: map[string][]byte{"arguments": []byte(`{}`)}}
+	store := &stubToolExecutionStore{}
+	runner := NewToolExecutionRunner(executor, artifacts, store, nil)
+	record := &domain.ToolCallRecord{ID: "tool-call-1", TurnRunID: "run-1", CallID: "call-1", ToolName: "side-effect", ArgumentsBlobKey: "arguments", StableOperationID: "run-1:call-1"}
+	if _, _, err := runner.ExecuteQueuedToolCall(t.Context(), tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, record, ToolCallLease{ToolCallID: record.ID, TurnRunID: record.TurnRunID, Token: "lease-1"}, time.Minute); err != nil {
+		t.Fatalf("execute uncertain tool call: %v", err)
 	}
-	if len(input) != 1 || !strings.Contains(input[0].Output, "connection dropped after request") {
-		t.Fatalf("model-visible uncertain failure = %#v", input)
+	if store.uncertain == nil || store.failed != nil || store.uncertain.Record.Status != domain.ToolCallStatusUncertain {
+		t.Fatalf("uncertain settlement = %#v failed=%#v", store.uncertain, store.failed)
 	}
-	if len(store.failed) != 1 || store.recordsByID["record-call-1"].Status != domain.ToolCallStatusFailed {
-		t.Fatalf("uncertain tool outcome was not persisted as failed: %#v", store)
+	output := string(artifacts.data[store.uncertain.Record.OutputBlobKey])
+	if !strings.Contains(output, `"type":"tool_execution_uncertain"`) {
+		t.Fatalf("uncertain model output = %s", output)
+	}
+}
+
+func TestQueuedToolExecutionCancelsWhenLeaseIsFenced(t *testing.T) {
+	executor := &blockingToolExecutor{started: make(chan struct{})}
+	artifacts := &stubToolArtifactStore{data: map[string][]byte{"arguments": []byte(`{}`)}}
+	store := &stubToolExecutionStore{renewErr: domain.ErrConflict}
+	runner := NewToolExecutionRunner(executor, artifacts, store, nil)
+	record := &domain.ToolCallRecord{ID: "tool-call-1", TurnRunID: "run-1", CallID: "call-1", ToolName: "side-effect", ArgumentsBlobKey: "arguments", StableOperationID: "run-1:call-1"}
+	_, _, err := runner.ExecuteQueuedToolCall(t.Context(), tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"}, record, ToolCallLease{ToolCallID: record.ID, TurnRunID: record.TurnRunID, Token: "lease-1"}, 30*time.Millisecond)
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("fenced execution error = %v, want lease conflict", err)
+	}
+	if store.completed != nil || store.failed != nil || store.uncertain != nil {
+		t.Fatalf("fenced execution settled tool call: %#v", store)
 	}
 }
