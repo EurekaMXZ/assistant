@@ -310,7 +310,10 @@ export function MessageList({
       onDisclaimerCoveredChange?.(isMessageAreaCoveringDisclaimer(viewport));
       setShowScrollToBottom(!isViewportNearBottom(viewport, 1));
     };
-    if (scrollTargetMessageId) return;
+    if (scrollTargetMessageId) {
+      latestUserMessageIdRef.current = latestUserMessageId;
+      return;
+    }
     if (messages.length === 0) {
       shouldFollowRef.current = true;
       lastScrollTopRef.current = 0;

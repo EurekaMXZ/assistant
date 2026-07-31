@@ -103,6 +103,104 @@ describe("message turn variants", () => {
   });
 });
 
+describe("message navigation positioning", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does not re-anchor after replacing the window from a remote turn page", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const renderMessageList = (nextMessages: Message[], scrollTargetMessageId?: string) => (
+      <MessageList
+        messages={nextMessages}
+        scrollTargetMessageId={scrollTargetMessageId}
+        onEditMessage={() => undefined}
+        onAnswerInteraction={async () => true}
+        onOpenTimeline={() => undefined}
+        onRetryMessage={() => undefined}
+        onScrollTargetComplete={() => undefined}
+        onActiveTurnChange={() => undefined}
+        onDisclaimerCoveredChange={() => undefined}
+      />
+    );
+
+    await act(async () => root.render(renderMessageList([])));
+    const viewport = container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    expect(viewport).not.toBeNull();
+    if (!viewport) return;
+
+    let scrollTop = 0;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      viewport.scrollTop = top || 0;
+    });
+    Object.defineProperty(viewport, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+
+    await act(async () =>
+      root.render(
+        renderMessageList([
+          message("old-user", "user", 1, "old-turn"),
+          message("old-answer", "assistant", 2, "old-turn"),
+        ]),
+      ),
+    );
+    scrollTo.mockClear();
+
+    await act(async () =>
+      root.render(
+        renderMessageList(
+          [
+            message("target-user", "user", 10, "target-turn"),
+            message("target-answer", "assistant", 11, "target-turn"),
+            message("window-last-user", "user", 12, "window-last-turn"),
+            message("window-last-answer", "assistant", 13, "window-last-turn"),
+          ],
+          "target-user",
+        ),
+      ),
+    );
+    const callsAfterTargetScroll = scrollTo.mock.calls.length;
+
+    await act(async () =>
+      root.render(
+        renderMessageList([
+          message("target-user", "user", 10, "target-turn"),
+          message("target-answer", "assistant", 11, "target-turn"),
+          message("window-last-user", "user", 12, "window-last-turn"),
+          message("window-last-answer", "assistant", 13, "window-last-turn"),
+        ]),
+      ),
+    );
+
+    expect(scrollTo).toHaveBeenCalledTimes(callsAfterTargetScroll);
+    await act(async () => root.unmount());
+    container.remove();
+  });
+});
+
 describe("user message presentation", () => {
   it("renders user content as plain text instead of Markdown", () => {
     const userMessage = {

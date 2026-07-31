@@ -4,6 +4,13 @@ const testGlobal = globalThis as typeof globalThis & {
 
 testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
 
+if (
+  typeof HTMLElement !== "undefined" &&
+  typeof HTMLElement.prototype.getAnimations !== "function"
+) {
+  HTMLElement.prototype.getAnimations = () => [];
+}
+
 if (typeof globalThis.requestAnimationFrame !== "function") {
   globalThis.requestAnimationFrame = (callback) =>
     window.setTimeout(() => callback(performance.now()), 0);
