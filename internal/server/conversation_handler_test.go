@@ -165,6 +165,50 @@ func TestListConversationEventsUsesDecimalCursors(t *testing.T) {
 	}
 }
 
+func TestListTurnSummariesUsesTurnCursorsAndQuery(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{ListTurnSummaries: func(_ context.Context, ownerID string, conversationID string, limit int, before int64, after int64, query string) (*ConversationTurnPage, error) {
+			if ownerID != "user-1" || conversationID != "conversation-1" || limit != 25 || before != 101 || after != 0 || query != "hello" {
+				t.Fatalf("unexpected turn query: owner=%s conversation=%s limit=%d before=%d after=%d query=%q", ownerID, conversationID, limit, before, after, query)
+			}
+			return &ConversationTurnPage{
+				Items:      []domain.ConversationTurnSummary{{ID: "turn-1", ConversationID: conversationID, Seq: 100, Status: domain.TurnStatusCompleted}},
+				NextBefore: "100", HasMoreBefore: true,
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/conversation-1/turns?limit=25&before=101&query=hello", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"seq":100`) || !strings.Contains(rec.Body.String(), `"next_before":"100"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetTurnContextReturnsTurnWindowAndEvents(t *testing.T) {
+	srv := newTestServer(UseCases{
+		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
+		Conversations: ConversationUseCases{GetTurnContext: func(_ context.Context, ownerID string, conversationID string, turnSeq int64, before int, after int, beforeSeq int64, afterSeq int64) (*ConversationTurnContextPage, error) {
+			if ownerID != "user-1" || conversationID != "conversation-1" || turnSeq != 42 || before != 2 || after != 4 || beforeSeq != 0 || afterSeq != 0 {
+				t.Fatalf("unexpected turn context query: owner=%s conversation=%s turn=%d before=%d after=%d before_seq=%d after_seq=%d", ownerID, conversationID, turnSeq, before, after, beforeSeq, afterSeq)
+			}
+			return &ConversationTurnContextPage{
+				Turns:  []domain.ConversationTurnSummary{{ID: "turn-42", ConversationID: conversationID, Seq: 42, Status: domain.TurnStatusCompleted}},
+				Events: []domain.ConversationEvent{{ID: "event-1", ConversationID: conversationID, TurnID: "turn-42", EventSeq: 100, EventKey: "message:1", SchemaVersion: 1, EventType: "message.completed", Payload: []byte(`{"message":{}}`)}},
+			}, nil
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/conversation-1/turn-history?turn_seq=42&before=2&after=4", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"turn-42"`) || !strings.Contains(rec.Body.String(), `"event_seq":"100"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCancelTurnRequestsCancellation(t *testing.T) {
 	srv := newTestServer(UseCases{
 		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},

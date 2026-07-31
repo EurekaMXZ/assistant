@@ -13,11 +13,13 @@ import { MessageList } from "./message-list";
 import { RenameDialog } from "./rename-dialog";
 import { TimelineDialog } from "./timeline-dialog";
 import { TurnTimelinePanel } from "./turn-timeline";
+import { TurnNavigator } from "./turn-navigator";
 
 export function ChatView({ controller }: { controller: ChatController }) {
   const [disclaimerCovered, setDisclaimerCovered] = useState(false);
   const {
     attachments,
+    activeNavigationTurnId,
     authLoading,
     closeTimeline,
     composerHeight,
@@ -32,7 +34,10 @@ export function ChatView({ controller }: { controller: ChatController }) {
     handleAnswerInteraction,
     handleCancelGeneration,
     handleEditMessage,
-    handleLoadOlderEvents,
+    handleLoadOlderMessages,
+    handleLoadNewerTurnContext,
+    handleLoadOlderTurnSummaries,
+    handleJumpToTurn,
     handleOpenTimeline,
     handleRename,
     handleRetryMessage,
@@ -40,9 +45,13 @@ export function ChatView({ controller }: { controller: ChatController }) {
     handleShare,
     handleUploadFiles,
     hasOlderEvents,
+    hasNewerTurnContext,
+    hasOlderTurnSummaries,
     isCancelling,
     isLoading,
     isLoadingOlderEvents,
+    isLoadingNewerTurnContext,
+    isLoadingTurnSummaries,
     isMobileViewport,
     isSharing,
     isStreaming,
@@ -59,9 +68,13 @@ export function ChatView({ controller }: { controller: ChatController }) {
     shareOpen,
     streamConnectionState,
     streamingTurnId,
+    scrollTargetMessageId,
+    handleScrollTargetComplete,
+    handleActiveNavigationTurnChange,
     timelineActivityLabels,
     timelinePanelProps,
     timelineTurnId,
+    turnSummaries,
     turnsById,
     visualViewportBottomInset,
   } = controller;
@@ -113,18 +126,34 @@ export function ChatView({ controller }: { controller: ChatController }) {
             <MessageList
               activityLabels={timelineActivityLabels}
               hasOlderMessages={hasOlderEvents}
+              hasNewerMessages={hasNewerTurnContext}
               loadingOlderMessages={isLoadingOlderEvents}
+              loadingNewerMessages={isLoadingNewerTurnContext}
               messages={displayMessages}
               bottomInset={composerHeight + visualViewportBottomInset}
               onEditMessage={handleEditMessage}
               onDisclaimerCoveredChange={setDisclaimerCovered}
               onAnswerInteraction={handleAnswerInteraction}
-              onLoadOlderMessages={handleLoadOlderEvents}
+              onLoadOlderMessages={handleLoadOlderMessages}
+              onLoadNewerMessages={handleLoadNewerTurnContext}
+              onActiveTurnChange={handleActiveNavigationTurnChange}
               onOpenTimeline={handleOpenTimeline}
               onRetryMessage={handleRetryMessage}
               dimmed={Boolean(editingMessage)}
               streamingTurnId={streamingTurnId}
+              scrollTargetMessageId={scrollTargetMessageId}
+              onScrollTargetComplete={handleScrollTargetComplete}
               turnsById={turnsById}
+            />
+
+            <TurnNavigator
+              activeTurnId={activeNavigationTurnId}
+              hasMoreOlder={hasOlderTurnSummaries}
+              loading={isLoadingTurnSummaries}
+              loadingMore={isLoadingTurnSummaries}
+              onLoadMoreOlder={handleLoadOlderTurnSummaries}
+              onSelect={handleJumpToTurn}
+              turns={turnSummaries}
             />
 
             <div

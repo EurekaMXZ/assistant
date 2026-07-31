@@ -296,6 +296,37 @@ export const conversationEventPageSchema = z.object({
   has_more_after: z.boolean(),
 });
 
+export const conversationTurnSummarySchema = z.object({
+  id: z.string(),
+  conversation_id: z.string(),
+  seq: z.number().int(),
+  retry_of_turn_id: z.string().optional(),
+  variant_index: z.number().int().positive(),
+  status: turnStatusSchema,
+  user_message: messageSchema.optional(),
+  first_event_seq: z.number().int().nonnegative().optional(),
+  last_event_seq: z.number().int().nonnegative().optional(),
+  created_at: dateTime,
+  updated_at: dateTime,
+});
+
+export const conversationTurnPageSchema = z.object({
+  turns: z.array(conversationTurnSummarySchema),
+  next_before: z.string().optional(),
+  next_after: z.string().optional(),
+  has_more_before: z.boolean(),
+  has_more_after: z.boolean(),
+});
+
+export const conversationTurnHistoryPageSchema = z.object({
+  turns: z.array(conversationTurnSummarySchema),
+  events: z.array(conversationEventSchema),
+  next_before: z.string().optional(),
+  next_after: z.string().optional(),
+  has_more_before: z.boolean(),
+  has_more_after: z.boolean(),
+});
+
 export const conversationShareSnapshotSchema = z.object({
   id: z.string(),
   title: z.string().optional(),

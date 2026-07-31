@@ -230,6 +230,33 @@ func buildApplication(pool *pgxpool.Pool, toolArtifacts workflow.ToolArtifactSto
 				}
 				return messageRepository.ListMessages(ctx, conversationID, limit)
 			},
+			ListTurnSummaries: func(ctx context.Context, ownerUserID string, conversationID string, limit int, beforeSeq int64, afterSeq int64, query string) (*server.ConversationTurnPage, error) {
+				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
+					return nil, err
+				}
+				if limit <= 0 {
+					limit = 50
+				} else if limit > 200 {
+					limit = 200
+				}
+				return listConversationTurnSummariesPage(ctx, turnRepository, conversationID, limit, beforeSeq, afterSeq, query)
+			},
+			GetTurnContext: func(ctx context.Context, ownerUserID string, conversationID string, turnSeq int64, beforeLimit int, afterLimit int, beforeSeq int64, afterSeq int64) (*server.ConversationTurnContextPage, error) {
+				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
+					return nil, err
+				}
+				if beforeLimit <= 0 {
+					beforeLimit = 3
+				} else if beforeLimit > 20 {
+					beforeLimit = 20
+				}
+				if afterLimit <= 0 {
+					afterLimit = 3
+				} else if afterLimit > 20 {
+					afterLimit = 20
+				}
+				return getConversationTurnContextPage(ctx, turnRepository, conversationEventRepository, conversationID, turnSeq, beforeLimit, afterLimit, beforeSeq, afterSeq)
+			},
 			ListConversationEvents: func(ctx context.Context, ownerUserID string, conversationID string, limit int, beforeSeq int64, afterSeq int64) (*server.ConversationEventPage, error) {
 				if _, err := ensureOwnedConversation(ctx, ownerUserID, conversationID); err != nil {
 					return nil, err

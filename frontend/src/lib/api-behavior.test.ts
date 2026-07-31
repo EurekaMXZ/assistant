@@ -12,12 +12,14 @@ import {
   disableAdminBillingRedemptionCode,
   getAdminOverview,
   getConversationShare,
+  getConversationTurnHistory,
   getStorageOverview,
   getStreamUrl,
   handleSessionUnauthorized,
   issueAdminBillingRedemptionCodes,
   isSessionUnauthorizedError,
   listAdminUsersPage,
+  listConversationTurnSummaries,
   redeemBillingCode,
   updateAdminBillingToolPrices,
 } from "./api";
@@ -253,6 +255,67 @@ describe("conversation sharing", () => {
 
     expect(result.messages[0]?.content_text).toBe("hello");
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/conversation-shares/share%2F1");
+  });
+});
+
+describe("turn navigation APIs", () => {
+  const page = {
+    turns: [
+      {
+        id: "turn-1",
+        conversation_id: "conversation-1",
+        seq: 4,
+        variant_index: 1,
+        status: "completed",
+        user_message: {
+          id: "message-1",
+          conversation_id: "conversation-1",
+          turn_id: "turn-1",
+          seq: 4,
+          role: "user",
+          content_text: "hello",
+          metadata: {},
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        first_event_seq: 20,
+        last_event_seq: 25,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+    events: [],
+    has_more_before: true,
+    has_more_after: false,
+    next_before: "3",
+  };
+
+  it("requests turn summaries with a user-input query", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(page));
+
+    const result = await listConversationTurnSummaries("conversation-1", {
+      limit: 50,
+      before: "10",
+      query: "hello",
+    });
+
+    expect(result.turns[0]?.user_message?.content_text).toBe("hello");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/conversations/conversation-1/turns?limit=50&before=10&query=hello",
+    );
+  });
+
+  it("requests a centered turn history window", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(page));
+
+    await getConversationTurnHistory("conversation-1", {
+      turnSeq: 4,
+      before: 3,
+      after: 3,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/conversations/conversation-1/turn-history?turn_seq=4&before=3&after=3",
+    );
   });
 });
 

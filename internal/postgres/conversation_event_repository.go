@@ -174,6 +174,49 @@ func (r *ConversationEventRepository) ListConversationEventsByTurn(ctx context.C
 	return events, nil
 }
 
+func (r *ConversationEventRepository) ListConversationEventsByTurnSeqRange(ctx context.Context, conversationID string, fromTurnSeq int64, toTurnSeq int64) ([]domain.ConversationEvent, error) {
+	if fromTurnSeq <= 0 || toTurnSeq <= 0 || fromTurnSeq > toTurnSeq {
+		return []domain.ConversationEvent{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT e.id::text, e.conversation_id::text, e.turn_id::text, e.turn_run_id::text,
+			e.event_seq, e.event_key, e.schema_version, e.event_type, e.payload, e.context_included, e.created_at
+		FROM conversation_events AS e
+		JOIN turns AS t
+			ON t.id = e.turn_id
+			AND t.conversation_id = e.conversation_id
+		WHERE e.conversation_id = $1::uuid
+			AND t.seq BETWEEN $2 AND $3
+		ORDER BY e.event_seq ASC
+	`, conversationID, fromTurnSeq, toTurnSeq)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation events by turn sequence range: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]domain.ConversationEvent, 0)
+	for rows.Next() {
+		var event domain.ConversationEvent
+		var turnID, runID *string
+		if err := rows.Scan(&event.ID, &event.ConversationID, &turnID, &runID, &event.EventSeq,
+			&event.EventKey, &event.SchemaVersion, &event.EventType, &event.Payload,
+			&event.ContextIncluded, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan conversation event by turn sequence range: %w", err)
+		}
+		if turnID != nil {
+			event.TurnID = *turnID
+		}
+		if runID != nil {
+			event.TurnRunID = *runID
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation events by turn sequence range: %w", err)
+	}
+	return events, nil
+}
+
 func (r *ConversationEventRepository) ListConversationEventsByRun(ctx context.Context, runID string) ([]domain.ConversationEvent, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id::text, conversation_id::text, turn_id::text, turn_run_id::text,
 		event_seq, event_key, schema_version, event_type, payload, context_included, created_at

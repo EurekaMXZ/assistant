@@ -426,6 +426,37 @@ export interface ConversationEventPage {
   has_more_after: boolean;
 }
 
+export interface ConversationTurnSummary {
+  id: string;
+  conversation_id: string;
+  seq: number;
+  retry_of_turn_id?: string;
+  variant_index: number;
+  status: TurnStatus;
+  user_message?: Message;
+  first_event_seq?: number;
+  last_event_seq?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationTurnPage {
+  turns: ConversationTurnSummary[];
+  next_before?: string;
+  next_after?: string;
+  has_more_before: boolean;
+  has_more_after: boolean;
+}
+
+export interface ConversationTurnHistoryPage {
+  turns: ConversationTurnSummary[];
+  events: ConversationEvent[];
+  next_before?: string;
+  next_after?: string;
+  has_more_before: boolean;
+  has_more_after: boolean;
+}
+
 export type TurnStatus =
   | "accepted"
   | "context_ready"

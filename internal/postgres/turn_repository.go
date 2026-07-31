@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,200 @@ type CreateUserTurnParams struct {
 
 func NewTurnRepository(pool *pgxpool.Pool) *TurnRepository {
 	return &TurnRepository{pool: pool}
+}
+
+const conversationTurnSummarySelect = `
+	SELECT
+		t.id::text,
+		t.conversation_id::text,
+		t.seq AS seq,
+		COALESCE(t.retry_of_turn_id::text, ''),
+		t.variant_index,
+		t.status,
+		t.created_at,
+		t.updated_at,
+		user_message.id::text,
+		user_message.conversation_id::text,
+		user_message.turn_id::text,
+		user_message.seq AS user_message_seq,
+		user_message.role,
+		LEFT(COALESCE(user_message.content_text, ''), 512),
+		user_message.token_count,
+		COALESCE(user_message.metadata, '{}'::jsonb),
+		user_message.context_excluded,
+		user_message.created_at,
+		COALESCE(event_bounds.first_event_seq, 0),
+		COALESCE(event_bounds.last_event_seq, 0)
+	FROM turns AS t
+	LEFT JOIN LATERAL (
+		SELECT id, conversation_id, turn_id, seq, role, content_text,
+			token_count, metadata, context_excluded, created_at
+		FROM messages
+		WHERE conversation_id = t.conversation_id
+			AND turn_id = t.id
+			AND role = 'user'
+		ORDER BY seq ASC
+		LIMIT 1
+	) AS user_message ON true
+	LEFT JOIN LATERAL (
+		SELECT MIN(event_seq) AS first_event_seq, MAX(event_seq) AS last_event_seq
+		FROM conversation_events
+		WHERE conversation_id = t.conversation_id
+			AND turn_id = t.id
+	) AS event_bounds ON true`
+
+func (r *TurnRepository) ListConversationTurnSummaries(ctx context.Context, conversationID string, limit int, beforeSeq int64, afterSeq int64, queryText string) ([]domain.ConversationTurnSummary, error) {
+	conditions := []string{"t.conversation_id = $1::uuid"}
+	args := []any{conversationID}
+	if beforeSeq > 0 {
+		args = append(args, beforeSeq)
+		conditions = append(conditions, fmt.Sprintf("t.seq < $%d", len(args)))
+	}
+	if afterSeq > 0 {
+		args = append(args, afterSeq)
+		conditions = append(conditions, fmt.Sprintf("t.seq > $%d", len(args)))
+	}
+	if trimmed := strings.TrimSpace(queryText); trimmed != "" {
+		args = append(args, trimmed)
+		conditions = append(conditions, fmt.Sprintf("COALESCE(user_message.content_text, '') ILIKE '%%' || $%d || '%%'", len(args)))
+	}
+
+	order := "DESC"
+	if afterSeq > 0 {
+		order = "ASC"
+	}
+	args = append(args, clampLimit(limit, 100, 1000))
+	query := conversationTurnSummarySelect + "\nWHERE " + strings.Join(conditions, " AND ")
+	if afterSeq == 0 {
+		query = `SELECT * FROM (` + query +
+			"\nORDER BY t.seq " + order +
+			fmt.Sprintf("\nLIMIT $%d", len(args)) +
+			`) recent_turns ORDER BY seq ASC`
+	} else {
+		query += "\nORDER BY t.seq " + order + fmt.Sprintf("\nLIMIT $%d", len(args))
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation turn summaries: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.ConversationTurnSummary, 0)
+	for rows.Next() {
+		item, err := scanConversationTurnSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation turn summaries: %w", err)
+	}
+	return items, nil
+}
+
+func (r *TurnRepository) ListConversationTurnWindow(ctx context.Context, conversationID string, centerSeq int64, beforeLimit int, afterLimit int) ([]domain.ConversationTurnSummary, error) {
+	if centerSeq <= 0 {
+		return nil, domain.NewValidationError("center turn sequence must be positive")
+	}
+	args := []any{conversationID, centerSeq, clampLimit(beforeLimit, 3, 1000) + 1, clampLimit(afterLimit, 3, 1000) + 1}
+	query := `WITH base AS (` + conversationTurnSummarySelect + `
+		WHERE t.conversation_id = $1::uuid
+	), selected AS (
+		(SELECT * FROM base WHERE seq < $2 ORDER BY seq DESC LIMIT $3)
+		UNION ALL
+		(SELECT * FROM base WHERE seq = $2)
+		UNION ALL
+		(SELECT * FROM base WHERE seq > $2 ORDER BY seq ASC LIMIT $4)
+	)
+	SELECT * FROM selected ORDER BY seq ASC`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation turn window: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.ConversationTurnSummary, 0)
+	for rows.Next() {
+		item, err := scanConversationTurnSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation turn window: %w", err)
+	}
+	return items, nil
+}
+
+func scanConversationTurnSummary(row scanRow) (*domain.ConversationTurnSummary, error) {
+	var (
+		item                   domain.ConversationTurnSummary
+		retryOfTurnID          sql.NullString
+		messageID              sql.NullString
+		messageConversationID  sql.NullString
+		messageTurnID          sql.NullString
+		messageSeq             sql.NullInt64
+		messageRole            sql.NullString
+		messageContent         sql.NullString
+		messageTokenCount      sql.NullInt64
+		messageMetadata        []byte
+		messageContextExcluded sql.NullBool
+		messageCreatedAt       sql.NullTime
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.ConversationID,
+		&item.Seq,
+		&retryOfTurnID,
+		&item.VariantIndex,
+		&item.Status,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+		&messageID,
+		&messageConversationID,
+		&messageTurnID,
+		&messageSeq,
+		&messageRole,
+		&messageContent,
+		&messageTokenCount,
+		&messageMetadata,
+		&messageContextExcluded,
+		&messageCreatedAt,
+		&item.FirstEventSeq,
+		&item.LastEventSeq,
+	); err != nil {
+		return nil, err
+	}
+	if retryOfTurnID.Valid {
+		item.RetryOfTurnID = retryOfTurnID.String
+	}
+	if messageID.Valid {
+		message := &domain.Message{
+			ID:              messageID.String,
+			ConversationID:  messageConversationID.String,
+			TurnID:          messageTurnID.String,
+			Role:            messageRole.String,
+			ContentText:     messageContent.String,
+			Metadata:        cloneJSON(messageMetadata),
+			ContextExcluded: messageContextExcluded.Bool,
+		}
+		if messageSeq.Valid {
+			message.Seq = messageSeq.Int64
+		}
+		if messageTokenCount.Valid {
+			value := int(messageTokenCount.Int64)
+			message.TokenCount = &value
+		}
+		if messageCreatedAt.Valid {
+			message.CreatedAt = messageCreatedAt.Time
+		}
+		item.UserMessage = message
+	}
+	return &item, nil
 }
 
 func (r *TurnRepository) CreateUserTurn(ctx context.Context, params CreateUserTurnParams) (*domain.EnqueuedTurn, error) {

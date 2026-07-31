@@ -121,6 +121,8 @@ func (a *API) registerRoutes(router *gin.Engine) {
 	userRoutes.GET("/conversations/:conversationID/attachments/:attachmentID", a.handleGetConversationAttachment)
 	userRoutes.GET("/conversations/:conversationID/generated-images/:assetID", a.handleGetGeneratedImage)
 	userRoutes.GET("/conversations/:conversationID/messages", a.handleListMessages)
+	userRoutes.GET("/conversations/:conversationID/turns", a.handleListTurnSummaries)
+	userRoutes.GET("/conversations/:conversationID/turn-history", a.handleGetTurnContext)
 	userRoutes.GET("/conversations/:conversationID/events", a.handleListConversationEvents)
 	userRoutes.POST("/conversations/:conversationID/messages", a.handleCreateMessage)
 	userRoutes.GET("/conversations/:conversationID/sandbox", a.handleGetConversationSandbox)

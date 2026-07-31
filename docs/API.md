@@ -571,6 +571,55 @@ Response: `200 OK`
 }
 ```
 
+### GET `/conversations/:conversationID/turns`
+
+List lightweight turn summaries for conversation navigation. Each summary includes the turn's user message and event sequence bounds, but not the full execution history.
+
+Query params:
+
+- `limit`: default `50`, max `200`
+- `before`: optional turn sequence; returns older turns before this sequence
+- `after`: optional turn sequence; returns newer turns after this sequence
+- `query`: optional substring match against user input, max 256 characters
+
+Response: `200 OK`
+
+```json
+{
+  "turns": [
+    {
+      "id": "turn_123",
+      "conversation_id": "conv_123",
+      "seq": 42,
+      "status": "completed",
+      "user_message": {},
+      "first_event_seq": 100,
+      "last_event_seq": 120,
+      "created_at": "2026-07-20T12:00:00Z",
+      "updated_at": "2026-07-20T12:01:00Z"
+    }
+  ],
+  "next_before": "41",
+  "next_after": "42",
+  "has_more_before": true,
+  "has_more_after": false
+}
+```
+
+### GET `/conversations/:conversationID/turn-history`
+
+Return complete events for a bounded turn window. Use `turn_seq` to center a window around a selected turn, then use `before_seq` or `after_seq` to continue loading in either direction.
+
+Query params:
+
+- `turn_seq`: target turn sequence for an initial centered window
+- `before`: number of turns before the target, default `3`, max `20`
+- `after`: number of turns after the target, default `3`, max `20`
+- `before_seq`: load the next older turn window before this turn sequence
+- `after_seq`: load the next newer turn window after this turn sequence
+
+At least one of `turn_seq`, `before_seq`, or `after_seq` is required. The response includes both turn summaries and all conversation events belonging to the returned turns.
+
 ### GET `/conversations/:conversationID/events`
 
 List complete semantic conversation events. This is the primary conversation read path; the message endpoint remains available during migration.

@@ -207,24 +207,105 @@ func (a *API) handleListMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"messages": nonNilSlice(messages)})
 }
 
-func (a *API) handleListConversationEvents(c *gin.Context) {
-	parseSequence := func(name string) (int64, error) {
-		value := strings.TrimSpace(c.Query(name))
-		if value == "" {
-			return 0, nil
-		}
-		sequence, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || sequence < 0 {
-			return 0, domain.NewValidationError(name + " must be a non-negative decimal sequence")
-		}
-		return sequence, nil
-	}
-	beforeSeq, err := parseSequence("before")
+func (a *API) handleListTurnSummaries(c *gin.Context) {
+	beforeSeq, err := parseSequenceQuery(c, "before")
 	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
-	afterSeq, err := parseSequence("after")
+	afterSeq, err := parseSequenceQuery(c, "after")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	query := strings.TrimSpace(c.Query("query"))
+	if len(query) > 256 {
+		writeAPIError(c, domain.NewValidationError("query must be at most 256 characters"))
+		return
+	}
+	page, err := a.useCases.Conversations.ListTurnSummaries(
+		c.Request.Context(), currentUser(c).ID, c.Param("conversationID"), parseLimit(c, 50, 200), beforeSeq, afterSeq, query,
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"turns":           nonNilSlice(page.Items),
+		"next_before":     page.NextBefore,
+		"next_after":      page.NextAfter,
+		"has_more_before": page.HasMoreBefore,
+		"has_more_after":  page.HasMoreAfter,
+	})
+}
+
+func (a *API) handleGetTurnContext(c *gin.Context) {
+	turnSeq, err := parseSequenceQuery(c, "turn_seq")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	beforeSeq, err := parseSequenceQuery(c, "before_seq")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	afterSeq, err := parseSequenceQuery(c, "after_seq")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	if turnSeq == 0 && beforeSeq == 0 && afterSeq == 0 {
+		writeAPIError(c, domain.NewValidationError("turn_seq, before_seq, or after_seq is required"))
+		return
+	}
+	page, err := a.useCases.Conversations.GetTurnContext(
+		c.Request.Context(),
+		currentUser(c).ID,
+		c.Param("conversationID"),
+		turnSeq,
+		parseCountQuery(c, "before", 3, 20),
+		parseCountQuery(c, "after", 3, 20),
+		beforeSeq,
+		afterSeq,
+	)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	serializedEvents := make([]gin.H, 0, len(page.Events))
+	for _, event := range page.Events {
+		serializedEvents = append(serializedEvents, gin.H{
+			"id":               event.ID,
+			"conversation_id":  event.ConversationID,
+			"turn_id":          event.TurnID,
+			"turn_run_id":      event.TurnRunID,
+			"event_seq":        strconv.FormatInt(event.EventSeq, 10),
+			"event_key":        event.EventKey,
+			"schema_version":   event.SchemaVersion,
+			"event_type":       event.EventType,
+			"payload":          json.RawMessage(event.Payload),
+			"context_included": event.ContextIncluded,
+			"created_at":       event.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"turns":           nonNilSlice(page.Turns),
+		"events":          nonNilSlice(serializedEvents),
+		"next_before":     page.NextBefore,
+		"next_after":      page.NextAfter,
+		"has_more_before": page.HasMoreBefore,
+		"has_more_after":  page.HasMoreAfter,
+	})
+}
+
+func (a *API) handleListConversationEvents(c *gin.Context) {
+	beforeSeq, err := parseSequenceQuery(c, "before")
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	afterSeq, err := parseSequenceQuery(c, "after")
 	if err != nil {
 		writeAPIError(c, err)
 		return

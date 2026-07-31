@@ -8,8 +8,10 @@ import {
   cancelTurn,
   editTurn,
   getConversation,
+  getConversationTurnHistory,
   getTurn,
   isSessionUnauthorizedError,
+  listConversationTurnSummaries,
   listConversationEvents,
   patchConversation,
   retryTurn,
@@ -30,12 +32,19 @@ import {
   writeConversationShareOperation,
   type ConversationShareOperation,
 } from "@/lib/conversation-share-operation";
+import {
+  createConversationPageCache,
+  invalidateConversationPageCache,
+  loadCachedPage,
+  type ConversationPageCache,
+} from "@/lib/conversation-page-cache";
 import type {
   AskUserInteraction,
   Conversation,
   ConversationShare,
   InteractionTimelineItem,
   Message,
+  ConversationTurnSummary,
   Turn,
 } from "@/lib/types";
 import { turnSchema } from "@/lib/api-schemas";
@@ -177,16 +186,101 @@ function mergeMessages(...groups: Message[][]) {
   for (const group of groups) {
     for (const message of group) messages.set(message.id, message);
   }
-  return Array.from(messages.values());
+  const merged = Array.from(messages.values());
+  const firstTurnSeq = new Map<string, number>();
+  for (const message of merged) {
+    if (!message.turn_id || message.seq <= 0) continue;
+    const current = firstTurnSeq.get(message.turn_id);
+    if (typeof current === "undefined" || message.seq < current) {
+      firstTurnSeq.set(message.turn_id, message.seq);
+    }
+  }
+  return merged
+    .map((message, index) => ({
+      message,
+      index,
+      order:
+        message.seq > 0
+          ? message.seq
+          : (firstTurnSeq.get(message.turn_id || "") ?? Number.MAX_SAFE_INTEGER) + 0.5,
+    }))
+    .sort((left, right) => left.order - right.order || left.index - right.index)
+    .map(({ message }) => message);
 }
 
-async function loadConversationMessages(conversationId: string) {
-  const eventPage = await listConversationEvents(conversationId);
+function mergeTurnSummaries(...groups: ConversationTurnSummary[][]) {
+  const summaries = new Map<string, ConversationTurnSummary>();
+  for (const group of groups) {
+    for (const summary of group) summaries.set(summary.id, summary);
+  }
+  return Array.from(summaries.values()).sort((left, right) => left.seq - right.seq);
+}
+
+function turnFromSummary(summary: ConversationTurnSummary): Turn {
   return {
-    eventPage,
-    messages: messagesFromConversationEvents(eventPage.events),
-    turns: turnsFromConversationEvents(eventPage.events),
+    id: summary.id,
+    conversation_id: summary.conversation_id,
+    seq: summary.seq,
+    ...(summary.retry_of_turn_id ? { retry_of_turn_id: summary.retry_of_turn_id } : {}),
+    variant_index: summary.variant_index,
+    status: summary.status,
+    metadata: {},
+    created_at: summary.created_at,
+    updated_at: summary.updated_at,
   };
+}
+
+function turnSummaryFromTurn(turn: Turn, userMessage: Message): ConversationTurnSummary {
+  return {
+    id: turn.id,
+    conversation_id: turn.conversation_id,
+    seq: turn.seq,
+    ...(turn.retry_of_turn_id ? { retry_of_turn_id: turn.retry_of_turn_id } : {}),
+    variant_index: turn.variant_index || 1,
+    status: turn.status,
+    user_message: userMessage,
+    created_at: turn.created_at,
+    updated_at: turn.updated_at,
+  };
+}
+
+type ConversationEventOptions = {
+  limit?: number;
+  before?: string;
+  after?: string;
+};
+
+type ConversationTurnSummaryOptions = {
+  limit?: number;
+  before?: string;
+  after?: string;
+  query?: string;
+};
+
+type ConversationTurnHistoryOptions = {
+  turnSeq?: number;
+  before?: number;
+  after?: number;
+  beforeSeq?: string;
+  afterSeq?: string;
+};
+
+function pageKey(prefix: string, options: Record<string, number | string | undefined>) {
+  return `${prefix}:${Object.entries(options)
+    .filter(([, value]) => typeof value !== "undefined")
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&")}`;
+}
+
+function getConversationPageCache(
+  caches: Map<string, ConversationPageCache>,
+  conversationId: string,
+) {
+  const existing = caches.get(conversationId);
+  if (existing) return existing;
+  const created = createConversationPageCache();
+  caches.set(conversationId, created);
+  return created;
 }
 
 export function useChatController(conversationId: string) {
@@ -215,6 +309,17 @@ export function useChatController(conversationId: string) {
   const [isLoadingOlderEvents, setIsLoadingOlderEvents] = useState(false);
   const [hasOlderEvents, setHasOlderEvents] = useState(false);
   const [olderEventCursor, setOlderEventCursor] = useState<string | null>(null);
+  const [turnSummaries, setTurnSummaries] = useState<ConversationTurnSummary[]>([]);
+  const [isLoadingTurnSummaries, setIsLoadingTurnSummaries] = useState(false);
+  const [hasOlderTurnSummaries, setHasOlderTurnSummaries] = useState(false);
+  const [olderTurnSummaryCursor, setOlderTurnSummaryCursor] = useState<string | null>(null);
+  const [isLoadingTurnContext, setIsLoadingTurnContext] = useState(false);
+  const [hasOlderTurnContext, setHasOlderTurnContext] = useState(false);
+  const [hasNewerTurnContext, setHasNewerTurnContext] = useState(false);
+  const [olderTurnContextCursor, setOlderTurnContextCursor] = useState<string | null>(null);
+  const [newerTurnContextCursor, setNewerTurnContextCursor] = useState<string | null>(null);
+  const [scrollTargetMessageId, setScrollTargetMessageId] = useState<string | null>(null);
+  const [activeNavigationTurnId, setActiveNavigationTurnId] = useState<string | null>(null);
   const [resumeTurnId, setResumeTurnId] = useState<string | null>(null);
   const [restoreTurns, setRestoreTurns] = useState<Turn[]>([]);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -226,6 +331,7 @@ export function useChatController(conversationId: string) {
   const resumeConversationIdRef = useRef<string | null>(null);
   const restoreConversationIdRef = useRef<string | null>(null);
   const shareCacheRef = useRef(new Map<string, ConversationShare>());
+  const conversationPageCachesRef = useRef(new Map<string, ConversationPageCache>());
   const activeConversationIdRef = useRef(conversationId);
   const mountedRef = useRef(true);
   const retryInFlightRef = useRef(false);
@@ -236,6 +342,53 @@ export function useChatController(conversationId: string) {
   } | null>(null);
   const isUploadingAttachments = attachments.some(
     (attachment) => attachment.status === "uploading",
+  );
+
+  const loadConversationEvents = useCallback(
+    (id: string, options: ConversationEventOptions = {}) => {
+      const cache = getConversationPageCache(conversationPageCachesRef.current, id);
+      return loadCachedPage(cache.events, pageKey("events", options), () =>
+        listConversationEvents(id, options),
+      );
+    },
+    [],
+  );
+
+  const loadConversationTurnSummaries = useCallback(
+    (id: string, options: ConversationTurnSummaryOptions = {}) => {
+      const cache = getConversationPageCache(conversationPageCachesRef.current, id);
+      return loadCachedPage(cache.turnSummaries, pageKey("turns", options), () =>
+        listConversationTurnSummaries(id, options),
+      );
+    },
+    [],
+  );
+
+  const loadConversationTurnHistory = useCallback(
+    (id: string, options: ConversationTurnHistoryOptions) => {
+      const cache = getConversationPageCache(conversationPageCachesRef.current, id);
+      return loadCachedPage(cache.turnHistory, pageKey("turn-history", options), () =>
+        getConversationTurnHistory(id, options),
+      );
+    },
+    [],
+  );
+
+  const invalidateConversationPages = useCallback((id: string) => {
+    const cache = getConversationPageCache(conversationPageCachesRef.current, id);
+    invalidateConversationPageCache(cache);
+  }, []);
+
+  const loadConversationMessages = useCallback(
+    async (id: string) => {
+      const eventPage = await loadConversationEvents(id);
+      return {
+        eventPage,
+        messages: messagesFromConversationEvents(eventPage.events),
+        turns: turnsFromConversationEvents(eventPage.events),
+      };
+    },
+    [loadConversationEvents],
   );
 
   useEffect(() => {
@@ -298,7 +451,8 @@ export function useChatController(conversationId: string) {
     async (completedTurnId: string) => {
       const requestedConversationId = conversationId;
       try {
-        const nextMessages = await loadConversationMessages(conversationId);
+        invalidateConversationPages(requestedConversationId);
+        const nextMessages = await loadConversationMessages(requestedConversationId);
         if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
           return;
         }
@@ -314,7 +468,7 @@ export function useChatController(conversationId: string) {
         }
       }
     },
-    [conversationId],
+    [conversationId, invalidateConversationPages, loadConversationMessages],
   );
 
   const { isStreaming, streamingTurnId, streamConnectionState, streamTurn } = useTurnStream({
@@ -406,9 +560,10 @@ export function useChatController(conversationId: string) {
     const requestedConversationId = conversationId;
     setIsLoading(true);
     try {
-      const [conv, history] = await Promise.all([
+      const [conv, history, turnPage] = await Promise.all([
         getConversation(conversationId),
         loadConversationMessages(conversationId),
+        loadConversationTurnSummaries(conversationId, { limit: 200 }),
       ]);
       if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
         return;
@@ -422,6 +577,17 @@ export function useChatController(conversationId: string) {
       setMessages(restored.messages);
       setHasOlderEvents(history.eventPage.has_more_before);
       setOlderEventCursor(history.eventPage.next_before || null);
+      setTurnSummaries(turnPage.turns);
+      setHasOlderTurnSummaries(turnPage.has_more_before);
+      setOlderTurnSummaryCursor(turnPage.next_before || null);
+      setHasOlderTurnContext(false);
+      setHasNewerTurnContext(false);
+      setOlderTurnContextCursor(null);
+      setNewerTurnContextCursor(null);
+      setScrollTargetMessageId(null);
+      setActiveNavigationTurnId(
+        restored.activeTurnId || turnPage.turns.at(-1)?.id || history.turns.at(-1)?.id || null,
+      );
       initializeTurns(restored.turns);
       resumeConversationIdRef.current =
         pending?.turn.id || restored.activeTurnId ? requestedConversationId : null;
@@ -441,7 +607,14 @@ export function useChatController(conversationId: string) {
         setIsLoading(false);
       }
     }
-  }, [authLoading, conversationId, initializeTurns, user]);
+  }, [
+    authLoading,
+    conversationId,
+    initializeTurns,
+    loadConversationMessages,
+    loadConversationTurnSummaries,
+    user,
+  ]);
 
   useEffect(() => {
     load();
@@ -487,6 +660,17 @@ export function useChatController(conversationId: string) {
     setIsLoadingOlderEvents(false);
     setHasOlderEvents(false);
     setOlderEventCursor(null);
+    setTurnSummaries([]);
+    setIsLoadingTurnSummaries(false);
+    setHasOlderTurnSummaries(false);
+    setOlderTurnSummaryCursor(null);
+    setIsLoadingTurnContext(false);
+    setHasOlderTurnContext(false);
+    setHasNewerTurnContext(false);
+    setOlderTurnContextCursor(null);
+    setNewerTurnContextCursor(null);
+    setScrollTargetMessageId(null);
+    setActiveNavigationTurnId(null);
     setResumeTurnId(null);
     setRestoreTurns([]);
     setConversationShare(shareCacheRef.current.get(conversationId) || null);
@@ -503,7 +687,7 @@ export function useChatController(conversationId: string) {
     const requestedConversationId = conversationId;
     setIsLoadingOlderEvents(true);
     try {
-      const page = await listConversationEvents(conversationId, { before: olderEventCursor });
+      const page = await loadConversationEvents(conversationId, { before: olderEventCursor });
       if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId) {
         return;
       }
@@ -522,7 +706,183 @@ export function useChatController(conversationId: string) {
         setIsLoadingOlderEvents(false);
       }
     }
-  }, [conversationId, hasOlderEvents, isLoadingOlderEvents, olderEventCursor, registerTurn]);
+  }, [
+    conversationId,
+    hasOlderEvents,
+    isLoadingOlderEvents,
+    loadConversationEvents,
+    olderEventCursor,
+    registerTurn,
+  ]);
+
+  const handleLoadOlderTurnSummaries = useCallback(async () => {
+    if (!hasOlderTurnSummaries || !olderTurnSummaryCursor || isLoadingTurnSummaries) return;
+    const requestedConversationId = conversationId;
+    setIsLoadingTurnSummaries(true);
+    try {
+      const page = await loadConversationTurnSummaries(conversationId, {
+        limit: 200,
+        before: olderTurnSummaryCursor,
+      });
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
+        return;
+      setTurnSummaries((previous) => mergeTurnSummaries(previous, page.turns));
+      setHasOlderTurnSummaries(page.has_more_before);
+      setOlderTurnSummaryCursor(page.next_before || null);
+    } catch (error) {
+      if (!isSessionUnauthorizedError(error)) {
+        toast.error(error instanceof Error ? error.message : "加载更多 turn 失败");
+      }
+    } finally {
+      if (activeConversationIdRef.current === requestedConversationId) {
+        setIsLoadingTurnSummaries(false);
+      }
+    }
+  }, [
+    conversationId,
+    hasOlderTurnSummaries,
+    isLoadingTurnSummaries,
+    loadConversationTurnSummaries,
+    olderTurnSummaryCursor,
+  ]);
+
+  const handleJumpToTurn = useCallback(
+    async (summary: ConversationTurnSummary) => {
+      if (isLoadingTurnContext || isStreaming) return;
+      const requestedConversationId = conversationId;
+      setActiveNavigationTurnId(summary.id);
+      const loadedTargetMessage = messages.find(
+        (message) =>
+          message.role === "user" &&
+          (message.id === summary.user_message?.id || message.turn_id === summary.id),
+      );
+      if (loadedTargetMessage) {
+        setScrollTargetMessageId(loadedTargetMessage.id);
+        return;
+      }
+      setIsLoadingTurnContext(true);
+      try {
+        const page = await loadConversationTurnHistory(conversationId, {
+          turnSeq: summary.seq,
+          before: 3,
+          after: 3,
+        });
+        if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
+          return;
+        const nextMessages = messagesFromConversationEvents(page.events);
+        setMessages(nextMessages);
+        for (const turn of page.turns) registerTurn(turnFromSummary(turn));
+        setTurnSummaries((previous) => mergeTurnSummaries(previous, page.turns));
+        setHasOlderEvents(false);
+        setOlderEventCursor(null);
+        setHasOlderTurnContext(page.has_more_before);
+        setHasNewerTurnContext(page.has_more_after);
+        setOlderTurnContextCursor(page.next_before || null);
+        setNewerTurnContextCursor(page.next_after || null);
+        const targetMessage =
+          summary.user_message ||
+          page.turns.find((turn) => turn.id === summary.id)?.user_message ||
+          nextMessages.find((message) => message.turn_id === summary.id && message.role === "user");
+        setScrollTargetMessageId(targetMessage?.id || null);
+      } catch (error) {
+        if (!isSessionUnauthorizedError(error)) {
+          toast.error(error instanceof Error ? error.message : "定位 turn 失败");
+        }
+      } finally {
+        if (activeConversationIdRef.current === requestedConversationId) {
+          setIsLoadingTurnContext(false);
+        }
+      }
+    },
+    [
+      conversationId,
+      isLoadingTurnContext,
+      isStreaming,
+      loadConversationTurnHistory,
+      messages,
+      registerTurn,
+    ],
+  );
+
+  const handleLoadOlderTurnContext = useCallback(async () => {
+    if (!hasOlderTurnContext || !olderTurnContextCursor || isLoadingTurnContext) return;
+    const requestedConversationId = conversationId;
+    setIsLoadingTurnContext(true);
+    try {
+      const page = await loadConversationTurnHistory(conversationId, {
+        before: 3,
+        beforeSeq: olderTurnContextCursor,
+      });
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
+        return;
+      setMessages((previous) =>
+        mergeMessages(messagesFromConversationEvents(page.events), previous),
+      );
+      for (const turn of page.turns) registerTurn(turnFromSummary(turn));
+      setTurnSummaries((previous) => mergeTurnSummaries(previous, page.turns));
+      setHasOlderTurnContext(page.has_more_before);
+      setOlderTurnContextCursor(page.next_before || null);
+    } catch (error) {
+      if (!isSessionUnauthorizedError(error)) {
+        toast.error(error instanceof Error ? error.message : "加载更早 turn 失败");
+      }
+    } finally {
+      if (activeConversationIdRef.current === requestedConversationId) {
+        setIsLoadingTurnContext(false);
+      }
+    }
+  }, [
+    conversationId,
+    hasOlderTurnContext,
+    isLoadingTurnContext,
+    loadConversationTurnHistory,
+    olderTurnContextCursor,
+    registerTurn,
+  ]);
+
+  const handleLoadNewerTurnContext = useCallback(async () => {
+    if (!hasNewerTurnContext || !newerTurnContextCursor || isLoadingTurnContext) return;
+    const requestedConversationId = conversationId;
+    setIsLoadingTurnContext(true);
+    try {
+      const page = await loadConversationTurnHistory(conversationId, {
+        after: 3,
+        afterSeq: newerTurnContextCursor,
+      });
+      if (!mountedRef.current || activeConversationIdRef.current !== requestedConversationId)
+        return;
+      setMessages((previous) =>
+        mergeMessages(previous, messagesFromConversationEvents(page.events)),
+      );
+      for (const turn of page.turns) registerTurn(turnFromSummary(turn));
+      setTurnSummaries((previous) => mergeTurnSummaries(previous, page.turns));
+      setHasNewerTurnContext(page.has_more_after);
+      setNewerTurnContextCursor(page.next_after || null);
+    } catch (error) {
+      if (!isSessionUnauthorizedError(error)) {
+        toast.error(error instanceof Error ? error.message : "加载更新 turn 失败");
+      }
+    } finally {
+      if (activeConversationIdRef.current === requestedConversationId) {
+        setIsLoadingTurnContext(false);
+      }
+    }
+  }, [
+    conversationId,
+    hasNewerTurnContext,
+    isLoadingTurnContext,
+    loadConversationTurnHistory,
+    newerTurnContextCursor,
+    registerTurn,
+  ]);
+
+  const handleLoadOlderMessages = useCallback(async () => {
+    if (hasOlderTurnContext) {
+      await handleLoadOlderTurnContext();
+      return;
+    }
+    await handleLoadOlderEvents();
+  }, [handleLoadOlderEvents, handleLoadOlderTurnContext, hasOlderTurnContext]);
 
   const updateComposerAttachment = useCallback(
     (key: string, update: Partial<ComposerShellAttachment>) => {
@@ -679,6 +1039,7 @@ export function useChatController(conversationId: string) {
       turnId = res.turn.id;
       streamPath = res.stream_path;
       thinkingMsg = buildThinkingMessage(turnId, res.conversation_id);
+      invalidateConversationPages(requestedConversationId);
       setDraft("");
       const sentAttachmentIds = new Set(attachmentIds);
       setAttachments((previous) =>
@@ -691,6 +1052,9 @@ export function useChatController(conversationId: string) {
       resumeConversationIdRef.current = null;
       setMessages((prev) => [...prev, res.message, thinkingMsg]);
       registerTurn(res.turn);
+      setTurnSummaries((previous) =>
+        mergeTurnSummaries(previous, [turnSummaryFromTurn(res.turn, res.message)]),
+      );
     } catch (err) {
       if (isSessionUnauthorizedError(err)) {
         return;
@@ -857,12 +1221,16 @@ export function useChatController(conversationId: string) {
     try {
       const res = await editTurn(message.turn_id, content);
       if (activeConversationIdRef.current !== requestedConversationId) return false;
+      invalidateConversationPages(requestedConversationId);
       setMessages((previous) => [
         ...previous,
         res.message,
         buildThinkingMessage(res.turn.id, res.conversation_id),
       ]);
       registerTurn(res.turn);
+      setTurnSummaries((previous) =>
+        mergeTurnSummaries(previous, [turnSummaryFromTurn(res.turn, res.message)]),
+      );
       restoreComposerAfterEdit();
       void streamTurn(res.turn.id, res.stream_path);
       return true;
@@ -893,12 +1261,16 @@ export function useChatController(conversationId: string) {
     try {
       const res = await retryTurn(message.turn_id);
       if (activeConversationIdRef.current !== requestedConversationId) return;
+      invalidateConversationPages(requestedConversationId);
       setMessages((previous) => [
         ...previous,
         res.message,
         buildThinkingMessage(res.turn.id, res.conversation_id),
       ]);
       registerTurn(res.turn);
+      setTurnSummaries((previous) =>
+        mergeTurnSummaries(previous, [turnSummaryFromTurn(res.turn, res.message)]),
+      );
       await streamTurn(res.turn.id, res.stream_path);
     } catch (error) {
       if (!isSessionUnauthorizedError(error)) {
@@ -918,6 +1290,12 @@ export function useChatController(conversationId: string) {
     () => ensureStreamingThinkingMessage(messages, streamingTurnId, conversationId),
     [conversationId, messages, streamingTurnId],
   );
+  const handleScrollTargetComplete = useCallback(() => {
+    setScrollTargetMessageId(null);
+  }, []);
+  const handleActiveNavigationTurnChange = useCallback((turnId: string) => {
+    setActiveNavigationTurnId(turnId);
+  }, []);
   const timelinePanelProps = timelineTurnId
     ? {
         isStreaming:
@@ -950,16 +1328,23 @@ export function useChatController(conversationId: string) {
     handleCancelGeneration,
     handleEditMessage,
     handleLoadOlderEvents,
+    handleLoadOlderMessages,
+    handleLoadNewerTurnContext,
+    handleLoadOlderTurnSummaries,
+    handleJumpToTurn,
     handleOpenTimeline,
     handleRename,
     handleRetryMessage,
     handleSend,
     handleShare,
     handleUploadFiles,
-    hasOlderEvents,
+    hasOlderEvents: hasOlderEvents || hasOlderTurnContext,
+    hasNewerTurnContext,
     isCancelling,
     isLoading,
-    isLoadingOlderEvents,
+    isLoadingOlderEvents: isLoadingOlderEvents || isLoadingTurnContext,
+    isLoadingNewerTurnContext: isLoadingTurnContext,
+    isLoadingTurnSummaries,
     isMobileViewport,
     isSharing,
     isStreaming,
@@ -974,11 +1359,17 @@ export function useChatController(conversationId: string) {
     setRenameOpen,
     setShareOpen,
     shareOpen,
+    scrollTargetMessageId,
+    handleScrollTargetComplete,
+    handleActiveNavigationTurnChange,
     streamConnectionState,
     streamingTurnId,
     timelineActivityLabels,
     timelinePanelProps,
     timelineTurnId,
+    turnSummaries,
+    activeNavigationTurnId,
+    hasOlderTurnSummaries,
     turnsById,
     visualViewportBottomInset,
   };

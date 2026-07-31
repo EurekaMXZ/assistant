@@ -288,6 +288,33 @@ func parseLimit(c *gin.Context, fallback int, max int) int {
 	return parsed
 }
 
+func parseSequenceQuery(c *gin.Context, name string) (int64, error) {
+	value := strings.TrimSpace(c.Query(name))
+	if value == "" {
+		return 0, nil
+	}
+	sequence, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || sequence < 0 {
+		return 0, domain.NewValidationError(name + " must be a non-negative decimal sequence")
+	}
+	return sequence, nil
+}
+
+func parseCountQuery(c *gin.Context, name string, fallback int, max int) int {
+	value := strings.TrimSpace(c.Query(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	if parsed > max {
+		return max
+	}
+	return parsed
+}
+
 func parseBool(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "y", "on":

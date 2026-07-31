@@ -11,6 +11,8 @@ import type {
   BillingUsageEvent,
   Conversation,
   ConversationEventPage,
+  ConversationTurnHistoryPage,
+  ConversationTurnPage,
   ConversationShareResult,
   ConversationShareSnapshot,
   CreateMCPServerPayload,
@@ -51,6 +53,8 @@ import {
   conversationShareSnapshotSchema,
   conversationSchema,
   conversationEventPageSchema,
+  conversationTurnHistoryPageSchema,
+  conversationTurnPageSchema,
   generatedImageDownloadSchema,
   createMCPServerInputSchema,
   cursorPageSchema,
@@ -1030,6 +1034,47 @@ export async function listConversationEvents(
     `/conversations/${conversationId}/events${query ? `?${query}` : ""}`,
     {},
     conversationEventPageSchema,
+  );
+}
+
+export async function listConversationTurnSummaries(
+  conversationId: string,
+  options: { limit?: number; before?: string; after?: string; query?: string } = {},
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  if (options.after) params.set("after", options.after);
+  if (options.query) params.set("query", options.query);
+  const query = params.toString();
+  return apiFetch<ConversationTurnPage>(
+    `/conversations/${conversationId}/turns${query ? `?${query}` : ""}`,
+    {},
+    conversationTurnPageSchema,
+  );
+}
+
+export async function getConversationTurnHistory(
+  conversationId: string,
+  options: {
+    turnSeq?: number;
+    before?: number;
+    after?: number;
+    beforeSeq?: string;
+    afterSeq?: string;
+  },
+) {
+  const params = new URLSearchParams();
+  if (typeof options.turnSeq === "number") params.set("turn_seq", String(options.turnSeq));
+  if (typeof options.before === "number") params.set("before", String(options.before));
+  if (typeof options.after === "number") params.set("after", String(options.after));
+  if (options.beforeSeq) params.set("before_seq", options.beforeSeq);
+  if (options.afterSeq) params.set("after_seq", options.afterSeq);
+  const query = params.toString();
+  return apiFetch<ConversationTurnHistoryPage>(
+    `/conversations/${conversationId}/turn-history?${query}`,
+    {},
+    conversationTurnHistoryPageSchema,
   );
 }
 

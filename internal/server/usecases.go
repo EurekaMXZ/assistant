@@ -112,6 +112,23 @@ type ConversationEventPage struct {
 	HasMoreAfter  bool
 }
 
+type ConversationTurnPage struct {
+	Items         []domain.ConversationTurnSummary
+	NextBefore    string
+	NextAfter     string
+	HasMoreBefore bool
+	HasMoreAfter  bool
+}
+
+type ConversationTurnContextPage struct {
+	Turns         []domain.ConversationTurnSummary
+	Events        []domain.ConversationEvent
+	NextBefore    string
+	NextAfter     string
+	HasMoreBefore bool
+	HasMoreAfter  bool
+}
+
 type CreateProviderCredentialInput struct {
 	Provider string
 	Name     string
@@ -301,6 +318,8 @@ type ConversationUseCases struct {
 	RetryTurn               func(ctx context.Context, ownerUserID string, sourceTurnID string) (*domain.EnqueuedRetryTurn, error)
 	EditTurn                func(ctx context.Context, ownerUserID string, sourceTurnID string, content string) (*domain.EnqueuedRetryTurn, error)
 	ListMessages            func(ctx context.Context, ownerUserID string, conversationID string, limit int) ([]domain.Message, error)
+	ListTurnSummaries       func(ctx context.Context, ownerUserID string, conversationID string, limit int, beforeSeq int64, afterSeq int64, query string) (*ConversationTurnPage, error)
+	GetTurnContext          func(ctx context.Context, ownerUserID string, conversationID string, turnSeq int64, beforeLimit int, afterLimit int, beforeSeq int64, afterSeq int64) (*ConversationTurnContextPage, error)
 	ListConversationEvents  func(ctx context.Context, ownerUserID string, conversationID string, limit int, beforeSeq int64, afterSeq int64) (*ConversationEventPage, error)
 }
 

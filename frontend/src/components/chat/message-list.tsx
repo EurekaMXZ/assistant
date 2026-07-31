@@ -7,6 +7,7 @@ import { AssistantTurnBubble, MessageBubble } from "./message-bubble";
 import type { AskUserInteraction, Message, Turn } from "@/lib/types";
 import {
   DEFAULT_MESSAGE_BOTTOM_GAP,
+  DEFAULT_SCROLL_FOLLOW_THRESHOLD,
   isMessageAreaCoveringDisclaimer,
   isViewportNearBottom,
   latestTurnMinimumHeight,
@@ -14,7 +15,7 @@ import {
   shouldFollowAfterScroll,
 } from "@/lib/scroll-follow";
 import { cn } from "@/lib/utils";
-import { ArrowDown, ChevronUp } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { Spinner } from "@/components/shared/spinner";
 
 const messageTopOffset = 24;
@@ -23,11 +24,15 @@ interface MessageListProps {
   activityLabels?: Record<string, string | null>;
   dimmed?: boolean;
   hasOlderMessages?: boolean;
+  hasNewerMessages?: boolean;
   loadingOlderMessages?: boolean;
+  loadingNewerMessages?: boolean;
   messages: Message[];
   bottomInset?: number;
   onEditMessage: (message: Message) => void;
   onLoadOlderMessages?: () => Promise<void>;
+  onLoadNewerMessages?: () => Promise<void>;
+  onActiveTurnChange?: (turnId: string) => void;
   onDisclaimerCoveredChange?: (covered: boolean) => void;
   onOpenTimeline: (turnId: string) => void;
   onAnswerInteraction: (
@@ -37,6 +42,8 @@ interface MessageListProps {
   ) => Promise<boolean>;
   onRetryMessage: (message: Message) => void;
   streamingTurnId?: string | null;
+  scrollTargetMessageId?: string | null;
+  onScrollTargetComplete?: () => void;
   turnsById?: Record<string, Turn>;
 }
 
@@ -105,16 +112,22 @@ export function MessageList({
   activityLabels,
   dimmed,
   hasOlderMessages = false,
+  hasNewerMessages = false,
   loadingOlderMessages = false,
+  loadingNewerMessages = false,
   messages,
   bottomInset = 208,
   onEditMessage,
   onDisclaimerCoveredChange,
   onLoadOlderMessages,
+  onLoadNewerMessages,
+  onActiveTurnChange,
   onOpenTimeline,
   onAnswerInteraction,
   onRetryMessage,
   streamingTurnId,
+  scrollTargetMessageId,
+  onScrollTargetComplete,
   turnsById = {},
 }: MessageListProps) {
   const scrollRootRef = useRef<HTMLDivElement>(null);
@@ -122,6 +135,7 @@ export function MessageList({
   const lastScrollTopRef = useRef(0);
   const lastTouchYRef = useRef<number | null>(null);
   const latestUserMessageIdRef = useRef<string | null | undefined>(undefined);
+  const paginationPendingRef = useRef({ older: false, newer: false });
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [viewportHeight, setViewportHeight] = useState(0);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -136,6 +150,67 @@ export function MessageList({
       onDisclaimerCoveredChange?.(isMessageAreaCoveringDisclaimer(viewport));
       setShowScrollToBottom(!isViewportNearBottom(viewport, 1));
     };
+    const updateActiveTurn = () => {
+      if (!onActiveTurnChange) return;
+      const userMessages = messages.filter((message) => message.role === "user" && message.turn_id);
+      if (userMessages.length === 0) return;
+      const anchorTop = viewport.getBoundingClientRect().top + messageTopOffset;
+      let activeMessage = userMessages[0];
+      for (const message of userMessages) {
+        const element = viewport.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`);
+        if (element && element.getBoundingClientRect().top <= anchorTop) {
+          activeMessage = message;
+        }
+      }
+      if (activeMessage.turn_id) onActiveTurnChange(activeMessage.turn_id);
+    };
+    const loadOlderMessages = async () => {
+      if (
+        !hasOlderMessages ||
+        loadingOlderMessages ||
+        paginationPendingRef.current.older ||
+        !onLoadOlderMessages
+      ) {
+        return;
+      }
+      paginationPendingRef.current.older = true;
+      const previousHeight = viewport.scrollHeight;
+      const previousTop = viewport.scrollTop;
+      shouldFollowRef.current = false;
+      try {
+        await onLoadOlderMessages();
+      } finally {
+        paginationPendingRef.current.older = false;
+        requestAnimationFrame(() => {
+          viewport.scrollTop = previousTop + viewport.scrollHeight - previousHeight;
+          lastScrollTopRef.current = viewport.scrollTop;
+        });
+      }
+    };
+    const loadNewerMessages = async () => {
+      if (
+        !hasNewerMessages ||
+        loadingNewerMessages ||
+        paginationPendingRef.current.newer ||
+        !onLoadNewerMessages
+      ) {
+        return;
+      }
+      paginationPendingRef.current.newer = true;
+      try {
+        await onLoadNewerMessages();
+      } finally {
+        paginationPendingRef.current.newer = false;
+      }
+    };
+    const updatePagination = () => {
+      if (viewport.scrollTop <= DEFAULT_SCROLL_FOLLOW_THRESHOLD) {
+        void loadOlderMessages();
+      }
+      if (isViewportNearBottom(viewport, DEFAULT_SCROLL_FOLLOW_THRESHOLD)) {
+        void loadNewerMessages();
+      }
+    };
     const updateFollow = () => {
       shouldFollowRef.current = shouldFollowAfterScroll(
         viewport,
@@ -144,6 +219,8 @@ export function MessageList({
       );
       lastScrollTopRef.current = viewport.scrollTop;
       updateDisclaimerCoverage();
+      updateActiveTurn();
+      updatePagination();
     };
     const stopFollowing = () => {
       shouldFollowRef.current = false;
@@ -174,6 +251,7 @@ export function MessageList({
     lastScrollTopRef.current = viewport.scrollTop;
     updateViewportHeight();
     updateDisclaimerCoverage();
+    updateActiveTurn();
     resizeObserver.observe(viewport);
     viewport.addEventListener("scroll", updateFollow, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: true });
@@ -190,7 +268,38 @@ export function MessageList({
       viewport.removeEventListener("touchend", handleTouchEnd);
       resizeObserver.disconnect();
     };
-  }, [onDisclaimerCoveredChange]);
+  }, [
+    hasNewerMessages,
+    hasOlderMessages,
+    loadingNewerMessages,
+    loadingOlderMessages,
+    messages,
+    onActiveTurnChange,
+    onDisclaimerCoveredChange,
+    onLoadNewerMessages,
+    onLoadOlderMessages,
+  ]);
+
+  useEffect(() => {
+    if (!scrollTargetMessageId) return;
+    const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    const target = viewport
+      ? Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+          (element) => element.dataset.messageId === scrollTargetMessageId,
+        )
+      : null;
+    if (!viewport || !target) return;
+    shouldFollowRef.current = false;
+    const targetTop =
+      target.getBoundingClientRect().top -
+      viewport.getBoundingClientRect().top +
+      viewport.scrollTop;
+    viewport.scrollTo({ top: Math.max(0, targetTop - messageTopOffset), behavior: "auto" });
+    lastScrollTopRef.current = viewport.scrollTop;
+    onScrollTargetComplete?.();
+  }, [messages, onScrollTargetComplete, scrollTargetMessageId, turnsById]);
 
   useEffect(() => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
@@ -201,6 +310,7 @@ export function MessageList({
       onDisclaimerCoveredChange?.(isMessageAreaCoveringDisclaimer(viewport));
       setShowScrollToBottom(!isViewportNearBottom(viewport, 1));
     };
+    if (scrollTargetMessageId) return;
     if (messages.length === 0) {
       shouldFollowRef.current = true;
       lastScrollTopRef.current = 0;
@@ -251,6 +361,7 @@ export function MessageList({
     latestUserMessageId,
     messages,
     onDisclaimerCoveredChange,
+    scrollTargetMessageId,
     streamingTurnId,
     viewportHeight,
   ]);
@@ -264,20 +375,6 @@ export function MessageList({
   const entries = groupMessageEntries(messages, turnsById);
   const editableRootTurnId = entries.findLast((entry) => entry.kind === "turn")?.rootTurnId;
   const latestTurnMinHeight = latestTurnMinimumHeight(viewportHeight, bottomInset) || undefined;
-  const loadOlderMessages = async () => {
-    const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
-      '[data-slot="scroll-area-viewport"]',
-    );
-    const previousHeight = viewport?.scrollHeight || 0;
-    const previousTop = viewport?.scrollTop || 0;
-    shouldFollowRef.current = false;
-    await onLoadOlderMessages?.();
-    requestAnimationFrame(() => {
-      if (!viewport) return;
-      viewport.scrollTop = previousTop + viewport.scrollHeight - previousHeight;
-      lastScrollTopRef.current = viewport.scrollTop;
-    });
-  };
   const scrollToBottom = () => {
     const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -300,20 +397,6 @@ export function MessageList({
           className="mx-auto min-w-0 w-full max-w-2xl space-y-8 px-4 pt-4 sm:px-6"
           style={{ paddingBottom: bottomInset + DEFAULT_MESSAGE_BOTTOM_GAP }}
         >
-          {hasOlderMessages ? (
-            <div className="flex justify-center">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={loadingOlderMessages}
-                onClick={() => void loadOlderMessages()}
-              >
-                {loadingOlderMessages ? <Spinner /> : <ChevronUp className="size-4" />}
-                更早消息
-              </Button>
-            </div>
-          ) : null}
           {messages.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               发送第一条消息开始对话
@@ -395,6 +478,25 @@ export function MessageList({
           )}
         </div>
       </ScrollArea>
+      {loadingOlderMessages ? (
+        <div
+          aria-label="加载更早消息"
+          className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-full border border-border/70 bg-background/85 p-1.5 shadow-sm backdrop-blur-sm"
+          role="status"
+        >
+          <Spinner className="size-3.5" />
+        </div>
+      ) : null}
+      {loadingNewerMessages ? (
+        <div
+          aria-label="加载更新消息"
+          className="pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/70 bg-background/85 p-1.5 shadow-sm backdrop-blur-sm"
+          role="status"
+          style={{ bottom: bottomInset + DEFAULT_MESSAGE_BOTTOM_GAP }}
+        >
+          <Spinner className="size-3.5" />
+        </div>
+      ) : null}
       <Button
         type="button"
         variant="ghost"
