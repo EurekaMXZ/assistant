@@ -60,6 +60,7 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	tavilyEnabled := strings.TrimSpace(settings.Tavily.APIKey) != ""
 	toolHandlers := []tool.LocalToolHandler{
 		tool.AskUserHandler{},
+		tool.TimeNowHandler{},
 		tool.RenameConversationTitleHandler{
 			UseCase: tool.RenameConversationTitle{
 				Conversations: workflows.Conversations,

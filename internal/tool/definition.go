@@ -9,11 +9,13 @@ import (
 const (
 	conversationNamespace = "conversation"
 	sandboxNamespace      = "sandbox"
+	timeNamespace         = "time"
 	internetNamespace     = "internet"
 	askUserName           = "ask_user"
 
 	conversationRenameTitleName = "rename_title"
 	conversationExportTextName  = "export_text"
+	timeNowName                 = "now"
 	sandboxCreateName           = "create"
 	sandboxDestroyName          = "destroy"
 	sandboxExecName             = "exec"
@@ -31,6 +33,7 @@ const (
 const (
 	ConversationRenameTitle = conversationNamespace + "." + conversationRenameTitleName
 	ConversationExportText  = conversationNamespace + "." + conversationExportTextName
+	TimeNow                 = timeNamespace + "." + timeNowName
 	SandboxCreate           = sandboxNamespace + "." + sandboxCreateName
 	SandboxDestroy          = sandboxNamespace + "." + sandboxDestroyName
 	SandboxExec             = sandboxNamespace + "." + sandboxExecName
@@ -54,6 +57,7 @@ func DefaultTools(partialImages ...int) []llm.ModelTool {
 	return []llm.ModelTool{
 		conversationNamespaceDefinition(),
 		sandboxNamespaceDefinition(),
+		timeNamespaceDefinition(),
 		askUserDefinition(),
 		imageGenerationDefinition(partialCount),
 	}
@@ -126,6 +130,33 @@ func sandboxNamespaceDefinition() llm.ModelTool {
 		sandboxImportAttachmentDefinition(),
 		sandboxExportFileDefinition(),
 	)
+}
+
+func timeNamespaceDefinition() llm.ModelTool {
+	return namespaceDefinition(
+		timeNamespace,
+		"Tools for answering questions about the current date and time. Use these instead of relying on the model's internal clock.",
+		timeNowDefinition(),
+	)
+}
+
+func timeNowDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        timeNowName,
+		Description: "Return the current time. Use an IANA time zone such as Asia/Shanghai when the user requests a specific local time; otherwise omit it for UTC.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"timezone":{
+					"type":"string",
+					"description":"Optional IANA time zone, for example UTC, Asia/Shanghai, or America/New_York. Defaults to UTC."
+				}
+			},
+			"additionalProperties":false
+		}`),
+		Strict: true,
+	}
 }
 
 func internetNamespaceDefinition() llm.ModelTool {
