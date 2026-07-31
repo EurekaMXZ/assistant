@@ -15,4 +15,7 @@ func TestWorkflowWriterRequiresBrokerAcknowledgment(t *testing.T) {
 	if _, ok := writer.Balancer.(*kafkago.Hash); !ok {
 		t.Fatalf("balancer type = %T, want conversation-key hash", writer.Balancer)
 	}
+	if writer.BatchTimeout != workflowWriterBatchTimeout {
+		t.Fatalf("batch timeout = %v, want %v", writer.BatchTimeout, workflowWriterBatchTimeout)
+	}
 }

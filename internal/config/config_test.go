@@ -107,6 +107,7 @@ func TestLoadReadsStreamReplayTTL(t *testing.T) {
 func TestLoadReadsIndependentWorkerActorSettings(t *testing.T) {
 	t.Setenv("WORKER_CONCURRENCY", "99")
 	t.Setenv("WORKER_ACTOR_BUDGET", "6")
+	t.Setenv("OUTBOX_POLL_INTERVAL", "125ms")
 	t.Setenv("LLM_CLIENT_ACTORS", "2")
 	t.Setenv("EXECUTION_ACTORS", "4")
 	t.Setenv("LLM_CLIENT_POLL_INTERVAL", "3s")
@@ -117,6 +118,9 @@ func TestLoadReadsIndependentWorkerActorSettings(t *testing.T) {
 	cfg := Load()
 	if cfg.WorkerActorBudget != 6 || cfg.LLMClientActors != 2 || cfg.ExecutionActors != 4 {
 		t.Fatalf("unexpected worker actor settings: %+v", cfg)
+	}
+	if cfg.OutboxPollInterval != 125*time.Millisecond {
+		t.Fatalf("OutboxPollInterval = %v, want 125ms", cfg.OutboxPollInterval)
 	}
 	if cfg.LLMClientPollInterval != 3*time.Second || cfg.ExecutionPollInterval != 5*time.Second {
 		t.Fatalf("unexpected worker poll settings: %+v", cfg)

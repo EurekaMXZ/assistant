@@ -13,7 +13,7 @@ import (
 const defaultWriterCloseTimeout = 2 * time.Second
 
 type workflowEngine interface {
-	FlushOutbox(ctx context.Context, publish workflow.WorkflowEventPublisher) error
+	FlushOutbox(ctx context.Context, publish workflow.WorkflowEventBatchPublisher) error
 	RequeueStaleTurns(ctx context.Context) (int, error)
 	HandleWorkflowEvent(ctx context.Context, event workflow.WorkflowEvent) error
 }

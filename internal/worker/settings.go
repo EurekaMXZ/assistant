@@ -7,6 +7,7 @@ type Settings struct {
 	LLMClientActors       int
 	ExecutionActors       int
 	WorkerPollInterval    time.Duration
+	OutboxPollInterval    time.Duration
 	WorkerLeaseTimeout    time.Duration
 	LLMClientPollInterval time.Duration
 	ExecutionPollInterval time.Duration

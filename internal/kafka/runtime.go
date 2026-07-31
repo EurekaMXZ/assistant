@@ -1,6 +1,12 @@
 package kafka
 
-import kafkago "github.com/segmentio/kafka-go"
+import (
+	"time"
+
+	kafkago "github.com/segmentio/kafka-go"
+)
+
+const workflowWriterBatchTimeout = 25 * time.Millisecond
 
 type ReaderSettings struct {
 	Brokers       []string
@@ -14,6 +20,7 @@ func NewWorkflowWriter(settings Settings) *kafkago.Writer {
 		Topic:        settings.WorkflowTopic,
 		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireAll,
+		BatchTimeout: workflowWriterBatchTimeout,
 	}
 }
 

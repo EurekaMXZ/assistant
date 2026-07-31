@@ -2,4 +2,4 @@ package workflow
 
 import "context"
 
-type WorkflowEventPublisher func(ctx context.Context, event WorkflowEvent) error
+type WorkflowEventBatchPublisher func(ctx context.Context, events []WorkflowEvent) error

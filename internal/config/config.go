@@ -22,6 +22,7 @@ const (
 	defaultShutdownTimeout           = 10 * time.Second
 	defaultDatabaseURL               = "postgres://assistant:assistant@127.0.0.1:5432/assistant?sslmode=disable"
 	defaultWorkerPollInterval        = 2 * time.Second
+	defaultOutboxPollInterval        = 100 * time.Millisecond
 	defaultWorkerLeaseTimeout        = 2 * time.Minute
 	defaultWorkerActorBudget         = 4
 	defaultLLMClientActors           = 2
@@ -80,6 +81,7 @@ type Config struct {
 	IdleTimeout                 time.Duration
 	ShutdownTimeout             time.Duration
 	WorkerPollInterval          time.Duration
+	OutboxPollInterval          time.Duration
 	WorkerLeaseTimeout          time.Duration
 	LLMClientPollInterval       time.Duration
 	ExecutionPollInterval       time.Duration
@@ -172,6 +174,7 @@ func Load() Config {
 	llmClientActors := getenvInt("LLM_CLIENT_ACTORS", defaultLLMClientActors)
 	executionActors := getenvInt("EXECUTION_ACTORS", defaultExecutionActors)
 	workerPollInterval := getenvDuration("WORKER_POLL_INTERVAL", defaultWorkerPollInterval)
+	outboxPollInterval := getenvDuration("OUTBOX_POLL_INTERVAL", defaultOutboxPollInterval)
 	workerLeaseTimeout := getenvDuration("WORKER_LEASE_TIMEOUT", defaultWorkerLeaseTimeout)
 
 	return Config{
@@ -182,6 +185,7 @@ func Load() Config {
 		IdleTimeout:                 getenvDuration("IDLE_TIMEOUT", defaultIdleTimeout),
 		ShutdownTimeout:             getenvDuration("SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
 		WorkerPollInterval:          workerPollInterval,
+		OutboxPollInterval:          outboxPollInterval,
 		WorkerLeaseTimeout:          workerLeaseTimeout,
 		LLMClientPollInterval:       getenvDuration("LLM_CLIENT_POLL_INTERVAL", workerPollInterval),
 		ExecutionPollInterval:       getenvDuration("EXECUTION_POLL_INTERVAL", workerPollInterval),

@@ -140,6 +140,7 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 			LLMClientActors:       cfg.LLMClientActors,
 			ExecutionActors:       cfg.ExecutionActors,
 			WorkerPollInterval:    cfg.WorkerPollInterval,
+			OutboxPollInterval:    cfg.OutboxPollInterval,
 			WorkerLeaseTimeout:    cfg.WorkerLeaseTimeout,
 			LLMClientPollInterval: effectivePollInterval(cfg.LLMClientPollInterval, cfg.WorkerPollInterval),
 			ExecutionPollInterval: effectivePollInterval(cfg.ExecutionPollInterval, cfg.WorkerPollInterval),

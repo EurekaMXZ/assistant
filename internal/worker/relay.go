@@ -10,7 +10,14 @@ import (
 )
 
 func (s *Service) relayLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.settings.WorkerPollInterval)
+	interval := s.settings.OutboxPollInterval
+	if interval <= 0 {
+		interval = s.settings.WorkerPollInterval
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -18,7 +25,7 @@ func (s *Service) relayLoop(ctx context.Context) {
 			return
 		}
 
-		if err := s.engine.FlushOutbox(ctx, s.publishWorkflowEvent); err != nil && ctx.Err() == nil {
+		if err := s.engine.FlushOutbox(ctx, s.publishWorkflowEvents); err != nil && ctx.Err() == nil {
 			s.logger.Printf("outbox relay: %v", err)
 		}
 
@@ -30,15 +37,19 @@ func (s *Service) relayLoop(ctx context.Context) {
 	}
 }
 
-func (s *Service) publishWorkflowEvent(ctx context.Context, event workflow.WorkflowEvent) error {
-	value, err := json.Marshal(event)
-	if err != nil {
-		return err
+func (s *Service) publishWorkflowEvents(ctx context.Context, events []workflow.WorkflowEvent) error {
+	messages := make([]kafka.Message, 0, len(events))
+	for _, event := range events {
+		value, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		messages = append(messages, kafka.Message{
+			Key:   []byte(event.ConversationID),
+			Value: value,
+			Time:  event.CreatedAt,
+		})
 	}
 
-	return s.writer.WriteMessages(ctx, kafka.Message{
-		Key:   []byte(event.ConversationID),
-		Value: value,
-		Time:  event.CreatedAt,
-	})
+	return s.writer.WriteMessages(ctx, messages...)
 }

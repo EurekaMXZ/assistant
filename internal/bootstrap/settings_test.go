@@ -120,6 +120,7 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 		LLMClientActors:           2,
 		ExecutionActors:           4,
 		WorkerPollInterval:        2 * time.Second,
+		OutboxPollInterval:        125 * time.Millisecond,
 		WorkerLeaseTimeout:        3 * time.Minute,
 		LLMClientPollInterval:     3 * time.Second,
 		ExecutionPollInterval:     4 * time.Second,
@@ -149,6 +150,9 @@ func TestNewWorkerSettingsMapsConfig(t *testing.T) {
 	}
 	if settings.Sandbox.Provider != "firecracker" || settings.Sandbox.HTTP.BaseURL != "http://127.0.0.1:8787" || settings.Sandbox.HTTP.Token != "bridge-token" || settings.Sandbox.HTTP.HTTPClientTimeout != 7*time.Second {
 		t.Fatalf("unexpected sandbox bridge settings: %+v", settings.Sandbox)
+	}
+	if settings.Process.OutboxPollInterval != 125*time.Millisecond {
+		t.Fatalf("unexpected outbox poll interval: %v", settings.Process.OutboxPollInterval)
 	}
 	if settings.Sandbox.Cube.APIURL != "https://cube-api.internal" || settings.Sandbox.Cube.APIKey != "cube-key" || settings.Sandbox.Cube.MaxOutputBytes != 4096 {
 		t.Fatalf("unexpected cube sandbox settings: %+v", settings.Sandbox.Cube)

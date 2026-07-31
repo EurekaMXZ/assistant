@@ -30,7 +30,7 @@ type stubWorkflowEngine struct {
 	onHandle  func(workflow.WorkflowEvent)
 }
 
-func (s *stubWorkflowEngine) FlushOutbox(ctx context.Context, publish workflow.WorkflowEventPublisher) error {
+func (s *stubWorkflowEngine) FlushOutbox(ctx context.Context, publish workflow.WorkflowEventBatchPublisher) error {
 	s.mu.Lock()
 	s.flushCalls++
 	onFlush := s.onFlush
@@ -77,10 +77,11 @@ func (s *stubWorkflowEngine) handledEvents() []workflow.WorkflowEvent {
 }
 
 type stubWorkflowWriter struct {
-	mu       sync.Mutex
-	messages []kafka.Message
-	writeErr error
-	closed   bool
+	mu         sync.Mutex
+	messages   []kafka.Message
+	writeCalls int
+	writeErr   error
+	closed     bool
 }
 
 type blockingWorkflowWriter struct {
@@ -102,6 +103,7 @@ func (s *stubWorkflowWriter) WriteMessages(ctx context.Context, messages ...kafk
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.writeCalls++
 	s.messages = append(s.messages, messages...)
 	return s.writeErr
 }
@@ -119,6 +121,13 @@ func (s *stubWorkflowWriter) snapshot() ([]kafka.Message, bool) {
 	defer s.mu.Unlock()
 
 	return append([]kafka.Message(nil), s.messages...), s.closed
+}
+
+func (s *stubWorkflowWriter) writeCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.writeCalls
 }
 
 type fetchResult struct {
@@ -218,7 +227,7 @@ func TestPublishWorkflowEventWritesKafkaMessage(t *testing.T) {
 		CreatedAt:      time.Unix(7, 0).UTC(),
 	}
 
-	if err := service.publishWorkflowEvent(context.Background(), event); err != nil {
+	if err := service.publishWorkflowEvents(context.Background(), []workflow.WorkflowEvent{event}); err != nil {
 		t.Fatalf("publish workflow event: %v", err)
 	}
 
@@ -239,6 +248,26 @@ func TestPublishWorkflowEventWritesKafkaMessage(t *testing.T) {
 	}
 	if published.ID != event.ID || published.EventType != event.EventType || published.ConversationID != event.ConversationID {
 		t.Fatalf("unexpected published event: %#v", published)
+	}
+}
+
+func TestPublishWorkflowEventsWritesKafkaBatch(t *testing.T) {
+	writer := &stubWorkflowWriter{}
+	service := &Service{writer: writer}
+	events := []workflow.WorkflowEvent{
+		{ID: "evt_1", ConversationID: "conv_1", CreatedAt: time.Unix(1, 0).UTC()},
+		{ID: "evt_2", ConversationID: "conv_2", CreatedAt: time.Unix(2, 0).UTC()},
+	}
+
+	if err := service.publishWorkflowEvents(context.Background(), events); err != nil {
+		t.Fatalf("publish workflow events: %v", err)
+	}
+	if got := writer.writeCallCount(); got != 1 {
+		t.Fatalf("write calls = %d, want 1", got)
+	}
+	messages, _ := writer.snapshot()
+	if len(messages) != len(events) {
+		t.Fatalf("message count = %d, want %d", len(messages), len(events))
 	}
 }
 

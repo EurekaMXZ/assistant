@@ -178,7 +178,7 @@ func (e *Engine) ignoreDeletedConversation(ctx context.Context, conversationID s
 	return eventErr
 }
 
-func (e *Engine) FlushOutbox(ctx context.Context, publish WorkflowEventPublisher) error {
+func (e *Engine) FlushOutbox(ctx context.Context, publish WorkflowEventBatchPublisher) error {
 	return e.outbox.Flush(ctx, publish)
 }
 
