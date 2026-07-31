@@ -436,6 +436,9 @@ export interface ConversationTurnSummary {
   user_message?: Message;
   first_event_seq?: number;
   last_event_seq?: number;
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
   created_at: string;
   updated_at: string;
 }

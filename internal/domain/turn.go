@@ -51,17 +51,20 @@ type EnqueuedRetryTurn struct {
 }
 
 type ConversationTurnSummary struct {
-	ID             string    `json:"id"`
-	ConversationID string    `json:"conversation_id"`
-	Seq            int64     `json:"seq"`
-	RetryOfTurnID  string    `json:"retry_of_turn_id,omitempty"`
-	VariantIndex   int       `json:"variant_index"`
-	Status         string    `json:"status"`
-	UserMessage    *Message  `json:"user_message,omitempty"`
-	FirstEventSeq  int64     `json:"first_event_seq,omitempty"`
-	LastEventSeq   int64     `json:"last_event_seq,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string     `json:"id"`
+	ConversationID string     `json:"conversation_id"`
+	Seq            int64      `json:"seq"`
+	RetryOfTurnID  string     `json:"retry_of_turn_id,omitempty"`
+	VariantIndex   int        `json:"variant_index"`
+	Status         string     `json:"status"`
+	UserMessage    *Message   `json:"user_message,omitempty"`
+	FirstEventSeq  int64      `json:"first_event_seq,omitempty"`
+	LastEventSeq   int64      `json:"last_event_seq,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	FailedAt       *time.Time `json:"failed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type TurnRunSummary struct {

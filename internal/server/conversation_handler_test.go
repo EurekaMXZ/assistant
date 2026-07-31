@@ -188,6 +188,8 @@ func TestListTurnSummariesUsesTurnCursorsAndQuery(t *testing.T) {
 }
 
 func TestGetTurnContextReturnsTurnWindowAndEvents(t *testing.T) {
+	startedAt := time.Date(2026, time.July, 14, 10, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(12 * time.Second)
 	srv := newTestServer(UseCases{
 		Auth: AuthUseCases{AuthenticateAccessToken: authenticatedUser(domain.UserRoleUser)},
 		Conversations: ConversationUseCases{GetTurnContext: func(_ context.Context, ownerID string, conversationID string, turnSeq int64, before int, after int, beforeSeq int64, afterSeq int64) (*ConversationTurnContextPage, error) {
@@ -195,7 +197,10 @@ func TestGetTurnContextReturnsTurnWindowAndEvents(t *testing.T) {
 				t.Fatalf("unexpected turn context query: owner=%s conversation=%s turn=%d before=%d after=%d before_seq=%d after_seq=%d", ownerID, conversationID, turnSeq, before, after, beforeSeq, afterSeq)
 			}
 			return &ConversationTurnContextPage{
-				Turns:  []domain.ConversationTurnSummary{{ID: "turn-42", ConversationID: conversationID, Seq: 42, Status: domain.TurnStatusCompleted}},
+				Turns: []domain.ConversationTurnSummary{{
+					ID: "turn-42", ConversationID: conversationID, Seq: 42, Status: domain.TurnStatusCompleted,
+					StartedAt: &startedAt, CompletedAt: &completedAt,
+				}},
 				Events: []domain.ConversationEvent{{ID: "event-1", ConversationID: conversationID, TurnID: "turn-42", EventSeq: 100, EventKey: "message:1", SchemaVersion: 1, EventType: "message.completed", Payload: []byte(`{"message":{}}`)}},
 			}, nil
 		}},
@@ -204,7 +209,7 @@ func TestGetTurnContextReturnsTurnWindowAndEvents(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer token")
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"turn-42"`) || !strings.Contains(rec.Body.String(), `"event_seq":"100"`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"turn-42"`) || !strings.Contains(rec.Body.String(), `"event_seq":"100"`) || !strings.Contains(rec.Body.String(), `"completed_at":"2026-07-14T10:00:12Z"`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -225,6 +225,9 @@ function turnFromSummary(summary: ConversationTurnSummary): Turn {
     variant_index: summary.variant_index,
     status: summary.status,
     metadata: {},
+    ...(summary.started_at ? { started_at: summary.started_at } : {}),
+    ...(summary.completed_at ? { completed_at: summary.completed_at } : {}),
+    ...(summary.failed_at ? { failed_at: summary.failed_at } : {}),
     created_at: summary.created_at,
     updated_at: summary.updated_at,
   };

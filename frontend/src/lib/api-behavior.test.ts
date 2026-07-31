@@ -279,6 +279,8 @@ describe("turn navigation APIs", () => {
         },
         first_event_seq: 20,
         last_event_seq: 25,
+        started_at: "2026-01-01T00:00:01Z",
+        completed_at: "2026-01-01T00:00:08Z",
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
       },
@@ -299,6 +301,7 @@ describe("turn navigation APIs", () => {
     });
 
     expect(result.turns[0]?.user_message?.content_text).toBe("hello");
+    expect(result.turns[0]?.completed_at).toBe("2026-01-01T00:00:08Z");
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/v1/conversations/conversation-1/turns?limit=50&before=10&query=hello",
     );

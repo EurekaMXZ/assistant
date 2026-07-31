@@ -39,6 +39,9 @@ const conversationTurnSummarySelect = `
 		t.status,
 		t.created_at,
 		t.updated_at,
+		t.started_at,
+		t.completed_at,
+		t.failed_at,
 		user_message.id::text,
 		user_message.conversation_id::text,
 		user_message.turn_id::text,
@@ -160,6 +163,9 @@ func scanConversationTurnSummary(row scanRow) (*domain.ConversationTurnSummary, 
 	var (
 		item                   domain.ConversationTurnSummary
 		retryOfTurnID          sql.NullString
+		startedAt              sql.NullTime
+		completedAt            sql.NullTime
+		failedAt               sql.NullTime
 		messageID              sql.NullString
 		messageConversationID  sql.NullString
 		messageTurnID          sql.NullString
@@ -180,6 +186,9 @@ func scanConversationTurnSummary(row scanRow) (*domain.ConversationTurnSummary, 
 		&item.Status,
 		&item.CreatedAt,
 		&item.UpdatedAt,
+		&startedAt,
+		&completedAt,
+		&failedAt,
 		&messageID,
 		&messageConversationID,
 		&messageTurnID,
@@ -197,6 +206,15 @@ func scanConversationTurnSummary(row scanRow) (*domain.ConversationTurnSummary, 
 	}
 	if retryOfTurnID.Valid {
 		item.RetryOfTurnID = retryOfTurnID.String
+	}
+	if startedAt.Valid {
+		item.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		item.CompletedAt = &completedAt.Time
+	}
+	if failedAt.Valid {
+		item.FailedAt = &failedAt.Time
 	}
 	if messageID.Valid {
 		message := &domain.Message{

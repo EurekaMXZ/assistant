@@ -306,6 +306,9 @@ export const conversationTurnSummarySchema = z.object({
   user_message: messageSchema.optional(),
   first_event_seq: z.number().int().nonnegative().optional(),
   last_event_seq: z.number().int().nonnegative().optional(),
+  started_at: dateTime.optional(),
+  completed_at: dateTime.optional(),
+  failed_at: dateTime.optional(),
   created_at: dateTime,
   updated_at: dateTime,
 });

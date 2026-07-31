@@ -595,6 +595,8 @@ Response: `200 OK`
       "user_message": {},
       "first_event_seq": 100,
       "last_event_seq": 120,
+      "started_at": "2026-07-20T12:00:01Z",
+      "completed_at": "2026-07-20T12:01:00Z",
       "created_at": "2026-07-20T12:00:00Z",
       "updated_at": "2026-07-20T12:01:00Z"
     }
