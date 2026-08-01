@@ -155,7 +155,6 @@ func timeNowDefinition() llm.ModelTool {
 			},
 			"additionalProperties":false
 		}`),
-		Strict: true,
 	}
 }
 

@@ -76,7 +76,7 @@ func TestTimeNowIsRegisteredInDefaultToolsAndLocalExecutor(t *testing.T) {
 			continue
 		}
 		found = true
-		if len(definition.Tools) != 1 || definition.Tools[0].Name != timeNowName || !definition.Tools[0].Strict {
+		if len(definition.Tools) != 1 || definition.Tools[0].Name != timeNowName {
 			t.Fatalf("unexpected time namespace: %#v", definition)
 		}
 	}
@@ -104,9 +104,9 @@ func TestTimeNowIsRegisteredInDefaultToolsAndLocalExecutor(t *testing.T) {
 	}
 }
 
-func TestTimeNowDefinitionUsesStrictSchema(t *testing.T) {
+func TestTimeNowDefinitionUsesSchema(t *testing.T) {
 	definition := timeNowDefinition()
-	if definition.Type != llm.ModelToolTypeFunction || definition.Name != timeNowName || !definition.Strict {
+	if definition.Type != llm.ModelToolTypeFunction || definition.Name != timeNowName {
 		t.Fatalf("unexpected time.now definition: %#v", definition)
 	}
 
