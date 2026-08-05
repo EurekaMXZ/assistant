@@ -177,3 +177,33 @@ func TestStaticCatalogFiltersSandboxToolsByScope(t *testing.T) {
 		t.Fatalf("unexpected sandbox children with exec enabled: %#v", withExec[0].Tools)
 	}
 }
+
+func TestStaticCatalogFiltersDisabledBuiltInTools(t *testing.T) {
+	catalog := StaticCatalog{
+		Tools: []llm.ModelTool{
+			{
+				Type: llm.ModelToolTypeNamespace,
+				Name: "conversation",
+				Tools: []llm.ModelTool{
+					{Type: llm.ModelToolTypeFunction, Name: "kept"},
+					{Type: llm.ModelToolTypeFunction, Name: "disabled"},
+				},
+			},
+			{Type: llm.ModelToolTypeImageGeneration},
+		},
+		LoadToolSettings: func(context.Context) (map[string]bool, error) {
+			return map[string]bool{
+				"conversation.disabled": false,
+				ImageGeneration:         false,
+			}, nil
+		},
+	}
+
+	tools, err := catalog.ListTools(context.Background(), ToolScope{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "conversation" || len(tools[0].Tools) != 1 || tools[0].Tools[0].Name != "kept" {
+		t.Fatalf("unexpected filtered tools: %#v", tools)
+	}
+}

@@ -171,14 +171,14 @@ func TestManagementBillingAndAuditIntegration(t *testing.T) {
 	toolPriceUpdate := UpdateBillingToolPricesParams{
 		Currency: "USD", ActorUserID: adminID, ActorRole: domain.UserRoleAdmin, RequestID: "tool-price-update",
 		Prices: []BillingToolPriceUpdate{
-			{ToolKey: domain.BillingToolSandboxCreate, PricePerCallNanos: 250_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolSandboxCreate]},
-			{ToolKey: domain.BillingToolImageGeneration, PricePerCallNanos: 500_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolImageGeneration]},
-			{ToolKey: domain.BillingToolTavilySearch, PricePerCallNanos: 5_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilySearch]},
-			{ToolKey: domain.BillingToolTavilyExtract, PricePerCallNanos: 10_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilyExtract]},
+			{ToolKey: domain.BillingToolSandboxCreate, PricePerCallNanos: 250_000_000, Enabled: true, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolSandboxCreate]},
+			{ToolKey: domain.BillingToolImageGeneration, PricePerCallNanos: 500_000_000, Enabled: true, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolImageGeneration]},
+			{ToolKey: domain.BillingToolTavilySearch, PricePerCallNanos: 5_000_000, Enabled: true, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilySearch]},
+			{ToolKey: domain.BillingToolTavilyExtract, PricePerCallNanos: 10_000_000, Enabled: true, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilyExtract]},
 		},
 	}
 	toolPrices, err = billing.UpdateToolPrices(t.Context(), toolPriceUpdate)
-	if err != nil || len(toolPrices) != 4 || toolPrices[0].PricePerCall != "0.25" || !toolPrices[0].Enabled {
+	if err != nil || len(toolPrices) != len(domain.SupportedBillingToolKeys()) || toolPrices[0].PricePerCall != "0.25" || !toolPrices[0].Enabled {
 		t.Fatalf("update tool prices: prices=%#v err=%v", toolPrices, err)
 	}
 	if _, err := billing.UpdateToolPrices(t.Context(), toolPriceUpdate); !errors.Is(err, domain.ErrConflict) {

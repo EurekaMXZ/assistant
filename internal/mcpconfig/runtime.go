@@ -26,11 +26,12 @@ const (
 )
 
 type CompositeRuntime struct {
-	StaticCatalog tool.ToolCatalog
-	LocalExecutor tool.ToolExecutor
-	Repository    RuntimeRepository
-	Cipher        *credential.Cipher
-	Client        *SDKToolLister
+	StaticCatalog    tool.ToolCatalog
+	LocalExecutor    tool.ToolExecutor
+	LoadToolSettings func(context.Context) (map[string]bool, error)
+	Repository       RuntimeRepository
+	Cipher           *credential.Cipher
+	Client           *SDKToolLister
 }
 
 var _ tool.ToolCatalog = (*CompositeRuntime)(nil)
@@ -81,6 +82,15 @@ func (r *CompositeRuntime) Execute(ctx context.Context, scope tool.ToolScope, ca
 	if !strings.HasPrefix(name, runtimeToolPrefix) {
 		if r.LocalExecutor == nil {
 			return nil, errors.New("local tool executor is not configured")
+		}
+		if r.LoadToolSettings != nil {
+			settings, err := r.LoadToolSettings(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("check built-in tool availability: %w", err)
+			}
+			if enabled, configured := settings[canonicalToolSettingKey(name)]; configured && !enabled {
+				return nil, fmt.Errorf("built-in tool %q is disabled", name)
+			}
 		}
 		return r.LocalExecutor.Execute(ctx, scope, call)
 	}
@@ -201,6 +211,17 @@ func runtimeCallName(call tool.ToolCall) string {
 		return strings.TrimSpace(call.Name)
 	}
 	return llm.SafeToolName(joinRuntimeNamespace(call.Namespace, call.Name))
+}
+
+func canonicalToolSettingKey(name string) string {
+	switch name {
+	case tool.WebSearch:
+		return "tavily.search"
+	case tool.WebExtract:
+		return "tavily.extract"
+	default:
+		return name
+	}
 }
 
 func decryptRuntimeSecrets(cipher *credential.Cipher, serverID string, purpose string, ciphertext []byte, nonce []byte) (map[string]string, error) {

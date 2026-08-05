@@ -15,11 +15,23 @@ const (
 	BillingRedemptionCodeExpired  = "expired"
 	BillingRedemptionCodeRedeemed = "redeemed"
 
-	BillingToolSandboxCreate   = "sandbox.create"
-	BillingToolImageGeneration = "image_generation"
-	BillingToolTavilySearch    = "tavily.search"
-	BillingToolTavilyExtract   = "tavily.extract"
-	BillingToolMaxPriceNanos   = int64(9_007_199_254_740_991)
+	BillingToolSandboxCreate           = "sandbox.create"
+	BillingToolImageGeneration         = "image_generation"
+	BillingToolTavilySearch            = "tavily.search"
+	BillingToolTavilyExtract           = "tavily.extract"
+	BillingToolSandboxDestroy          = "sandbox.destroy"
+	BillingToolSandboxShellCreate      = "sandbox.shell_create"
+	BillingToolSandboxShellConnect     = "sandbox.shell_connect"
+	BillingToolSandboxShellDestroy     = "sandbox.shell_destroy"
+	BillingToolSandboxWriteFile        = "sandbox.write_file"
+	BillingToolSandboxEditFile         = "sandbox.edit_file"
+	BillingToolSandboxImportAttachment = "sandbox.import_attachment"
+	BillingToolSandboxExportFile       = "sandbox.export_file"
+	BillingToolConversationRenameTitle = "conversation.rename_title"
+	BillingToolConversationExportText  = "conversation.export_text"
+	BillingToolTimeNow                 = "time.now"
+	BillingToolAskUser                 = "ask_user"
+	BillingToolMaxPriceNanos           = int64(9_007_199_254_740_991)
 )
 
 func SupportedBillingToolKeys() []string {
@@ -28,6 +40,18 @@ func SupportedBillingToolKeys() []string {
 		BillingToolImageGeneration,
 		BillingToolTavilySearch,
 		BillingToolTavilyExtract,
+		BillingToolConversationRenameTitle,
+		BillingToolConversationExportText,
+		BillingToolSandboxDestroy,
+		BillingToolSandboxShellCreate,
+		BillingToolSandboxShellConnect,
+		BillingToolSandboxShellDestroy,
+		BillingToolSandboxWriteFile,
+		BillingToolSandboxEditFile,
+		BillingToolSandboxImportAttachment,
+		BillingToolSandboxExportFile,
+		BillingToolTimeNow,
+		BillingToolAskUser,
 	}
 }
 
@@ -104,6 +128,7 @@ type BillingToolPrice struct {
 	PricePerCallNanos int64     `json:"price_per_call_nanos"`
 	PricePerCall      string    `json:"price_per_call"`
 	Enabled           bool      `json:"enabled"`
+	ToolEnabled       bool      `json:"tool_enabled"`
 	Version           int64     `json:"version"`
 	UpdatedByUserID   string    `json:"updated_by_user_id,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`

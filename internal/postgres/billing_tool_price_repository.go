@@ -15,6 +15,7 @@ type BillingToolPriceUpdate struct {
 	ToolKey           string
 	PricePerCallNanos int64
 	Enabled           bool
+	ToolEnabled       bool
 	ExpectedVersion   int64
 }
 
@@ -77,10 +78,10 @@ func (r *BillingAccountRepository) UpdateToolPrices(ctx context.Context, params 
 		}
 		result, err := tx.Exec(ctx, `
 			UPDATE billing_tool_prices
-			SET price_per_call_nanos = $3, enabled = $4, version = version + 1,
-				updated_by_user_id = $5::uuid
-			WHERE tool_key = $1 AND currency = $2 AND version = $6
-		`, price.ToolKey, currency, price.PricePerCallNanos, price.Enabled, params.ActorUserID, price.ExpectedVersion)
+			SET price_per_call_nanos = $3, enabled = $4, tool_enabled = $5, version = version + 1,
+				updated_by_user_id = $6::uuid
+			WHERE tool_key = $1 AND currency = $2 AND version = $7
+		`, price.ToolKey, currency, price.PricePerCallNanos, price.Enabled, price.ToolEnabled, params.ActorUserID, price.ExpectedVersion)
 		if err != nil {
 			return nil, fmt.Errorf("update billing tool price %s: %w", price.ToolKey, err)
 		}
@@ -113,7 +114,7 @@ func (r *BillingAccountRepository) UpdateToolPrices(ctx context.Context, params 
 
 func listBillingToolPrices(ctx context.Context, tx pgx.Tx, currency string) ([]domain.BillingToolPrice, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT tool_key, currency, price_per_call_nanos, enabled, version,
+		SELECT tool_key, currency, price_per_call_nanos, enabled, tool_enabled, version,
 			COALESCE(updated_by_user_id::text, ''), created_at, updated_at
 		FROM billing_tool_prices
 		WHERE currency = $1
@@ -125,7 +126,7 @@ func listBillingToolPrices(ctx context.Context, tx pgx.Tx, currency string) ([]d
 	byKey := make(map[string]domain.BillingToolPrice)
 	for rows.Next() {
 		var item domain.BillingToolPrice
-		if err := rows.Scan(&item.ToolKey, &item.Currency, &item.PricePerCallNanos, &item.Enabled,
+		if err := rows.Scan(&item.ToolKey, &item.Currency, &item.PricePerCallNanos, &item.Enabled, &item.ToolEnabled,
 			&item.Version, &item.UpdatedByUserID, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan billing tool price: %w", err)
 		}
@@ -217,6 +218,30 @@ func billingToolKey(namespace string, name string) string {
 	switch qualified {
 	case domain.BillingToolSandboxCreate:
 		return domain.BillingToolSandboxCreate
+	case "sandbox.destroy":
+		return domain.BillingToolSandboxDestroy
+	case "sandbox.shell_create":
+		return domain.BillingToolSandboxShellCreate
+	case "sandbox.shell_connect":
+		return domain.BillingToolSandboxShellConnect
+	case "sandbox.shell_destroy":
+		return domain.BillingToolSandboxShellDestroy
+	case "sandbox.write_file":
+		return domain.BillingToolSandboxWriteFile
+	case "sandbox.edit_file":
+		return domain.BillingToolSandboxEditFile
+	case "sandbox.import_attachment":
+		return domain.BillingToolSandboxImportAttachment
+	case "sandbox.export_file":
+		return domain.BillingToolSandboxExportFile
+	case "conversation.rename_title":
+		return domain.BillingToolConversationRenameTitle
+	case "conversation.export_text":
+		return domain.BillingToolConversationExportText
+	case "time.now":
+		return domain.BillingToolTimeNow
+	case "ask_user":
+		return domain.BillingToolAskUser
 	case "internet.search", domain.BillingToolTavilySearch:
 		return domain.BillingToolTavilySearch
 	case "internet.extract", domain.BillingToolTavilyExtract:

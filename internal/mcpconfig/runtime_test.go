@@ -124,6 +124,23 @@ func TestCompositeRuntimeRejectsDisabledToolForOwner(t *testing.T) {
 	}
 }
 
+func TestCompositeRuntimeRejectsDisabledBuiltInToolAtExecution(t *testing.T) {
+	executor, err := tool.NewLocalExecutor(tool.TimeNowHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &CompositeRuntime{
+		LocalExecutor: executor,
+		LoadToolSettings: func(context.Context) (map[string]bool, error) {
+			return map[string]bool{"time.now": false}, nil
+		},
+	}
+	_, err = runtime.Execute(t.Context(), tool.ToolScope{}, tool.ToolCall{Name: tool.TimeNow, Arguments: json.RawMessage(`{}`)})
+	if err == nil || err.Error() != `built-in tool "time.now" is disabled` {
+		t.Fatalf("disabled built-in tool error = %v", err)
+	}
+}
+
 func TestCompositeRuntimeCallsSDKStreamableHTTPTool(t *testing.T) {
 	type toolInput struct {
 		Query string `json:"query"`

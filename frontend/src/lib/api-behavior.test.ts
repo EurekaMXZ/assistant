@@ -476,24 +476,28 @@ describe("tool pricing", () => {
         tool_key: "sandbox.create" as const,
         price_per_call_nanos: 250_000_000,
         enabled: true,
+        tool_enabled: true,
         version: 1,
       },
       {
         tool_key: "image_generation" as const,
         price_per_call_nanos: 500_000_000,
         enabled: true,
+        tool_enabled: true,
         version: 1,
       },
       {
         tool_key: "tavily.search" as const,
         price_per_call_nanos: 5_000_000,
         enabled: true,
+        tool_enabled: true,
         version: 1,
       },
       {
         tool_key: "tavily.extract" as const,
         price_per_call_nanos: 10_000_000,
         enabled: false,
+        tool_enabled: true,
         version: 1,
       },
     ];

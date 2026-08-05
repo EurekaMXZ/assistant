@@ -9,6 +9,7 @@ import (
 	assistantattachment "github.com/EurekaMXZ/assistant/internal/attachment"
 	"github.com/EurekaMXZ/assistant/internal/cache"
 	"github.com/EurekaMXZ/assistant/internal/credential"
+	"github.com/EurekaMXZ/assistant/internal/domain"
 	assistantkafka "github.com/EurekaMXZ/assistant/internal/kafka"
 	"github.com/EurekaMXZ/assistant/internal/mcpconfig"
 	"github.com/EurekaMXZ/assistant/internal/objectstore"
@@ -169,6 +170,9 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	if err != nil {
 		return nil, err
 	}
+	loadToolSettings := func(ctx context.Context) (map[string]bool, error) {
+		return loadBuiltinToolSettings(ctx, workflows.BillingUsage, settings.BillingCurrency)
+	}
 	toolDefinitions := tool.DefaultTools(settings.Workflow.ImageGenerationPartials)
 	if tavilyEnabled {
 		toolDefinitions = tool.DefaultToolsWithTavily(settings.Workflow.ImageGenerationPartials)
@@ -176,13 +180,15 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 	staticCatalog := tool.StaticCatalog{
 		Tools:             toolDefinitions,
 		EnableSandboxExec: settings.SandboxExecEnabled,
+		LoadToolSettings:  loadToolSettings,
 	}
 	mcpRuntime := &mcpconfig.CompositeRuntime{
-		StaticCatalog: staticCatalog,
-		LocalExecutor: toolExecutor,
-		Repository:    workflows.MCP,
-		Cipher:        workflows.CredentialCipher,
-		Client:        &mcpconfig.SDKToolLister{},
+		StaticCatalog:    staticCatalog,
+		LocalExecutor:    toolExecutor,
+		LoadToolSettings: loadToolSettings,
+		Repository:       workflows.MCP,
+		Cipher:           workflows.CredentialCipher,
+		Client:           &mcpconfig.SDKToolLister{},
 	}
 	workflowEngine := workflow.New(workflow.Dependencies{
 		Logger:                logger,
@@ -232,6 +238,26 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 		Interval: settings.AttachmentCleanup.Interval, BatchSize: settings.AttachmentCleanup.BatchSize,
 	}, generatedImageCleanup, artifactStore, logger)
 	return worker.New(logger, workflowEngine, settings.Process, writer, newReader, reaper, attachmentReaper, runArtifactReaper, generatedImageReaper, kafkaStreamPublisher, streamRecovery), nil
+}
+
+func loadBuiltinToolSettings(ctx context.Context, billingRepository interface {
+	ListToolPrices(context.Context, string) ([]domain.BillingToolPrice, error)
+}, currency string) (map[string]bool, error) {
+	prices, err := billingRepository.ListToolPrices(ctx, currency)
+	if err != nil {
+		return nil, err
+	}
+	settings := make(map[string]bool, len(prices)+2)
+	for _, price := range prices {
+		settings[price.ToolKey] = price.ToolEnabled
+	}
+	if enabled, ok := settings[domain.BillingToolTavilySearch]; ok {
+		settings[tool.WebSearch] = enabled
+	}
+	if enabled, ok := settings[domain.BillingToolTavilyExtract]; ok {
+		settings[tool.WebExtract] = enabled
+	}
+	return settings, nil
 }
 
 func buildSandboxRuntime(settings assistantsandbox.RuntimeSettings) (tool.SandboxManager, error) {

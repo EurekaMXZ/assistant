@@ -211,6 +211,7 @@ type BillingToolPriceInput struct {
 	ToolKey           string `json:"tool_key"`
 	PricePerCallNanos int64  `json:"price_per_call_nanos"`
 	Enabled           bool   `json:"enabled"`
+	ToolEnabled       bool   `json:"tool_enabled"`
 	Version           int64  `json:"version"`
 }
 

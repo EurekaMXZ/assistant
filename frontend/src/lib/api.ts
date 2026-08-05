@@ -679,7 +679,10 @@ export async function listAdminBillingToolPrices() {
 }
 
 export async function updateAdminBillingToolPrices(
-  toolPrices: Pick<BillingToolPrice, "tool_key" | "price_per_call_nanos" | "enabled" | "version">[],
+  toolPrices: Pick<
+    BillingToolPrice,
+    "tool_key" | "price_per_call_nanos" | "enabled" | "tool_enabled" | "version"
+  >[],
 ) {
   return apiFetch<{ tool_prices: BillingToolPrice[] }>(
     "/admin/billing/tool-prices",

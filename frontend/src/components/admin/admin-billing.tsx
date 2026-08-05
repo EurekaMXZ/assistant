@@ -53,7 +53,7 @@ const billingViews = [
   { id: "accounts", label: "账户", icon: WalletCards },
   { id: "transactions", label: "资金流水", icon: ReceiptText },
   { id: "usage", label: "用量明细", icon: Activity },
-  { id: "tool-prices", label: "工具计费", icon: BadgeDollarSign },
+  { id: "tool-prices", label: "工具配置", icon: BadgeDollarSign },
   { id: "codes", label: "兑换码", icon: Gift },
 ] as const satisfies ReadonlyArray<{ id: BillingView; label: string; icon: typeof WalletCards }>;
 

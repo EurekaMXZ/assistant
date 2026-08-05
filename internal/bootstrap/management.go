@@ -461,7 +461,7 @@ func attachManagementUseCases(useCases *server.UseCases, deps managementDependen
 			seen[key] = true
 			updates = append(updates, postgres.BillingToolPriceUpdate{
 				ToolKey: key, PricePerCallNanos: price.PricePerCallNanos, Enabled: price.Enabled,
-				ExpectedVersion: price.Version,
+				ToolEnabled: price.ToolEnabled, ExpectedVersion: price.Version,
 			})
 		}
 		return deps.billing.UpdateToolPrices(ctx, postgres.UpdateBillingToolPricesParams{

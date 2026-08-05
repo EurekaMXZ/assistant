@@ -11,17 +11,26 @@ import (
 type StaticCatalog struct {
 	Tools             []llm.ModelTool
 	EnableSandboxExec bool
+	LoadToolSettings  func(context.Context) (map[string]bool, error)
 }
 
-func (c StaticCatalog) listTools(scope ToolScope) ([]llm.ModelTool, error) {
+func (c StaticCatalog) listTools(ctx context.Context, scope ToolScope) ([]llm.ModelTool, error) {
 	tools := c.Tools
 	if len(tools) == 0 {
 		tools = DefaultTools()
 	}
+	var settings map[string]bool
+	if c.LoadToolSettings != nil {
+		var err error
+		settings, err = c.LoadToolSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	filtered := make([]llm.ModelTool, 0, len(tools))
 	for _, tool := range tools {
-		filteredTool, ok := c.filterToolForScope(tool, "", scope)
+		filteredTool, ok := c.filterToolForScope(tool, "", scope, settings)
 		if !ok {
 			continue
 		}
@@ -30,8 +39,8 @@ func (c StaticCatalog) listTools(scope ToolScope) ([]llm.ModelTool, error) {
 	return filtered, nil
 }
 
-func (c StaticCatalog) ListTools(_ context.Context, scope ToolScope) ([]llm.ModelTool, error) {
-	return c.listTools(scope)
+func (c StaticCatalog) ListTools(ctx context.Context, scope ToolScope) ([]llm.ModelTool, error) {
+	return c.listTools(ctx, scope)
 }
 
 func cloneModelTool(tool llm.ModelTool) llm.ModelTool {
@@ -58,13 +67,13 @@ func cloneModelTool(tool llm.ModelTool) llm.ModelTool {
 	return cloned
 }
 
-func (c StaticCatalog) filterToolForScope(tool llm.ModelTool, namespace string, scope ToolScope) (llm.ModelTool, bool) {
+func (c StaticCatalog) filterToolForScope(tool llm.ModelTool, namespace string, scope ToolScope, settings map[string]bool) (llm.ModelTool, bool) {
 	fullName := qualifiedToolName(namespace, tool.Name)
 	if tool.Type == llm.ModelToolTypeNamespace {
 		cloned := cloneModelTool(tool)
 		cloned.Tools = nil
 		for _, child := range tool.Tools {
-			filteredChild, ok := c.filterToolForScope(child, fullName, scope)
+			filteredChild, ok := c.filterToolForScope(child, fullName, scope, settings)
 			if !ok {
 				continue
 			}
@@ -76,14 +85,21 @@ func (c StaticCatalog) filterToolForScope(tool llm.ModelTool, namespace string, 
 		return cloned, true
 	}
 
-	if !c.toolEnabledInScope(fullName, scope) {
+	toolKey := fullName
+	if tool.Type == llm.ModelToolTypeImageGeneration {
+		toolKey = ImageGeneration
+	}
+	if !c.toolEnabledInScope(toolKey, scope, settings) {
 		return llm.ModelTool{}, false
 	}
 
 	return cloneModelTool(tool), true
 }
 
-func (c StaticCatalog) toolEnabledInScope(toolName string, scope ToolScope) bool {
+func (c StaticCatalog) toolEnabledInScope(toolName string, scope ToolScope, settings map[string]bool) bool {
+	if enabled, configured := settings[toolName]; configured && !enabled {
+		return false
+	}
 	switch toolName {
 	case SandboxCreate:
 		return !scope.HasSandbox

@@ -47,6 +47,7 @@ const (
 	WebSearch               = internetNamespace + "." + internetSearchName
 	WebExtract              = internetNamespace + "." + internetExtractName
 	AskUser                 = askUserName
+	ImageGeneration         = "image_generation"
 )
 
 func DefaultTools(partialImages ...int) []llm.ModelTool {

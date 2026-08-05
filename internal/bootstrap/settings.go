@@ -35,6 +35,7 @@ type baseSettings struct {
 type workerSettings struct {
 	CacheMaxConversations int
 	CacheTailCapacity     int
+	BillingCurrency       string
 	OpenAI                openai.Settings
 	Tavily                tavily.Settings
 	SandboxExecEnabled    bool
@@ -90,6 +91,7 @@ func newWorkerSettings(cfg config.Config) workerSettings {
 	return workerSettings{
 		CacheMaxConversations: cfg.CacheMaxConversations,
 		CacheTailCapacity:     cfg.CacheTailCapacity,
+		BillingCurrency:       cfg.BillingCurrency,
 		OpenAI: openai.Settings{
 			UserAgent:         cfg.OpenAIUserAgent,
 			HTTPClientTimeout: cfg.HTTPClientTimeout,

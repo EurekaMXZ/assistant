@@ -118,10 +118,10 @@ func TestTurnRunWorkflowLifecycleIntegration(t *testing.T) {
 	if _, err := billingRepository.UpdateToolPrices(t.Context(), UpdateBillingToolPricesParams{
 		Currency: "USD", ActorUserID: actorUserID, ActorRole: domain.UserRoleAdmin,
 		Prices: []BillingToolPriceUpdate{
-			{ToolKey: domain.BillingToolSandboxCreate, PricePerCallNanos: 400_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolSandboxCreate]},
-			{ToolKey: domain.BillingToolImageGeneration, PricePerCallNanos: 300_000_000, Enabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolImageGeneration]},
-			{ToolKey: domain.BillingToolTavilySearch, PricePerCallNanos: 10_000_000, Enabled: false, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilySearch]},
-			{ToolKey: domain.BillingToolTavilyExtract, PricePerCallNanos: 20_000_000, Enabled: false, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilyExtract]},
+			{ToolKey: domain.BillingToolSandboxCreate, PricePerCallNanos: 400_000_000, Enabled: true, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolSandboxCreate]},
+			{ToolKey: domain.BillingToolImageGeneration, PricePerCallNanos: 300_000_000, Enabled: true, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolImageGeneration]},
+			{ToolKey: domain.BillingToolTavilySearch, PricePerCallNanos: 10_000_000, Enabled: false, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilySearch]},
+			{ToolKey: domain.BillingToolTavilyExtract, PricePerCallNanos: 20_000_000, Enabled: false, ToolEnabled: true, ExpectedVersion: toolPriceVersions[domain.BillingToolTavilyExtract]},
 		},
 	}); err != nil {
 		t.Fatalf("configure tool prices: %v", err)

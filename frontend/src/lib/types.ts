@@ -133,7 +133,22 @@ export interface BillingRedemptionCodeIssue {
 }
 
 export type BillingToolKey =
-  "sandbox.create" | "image_generation" | "tavily.search" | "tavily.extract";
+  | "sandbox.create"
+  | "image_generation"
+  | "tavily.search"
+  | "tavily.extract"
+  | "conversation.rename_title"
+  | "conversation.export_text"
+  | "sandbox.destroy"
+  | "sandbox.shell_create"
+  | "sandbox.shell_connect"
+  | "sandbox.shell_destroy"
+  | "sandbox.write_file"
+  | "sandbox.edit_file"
+  | "sandbox.import_attachment"
+  | "sandbox.export_file"
+  | "time.now"
+  | "ask_user";
 
 export interface BillingToolPrice {
   tool_key: BillingToolKey;
@@ -141,6 +156,7 @@ export interface BillingToolPrice {
   price_per_call_nanos: number;
   price_per_call: string;
   enabled: boolean;
+  tool_enabled: boolean;
   version: number;
   updated_by_user_id?: string;
   created_at: string;

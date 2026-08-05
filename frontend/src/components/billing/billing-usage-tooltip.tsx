@@ -10,6 +10,18 @@ const toolNames: Record<BillingToolKey, string> = {
   image_generation: "图片生成",
   "tavily.search": "Tavily Search",
   "tavily.extract": "Tavily Extract",
+  "conversation.rename_title": "Rename Conversation",
+  "conversation.export_text": "Export Text",
+  "sandbox.destroy": "Destroy Sandbox",
+  "sandbox.shell_create": "Create Shell",
+  "sandbox.shell_connect": "Run Shell Command",
+  "sandbox.shell_destroy": "Close Shell",
+  "sandbox.write_file": "Write Sandbox File",
+  "sandbox.edit_file": "Edit Sandbox File",
+  "sandbox.import_attachment": "Import Attachment",
+  "sandbox.export_file": "Export Sandbox File",
+  "time.now": "Current Time",
+  ask_user: "Ask User",
 };
 
 const triggerClassName =

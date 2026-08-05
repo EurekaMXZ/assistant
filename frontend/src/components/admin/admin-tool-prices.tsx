@@ -1,7 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Box, FileText, ImageIcon, Search } from "lucide-react";
+import {
+  Box,
+  CircleHelp,
+  Clock3,
+  Download,
+  FileText,
+  ImageIcon,
+  Pencil,
+  Plug,
+  Search,
+  Terminal,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import { SavingIcon } from "./admin-shared";
 import { AdminListPage } from "@/components/admin/admin-list-page";
@@ -18,16 +31,36 @@ const toolMeta = {
   image_generation: { name: "Image Generation", icon: ImageIcon },
   "tavily.search": { name: "Tavily Search", icon: Search },
   "tavily.extract": { name: "Tavily Extract", icon: FileText },
+  "conversation.rename_title": { name: "Rename Conversation", icon: Pencil },
+  "conversation.export_text": { name: "Export Text", icon: Download },
+  "sandbox.destroy": { name: "Destroy Sandbox", icon: Trash2 },
+  "sandbox.shell_create": { name: "Create Shell", icon: Terminal },
+  "sandbox.shell_connect": { name: "Run Shell Command", icon: Terminal },
+  "sandbox.shell_destroy": { name: "Close Shell", icon: Plug },
+  "sandbox.write_file": { name: "Write Sandbox File", icon: Upload },
+  "sandbox.edit_file": { name: "Edit Sandbox File", icon: Pencil },
+  "sandbox.import_attachment": { name: "Import Attachment", icon: Upload },
+  "sandbox.export_file": { name: "Export Sandbox File", icon: Download },
+  "time.now": { name: "Current Time", icon: Clock3 },
+  ask_user: { name: "Ask User", icon: CircleHelp },
 } satisfies Record<BillingToolKey, { name: string; icon: typeof Box }>;
 
 interface ToolPriceDraft {
   amount: string;
-  enabled: boolean;
+  billingEnabled: boolean;
+  toolEnabled: boolean;
 }
 
 function priceDrafts(items: BillingToolPrice[]) {
   return Object.fromEntries(
-    items.map((item) => [item.tool_key, { amount: item.price_per_call, enabled: item.enabled }]),
+    items.map((item) => [
+      item.tool_key,
+      {
+        amount: item.price_per_call,
+        billingEnabled: item.enabled,
+        toolEnabled: item.tool_enabled,
+      },
+    ]),
   );
 }
 
@@ -59,7 +92,7 @@ export function AdminToolPrices() {
   const updateDraft = (key: BillingToolKey, patch: Partial<ToolPriceDraft>) => {
     setDrafts((current) => ({
       ...current,
-      [key]: { amount: "", enabled: false, ...current[key], ...patch },
+      [key]: { amount: "", billingEnabled: false, toolEnabled: false, ...current[key], ...patch },
     }));
   };
 
@@ -71,10 +104,12 @@ export function AdminToolPrices() {
         const draft = drafts[price.tool_key];
         if (!draft) throw new Error(`缺少 ${toolMeta[price.tool_key].name} 配置`);
         const pricePerCall = parseDecimalNanos(draft.amount);
-        if (draft.enabled && pricePerCall <= 0) throw new Error("启用计费时单次价格必须大于 0");
+        if (draft.billingEnabled && pricePerCall <= 0)
+          throw new Error("启用计费时单次价格必须大于 0");
         return {
           tool_key: price.tool_key,
-          enabled: draft.enabled,
+          enabled: draft.billingEnabled,
+          tool_enabled: draft.toolEnabled,
           price_per_call_nanos: pricePerCall,
           version: price.version,
         };
@@ -105,7 +140,8 @@ export function AdminToolPrices() {
           <colgroup>
             <col className="w-[18rem]" />
             <col className="w-[16rem]" />
-            <col className="w-[8rem]" />
+            <col className="w-[9rem]" />
+            <col className="w-[9rem]" />
             <col className="w-[12rem]" />
             <col className="w-[8rem]" />
           </colgroup>
@@ -113,7 +149,8 @@ export function AdminToolPrices() {
             <tr className="border-b">
               <th className={tableClasses.headStart}>工具</th>
               <th className={tableClasses.head}>计费键</th>
-              <th className={tableClasses.head}>启用</th>
+              <th className={tableClasses.head}>工具启用</th>
+              <th className={tableClasses.head}>计费启用</th>
               <th className={`${tableClasses.head} text-right`}>
                 单次价格 ({prices[0]?.currency || "-"})
               </th>
@@ -139,18 +176,32 @@ export function AdminToolPrices() {
                   >
                     {price.tool_key}
                   </td>
-                  <td className={tableClasses.cell} data-label="启用">
+                  <td className={tableClasses.cell} data-label="工具启用">
                     <label className="inline-flex items-center gap-2">
                       <input
                         type="checkbox"
                         className="size-4 accent-foreground"
                         disabled={saving}
-                        checked={draft?.enabled || false}
+                        checked={draft?.toolEnabled || false}
                         onChange={(event) =>
-                          updateDraft(price.tool_key, { enabled: event.target.checked })
+                          updateDraft(price.tool_key, { toolEnabled: event.target.checked })
                         }
                       />
-                      <span>{draft?.enabled ? "计费" : "停用"}</span>
+                      <span>{draft?.toolEnabled ? "可用" : "停用"}</span>
+                    </label>
+                  </td>
+                  <td className={tableClasses.cell} data-label="计费启用">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-foreground"
+                        disabled={saving}
+                        checked={draft?.billingEnabled || false}
+                        onChange={(event) =>
+                          updateDraft(price.tool_key, { billingEnabled: event.target.checked })
+                        }
+                      />
+                      <span>{draft?.billingEnabled ? "计费" : "免费"}</span>
                     </label>
                   </td>
                   <td className={tableClasses.cell} data-label="单次价格">

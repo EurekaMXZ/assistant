@@ -1881,19 +1881,20 @@ Permanently disables an active redemption code. The amount and expiry remain imm
 
 ### GET `/admin/billing/tool-prices`
 
-Returns the configured-currency flat prices for `sandbox.create`, `image_generation`, `tavily.search`, and `tavily.extract`. The local `internet.search` and `internet.extract` tools are billed under the corresponding Tavily keys.
+Returns the configured-currency configuration for every built-in tool. `tool_enabled` controls whether the tool is exposed to the model and accepted for execution. `enabled` controls whether completed calls are charged. The local `internet.search` and `internet.extract` tools use the corresponding `tavily.search` and `tavily.extract` configuration keys.
 
 ### PUT `/admin/billing/tool-prices`
 
-Replaces the complete supported tool pricing plan atomically. Every supported tool must appear exactly once. Enabled prices must be greater than zero; disabled tools may retain a non-negative price for later activation.
+Replaces the complete supported built-in tool plan atomically. Every supported tool must appear exactly once. Enabled prices must be greater than zero; disabled billing may retain a non-negative price for later activation. Disabling a tool does not change its stored price.
 
 ```json
 {
   "tool_prices": [
-    { "tool_key": "sandbox.create", "price_per_call_nanos": 250000000, "enabled": true, "version": 1 },
-    { "tool_key": "image_generation", "price_per_call_nanos": 500000000, "enabled": true, "version": 1 },
-    { "tool_key": "tavily.search", "price_per_call_nanos": 5000000, "enabled": true, "version": 1 },
-    { "tool_key": "tavily.extract", "price_per_call_nanos": 10000000, "enabled": true, "version": 1 }
+    { "tool_key": "sandbox.create", "tool_enabled": true, "price_per_call_nanos": 250000000, "enabled": true, "version": 1 },
+    { "tool_key": "image_generation", "tool_enabled": true, "price_per_call_nanos": 500000000, "enabled": true, "version": 1 },
+    { "tool_key": "tavily.search", "tool_enabled": true, "price_per_call_nanos": 5000000, "enabled": true, "version": 1 },
+    { "tool_key": "tavily.extract", "tool_enabled": true, "price_per_call_nanos": 10000000, "enabled": true, "version": 1 },
+    { "tool_key": "conversation.rename_title", "tool_enabled": true, "price_per_call_nanos": 0, "enabled": false, "version": 1 }
   ]
 }
 ```
