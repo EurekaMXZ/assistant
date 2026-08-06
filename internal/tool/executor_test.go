@@ -493,6 +493,9 @@ func (s *stubSandboxManager) ExecSandboxCommand(_ context.Context, handle domain
 		}
 		return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID, Output: request.Args[len(request.Args)-1] + "\n", ExitCode: 0}, nil
 	}
+	if request.Command == "test" {
+		return &domain.SandboxCommandResult{RuntimeID: handle.RuntimeID, ExitCode: 0}, nil
+	}
 	return s.execResult, nil
 }
 

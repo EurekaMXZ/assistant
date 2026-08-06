@@ -41,6 +41,7 @@ type AssistantAttachmentResult struct {
 	Category    string `json:"category"`
 	SizeBytes   int64  `json:"size_bytes"`
 	SHA256      string `json:"sha256"`
+	ObjectKey   string `json:"-"`
 }
 
 type AssistantAttachmentReference struct {
@@ -226,7 +227,7 @@ func persistAssistantAttachment(ctx context.Context, attachments AssistantAttach
 	removeObject = false
 	return &AssistantAttachmentResult{
 		ID: attachment.ID, Filename: attachment.Filename, ContentType: attachment.ContentType,
-		Category: attachment.Category, SizeBytes: attachment.SizeBytes, SHA256: attachment.SHA256,
+		Category: attachment.Category, SizeBytes: attachment.SizeBytes, SHA256: attachment.SHA256, ObjectKey: attachment.ObjectKey,
 	}, nil
 }
 

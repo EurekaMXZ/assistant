@@ -210,6 +210,28 @@ func TestBuildPublicToolPresentationHidesSandboxEditText(t *testing.T) {
 	}
 }
 
+func TestBuildPublicToolPresentationSummarizesSandboxReadWithoutContent(t *testing.T) {
+	presentation := BuildPublicToolPresentation(
+		"",
+		"",
+		SandboxReadFile,
+		"completed",
+		json.RawMessage(`{"path":"reports/result.txt","offset":1,"limit":2000}`),
+		[]byte(`{"file":{"path":"/workspace/reports/result.txt","content_type":"text/plain; charset=utf-8","size_bytes":17,"content":"private text"}}`),
+		"",
+	)
+	if presentation.Title != "沙箱文件读取完成" || presentation.InputText != "reports/result.txt" {
+		t.Fatalf("unexpected read presentation: %#v", presentation)
+	}
+	encoded, err := json.Marshal(presentation)
+	if err != nil {
+		t.Fatalf("marshal presentation: %v", err)
+	}
+	if strings.Contains(string(encoded), "private text") {
+		t.Fatalf("read presentation leaked file content: %s", encoded)
+	}
+}
+
 func TestBuildPublicToolPresentationExposesPersistentShellResult(t *testing.T) {
 	presentation := BuildPublicToolPresentation(
 		"",

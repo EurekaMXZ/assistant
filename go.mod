@@ -20,6 +20,7 @@ require (
 	github.com/tencentcloud/CubeSandbox/sdk/go v0.0.0-20260711063325-a164417f4972
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
 )

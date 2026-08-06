@@ -494,6 +494,7 @@ export const billingToolPriceSchema = z.object({
     "sandbox.shell_destroy",
     "sandbox.write_file",
     "sandbox.edit_file",
+    "sandbox.read_file",
     "sandbox.import_attachment",
     "sandbox.export_file",
     "time.now",

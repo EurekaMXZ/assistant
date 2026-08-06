@@ -230,6 +230,8 @@ func billingToolKey(namespace string, name string) string {
 		return domain.BillingToolSandboxWriteFile
 	case "sandbox.edit_file":
 		return domain.BillingToolSandboxEditFile
+	case "sandbox.read_file":
+		return domain.BillingToolSandboxReadFile
 	case "sandbox.import_attachment":
 		return domain.BillingToolSandboxImportAttachment
 	case "sandbox.export_file":

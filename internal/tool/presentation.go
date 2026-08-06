@@ -123,6 +123,22 @@ func applySandboxPublicPresentation(presentation *PublicToolPresentation, toolNa
 				"Replacements: " + fmt.Sprint(file["replacements"]),
 			})
 		}
+	case SandboxReadFile:
+		presentation.Title = statusSummary(status, "正在读取文件", "沙箱文件读取完成", "读取沙箱文件失败")
+		presentation.InputLabel = "File"
+		presentation.InputText = stringField(args, "path")
+		if file := nestedObject(result, "file"); file != nil {
+			contentType := rawStringField(file, "content_type")
+			details := []string{
+				"Sandbox path: " + rawStringField(file, "path"),
+				"Type: " + contentType,
+				"Size: " + fmt.Sprint(file["size_bytes"]),
+			}
+			if image := nestedObject(file, "image"); image != nil {
+				details = append(details, "Image attached to the next model request")
+			}
+			presentation.Details = compactDetails(details)
+		}
 	case SandboxImportAttachment:
 		presentation.Title = statusSummary(status, "正在导入附件", "附件已导入沙箱", "导入附件失败")
 		presentation.InputLabel = "Attachment"

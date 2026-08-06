@@ -131,6 +131,16 @@ func buildWorker(ctx context.Context, logger *log.Logger, settings workerSetting
 				Locker:    workflows.Locker,
 			},
 		},
+		tool.ReadSandboxFileHandler{
+			UseCase: tool.ReadSandboxFile{
+				Attachments: workflows.GeneratedAttachments,
+				Blobs:       artifactStore,
+				Sandboxes:   workflows.Sandboxes,
+				Runtime:     sandboxRuntime,
+				Files:       sandboxFileReader,
+				Locker:      workflows.Locker,
+			},
+		},
 		tool.ImportSandboxAttachmentHandler{
 			UseCase: tool.ImportSandboxAttachment{
 				Attachments: workflows.Attachments,

@@ -24,6 +24,7 @@ const (
 	sandboxShellDestroyName     = "shell_destroy"
 	sandboxWriteFileName        = "write_file"
 	sandboxEditFileName         = "edit_file"
+	sandboxReadFileName         = "read_file"
 	sandboxImportAttachmentName = "import_attachment"
 	sandboxExportFileName       = "export_file"
 	internetSearchName          = "search"
@@ -42,6 +43,7 @@ const (
 	SandboxShellDestroy     = sandboxNamespace + "." + sandboxShellDestroyName
 	SandboxWriteFile        = sandboxNamespace + "." + sandboxWriteFileName
 	SandboxEditFile         = sandboxNamespace + "." + sandboxEditFileName
+	SandboxReadFile         = sandboxNamespace + "." + sandboxReadFileName
 	SandboxImportAttachment = sandboxNamespace + "." + sandboxImportAttachmentName
 	SandboxExportFileTool   = sandboxNamespace + "." + sandboxExportFileName
 	WebSearch               = internetNamespace + "." + internetSearchName
@@ -128,6 +130,7 @@ func sandboxNamespaceDefinition() llm.ModelTool {
 		sandboxShellDestroyDefinition(),
 		sandboxWriteFileDefinition(),
 		sandboxEditFileDefinition(),
+		sandboxReadFileDefinition(),
 		sandboxImportAttachmentDefinition(),
 		sandboxExportFileDefinition(),
 	)
@@ -376,6 +379,25 @@ func sandboxEditFileDefinition() llm.ModelTool {
 			"additionalProperties":false
 		}`),
 		Strict: true,
+	}
+}
+
+func sandboxReadFileDefinition() llm.ModelTool {
+	return llm.ModelTool{
+		Type:        llm.ModelToolTypeFunction,
+		Name:        sandboxReadFileName,
+		Description: "Read a UTF-8 text file or a JPEG, PNG, GIF, or WebP image from the active sandbox workspace. Text output is limited to 2,000 lines, 2,000 characters per line, and 50 KiB; use offset to continue. Images are attached to the next model request for visual understanding and are not returned as Base64 text.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{"type":"string","maxLength":4096,"description":"Absolute path inside /workspace, or a path relative to /workspace."},
+				"offset":{"type":"integer","minimum":1,"description":"1-indexed line number to start reading from. Defaults to 1."},
+				"limit":{"type":"integer","minimum":1,"maximum":2000,"description":"Maximum number of lines to return. Defaults to 2000."}
+			},
+			"required":["path"],
+			"additionalProperties":false
+		}`),
+		Strict: false,
 	}
 }
 

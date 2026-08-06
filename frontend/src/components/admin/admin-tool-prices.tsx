@@ -39,6 +39,7 @@ const toolMeta = {
   "sandbox.shell_destroy": { name: "Close Shell", icon: Plug },
   "sandbox.write_file": { name: "Write Sandbox File", icon: Upload },
   "sandbox.edit_file": { name: "Edit Sandbox File", icon: Pencil },
+  "sandbox.read_file": { name: "Read Sandbox File", icon: FileText },
   "sandbox.import_attachment": { name: "Import Attachment", icon: Upload },
   "sandbox.export_file": { name: "Export Sandbox File", icon: Download },
   "time.now": { name: "Current Time", icon: Clock3 },

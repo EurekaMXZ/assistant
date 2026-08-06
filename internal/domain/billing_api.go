@@ -25,6 +25,7 @@ const (
 	BillingToolSandboxShellDestroy     = "sandbox.shell_destroy"
 	BillingToolSandboxWriteFile        = "sandbox.write_file"
 	BillingToolSandboxEditFile         = "sandbox.edit_file"
+	BillingToolSandboxReadFile         = "sandbox.read_file"
 	BillingToolSandboxImportAttachment = "sandbox.import_attachment"
 	BillingToolSandboxExportFile       = "sandbox.export_file"
 	BillingToolConversationRenameTitle = "conversation.rename_title"
@@ -48,6 +49,7 @@ func SupportedBillingToolKeys() []string {
 		BillingToolSandboxShellDestroy,
 		BillingToolSandboxWriteFile,
 		BillingToolSandboxEditFile,
+		BillingToolSandboxReadFile,
 		BillingToolSandboxImportAttachment,
 		BillingToolSandboxExportFile,
 		BillingToolTimeNow,

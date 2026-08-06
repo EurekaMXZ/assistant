@@ -72,6 +72,47 @@ type EditSandboxFileHandler struct {
 	UseCase EditSandboxFile
 }
 
+type ReadSandboxFileHandler struct {
+	UseCase ReadSandboxFile
+}
+
+func (h ReadSandboxFileHandler) ToolName() string {
+	return SandboxReadFile
+}
+
+func (h ReadSandboxFileHandler) Execute(ctx context.Context, scope ToolScope, call ToolCall) (*ToolExecutionResult, error) {
+	var input struct {
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+	}
+	if err := decodeToolArguments(call, SandboxReadFile, &input); err != nil {
+		return nil, err
+	}
+	result, err := h.UseCase.Execute(ctx, SandboxFileReadInput{
+		ConversationID: scope.ConversationID,
+		TurnID:         scope.TurnID,
+		OwnerUserID:    scope.OwnerUserID,
+		CallID:         call.CallID,
+		Path:           input.Path,
+		Offset:         input.Offset,
+		Limit:          input.Limit,
+		RequestKey:     call.RequestKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalToolOutput(SandboxReadFile, map[string]any{
+		"conversation_id": scope.ConversationID,
+		"turn_id":         scope.TurnID,
+		"file":            result,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return outputOnlyExecutionResult(call.CallID, payload), nil
+}
+
 func (h WriteSandboxFileHandler) ToolName() string {
 	return SandboxWriteFile
 }

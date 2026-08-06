@@ -116,6 +116,7 @@ func (o *ToolOrchestrator) PrepareNextScheduledRunFromToolCalls(ctx context.Cont
 	nextInput = append(nextInput, o.replayOutputItems(outcome.Model.OutputItems)...)
 	nextScope := cloneToolScope(state.Scope)
 	toolResults := make([]llm.ModelItem, 0, len(records))
+	var sandboxImages []sandboxReadFileImageInput
 	for _, group := range outcome.ExecutionPlan.Groups {
 		for _, planned := range group.Calls {
 			record, ok := byOperation[planned.StableOperationID]
@@ -144,9 +145,25 @@ func (o *ToolOrchestrator) PrepareNextScheduledRunFromToolCalls(ctx context.Cont
 			nextInput = append(nextInput, item)
 			toolResults = append(toolResults, item)
 			if record.Status != domain.ToolCallStatusFailed && record.Status != domain.ToolCallStatusUncertain && record.Status != domain.ToolCallStatusCancelled {
+				file, err := tool.SandboxReadFileImageReference(state.Scope, planned.Call, output)
+				if err != nil {
+					return fmt.Errorf("decode sandbox.read_file continuation: %w", err)
+				}
+				if file != nil && file.Image != nil {
+					sandboxImages = append(sandboxImages, sandboxReadFileImageInput{Path: file.Path, Reference: *file.Image})
+				}
+			}
+			if record.Status != domain.ToolCallStatusFailed && record.Status != domain.ToolCallStatusUncertain && record.Status != domain.ToolCallStatusCancelled {
 				nextScope = applyToolScopeDelta(nextScope, planned.Call)
 			}
 		}
+	}
+	if len(sandboxImages) > 0 {
+		media, err := sandboxReadFileImageMessage(sandboxImages)
+		if err != nil {
+			return err
+		}
+		nextInput = append(nextInput, media)
 	}
 	nextState, nextRequest, err := o.PrepareScheduledRun(ctx, ToolRunInput{
 		Scope: nextScope, Model: state.Request.Model, ContextWindowTokens: state.Request.ContextWindowTokens,
@@ -167,6 +184,34 @@ func (o *ToolOrchestrator) PrepareNextScheduledRunFromToolCalls(ctx context.Cont
 	outcome.NextRequest = nextRequest
 	outcome.Postprocessed = true
 	return nil
+}
+
+type sandboxReadFileImageInput struct {
+	Path      string
+	Reference tool.SandboxImageReference
+}
+
+func sandboxReadFileImageMessage(images []sandboxReadFileImageInput) (llm.ModelItem, error) {
+	content := make([]any, 0, len(images)+1)
+	content = append(content, map[string]string{
+		"type": "input_text",
+		"text": "Images read from the sandbox. Use them to continue the task.",
+	})
+	for _, image := range images {
+		content = append(content, map[string]any{
+			"type":      "input_image",
+			"image_ref": image.Reference,
+		})
+	}
+	raw, err := json.Marshal(map[string]any{
+		"type":    llm.ModelItemMessage,
+		"role":    domain.RoleUser,
+		"content": content,
+	})
+	if err != nil {
+		return llm.ModelItem{}, fmt.Errorf("marshal sandbox image continuation: %w", err)
+	}
+	return llm.ModelItem{Type: llm.ModelItemMessage, Role: domain.RoleUser, Raw: raw}, nil
 }
 
 func (s *AwaitingInputSignal) Error() string {

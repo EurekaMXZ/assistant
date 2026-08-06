@@ -122,14 +122,14 @@ func TestContextCompactorHydratesExternalizedGeneratedImage(t *testing.T) {
 		store:    store, model: model, blobs: anchors, cache: cache.New(4, 4),
 		models: &stubTurnExecutionReader{execution: execution},
 		loader: &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{
-			data: map[string][]byte{"generated.png": []byte("pngdata")},
+			data: map[string][]byte{"generated.png": providerTestPNG(t, 2, 2)},
 		}},
 	}
 	state := &ScheduledRunState{
 		StepIndex: 1, InitialInputCount: 1, Scope: tool.ToolScope{ConversationID: "conv-1", TurnID: "turn-1"},
 		Request: llm.ModelRequest{ContextWindowTokens: execution.ContextWindowTokens, Input: []llm.ModelItem{{
 			ID: "image-1", Type: llm.ModelItemImageGenerationCall,
-			Raw: json.RawMessage(`{"type":"image_generation_call","result_ref":{"attachment_id":"attachment-1","object_key":"generated.png","content_type":"image/png","size_bytes":7}}`),
+			Raw: json.RawMessage(`{"type":"image_generation_call","result_ref":{"attachment_id":"attachment-1","object_key":"generated.png","content_type":"image/png"}}`),
 		}}},
 	}
 
@@ -137,7 +137,7 @@ func TestContextCompactorHydratesExternalizedGeneratedImage(t *testing.T) {
 		t.Fatalf("compact image context: didCompact=%t err=%v", didCompact, err)
 	}
 	request := model.streamRequests[0]
-	if request.Input[0].Type != llm.ModelItemMessage || !strings.Contains(string(request.Input[0].Raw), `data:image/png;base64,cG5nZGF0YQ==`) {
+	if request.Input[0].Type != llm.ModelItemMessage || !strings.Contains(string(request.Input[0].Raw), `data:image/png;base64,`) {
 		t.Fatalf("compaction request image = %#v", request.Input[0])
 	}
 }

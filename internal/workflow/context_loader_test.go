@@ -1,9 +1,14 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -164,7 +169,7 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 		},
 		attachmentBlobs: &stubContextLoaderArtifactStore{
 			data: map[string][]byte{
-				"attachments/conv-1/att-img/screen.png": []byte("pngdata"),
+				"attachments/conv-1/att-img/screen.png": providerTestPNG(t, 2, 2),
 			},
 		},
 	}
@@ -213,13 +218,13 @@ func TestContextLoaderBuildsImageMessageInputWithAttachmentContent(t *testing.T)
 
 func TestContextLoaderHydratesExternalizedGeneratedImageAndOmitsLegacyCall(t *testing.T) {
 	loader := &ContextLoader{attachmentBlobs: &stubContextLoaderArtifactStore{
-		data: map[string][]byte{"generated.png": []byte("pngdata")},
+		data: map[string][]byte{"generated.png": providerTestPNG(t, 2, 2)},
 	}}
 	state := &ScheduledRunState{Request: llm.ModelRequest{Input: []llm.ModelItem{
 		{Type: llm.ModelItemMessage, Role: domain.RoleUser, Content: "Describe the image"},
 		{
 			ID: "image-with-reference", Type: llm.ModelItemImageGenerationCall,
-			Raw: json.RawMessage(`{"type":"image_generation_call","result_ref":{"attachment_id":"attachment-1","object_key":"generated.png","content_type":"image/png","size_bytes":7}}`),
+			Raw: json.RawMessage(`{"type":"image_generation_call","result_ref":{"attachment_id":"attachment-1","object_key":"generated.png","content_type":"image/png"}}`),
 		},
 		{ID: "legacy-image", Type: llm.ModelItemImageGenerationCall},
 	}}}
@@ -234,9 +239,93 @@ func TestContextLoaderHydratesExternalizedGeneratedImageAndOmitsLegacyCall(t *te
 		t.Fatalf("generated image input = %#v", state.Request.Input[1])
 	}
 	raw := string(state.Request.Input[1].Raw)
-	if !strings.Contains(raw, `"type":"input_image"`) || !strings.Contains(raw, `data:image/png;base64,cG5nZGF0YQ==`) {
+	if !strings.Contains(raw, `"type":"input_image"`) || !strings.Contains(raw, `data:image/png;base64,`) {
 		t.Fatalf("generated image was not hydrated: %s", raw)
 	}
+}
+
+func TestDownsampleProviderImageLimitsLongestSide(t *testing.T) {
+	data := providerTestJPEG(t, 2050, 1025)
+	prepared, contentType, err := downsampleProviderImage(data, "image/jpeg")
+	if err != nil {
+		t.Fatalf("downsample provider image: %v", err)
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(prepared))
+	if err != nil {
+		t.Fatalf("decode prepared image: %v", err)
+	}
+	if contentType != "image/jpeg" || format != "jpeg" {
+		t.Fatalf("prepared image format = content_type %q, format %q", contentType, format)
+	}
+	if config.Width != maxProviderImageDimension || config.Height != 1024 {
+		t.Fatalf("prepared image dimensions = %dx%d, want 2048x1024", config.Width, config.Height)
+	}
+}
+
+func TestDownsampleProviderImagePreservesSmallImageBytes(t *testing.T) {
+	data := providerTestPNG(t, 2, 2)
+	prepared, contentType, err := downsampleProviderImage(data, "image/png")
+	if err != nil {
+		t.Fatalf("prepare small image: %v", err)
+	}
+	if contentType != "image/png" || !bytes.Equal(prepared, data) {
+		t.Fatal("small image should be passed through unchanged")
+	}
+}
+
+func TestDownsampleProviderImageAppliesJPEGEXIFOrientation(t *testing.T) {
+	data := providerTestJPEGWithEXIFOrientation(t, 3, 2, 6)
+	if orientation := jpegEXIFOrientation(data, "image/jpeg"); orientation != 6 {
+		t.Fatalf("jpeg EXIF orientation = %d, want 6", orientation)
+	}
+	prepared, contentType, err := downsampleProviderImage(data, "image/jpeg")
+	if err != nil {
+		t.Fatalf("prepare oriented image: %v", err)
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(prepared))
+	if err != nil {
+		t.Fatalf("decode prepared image: %v", err)
+	}
+	if contentType != "image/jpeg" || config.Width != 2 || config.Height != 3 {
+		t.Fatalf("prepared orientation = content_type %q, dimensions %dx%d, want image/jpeg 2x3", contentType, config.Width, config.Height)
+	}
+}
+
+func providerTestPNG(t *testing.T, width int, height int) []byte {
+	t.Helper()
+	imageData := image.NewNRGBA(image.Rect(0, 0, width, height))
+	imageData.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var data bytes.Buffer
+	if err := png.Encode(&data, imageData); err != nil {
+		t.Fatalf("encode test PNG: %v", err)
+	}
+	return data.Bytes()
+}
+
+func providerTestJPEG(t *testing.T, width int, height int) []byte {
+	t.Helper()
+	imageData := image.NewNRGBA(image.Rect(0, 0, width, height))
+	imageData.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var data bytes.Buffer
+	if err := jpeg.Encode(&data, imageData, nil); err != nil {
+		t.Fatalf("encode test JPEG: %v", err)
+	}
+	return data.Bytes()
+}
+
+func providerTestJPEGWithEXIFOrientation(t *testing.T, width int, height int, orientation byte) []byte {
+	t.Helper()
+	data := providerTestJPEG(t, width, height)
+	exif := []byte{
+		'E', 'x', 'i', 'f', 0, 0,
+		'I', 'I', 0x2a, 0, 8, 0, 0, 0,
+		1, 0,
+		0x12, 0x01, 3, 0, 1, 0, 0, 0, orientation, 0, 0, 0,
+		0, 0, 0, 0,
+	}
+	segmentLength := len(exif) + 2
+	segment := []byte{0xff, 0xe1, byte(segmentLength >> 8), byte(segmentLength)}
+	return append(append(append([]byte(nil), data[:2]...), segment...), append(exif, data[2:]...)...)
 }
 
 func TestContextLoaderRejectsCorruptedImageAttachment(t *testing.T) {

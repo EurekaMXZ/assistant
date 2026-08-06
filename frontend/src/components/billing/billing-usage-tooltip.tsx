@@ -18,6 +18,7 @@ const toolNames: Record<BillingToolKey, string> = {
   "sandbox.shell_destroy": "Close Shell",
   "sandbox.write_file": "Write Sandbox File",
   "sandbox.edit_file": "Edit Sandbox File",
+  "sandbox.read_file": "Read Sandbox File",
   "sandbox.import_attachment": "Import Attachment",
   "sandbox.export_file": "Export Sandbox File",
   "time.now": "Current Time",
